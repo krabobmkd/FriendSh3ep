@@ -42,12 +42,12 @@ Amiga OS3 Mastodon Client
   - Favourite/unfavourite, reply, modify and delete your own toots.
   - Attach an image or audio/video file to a toot (gif/jpg/png, mp3/ogg/mp4).
   - Word and hashtag search; search, follow and unfollow accounts.
-  - Block/unblock accounts and whole servers.
   - "Autoscroll Play" mode: sit back and let the timeline scroll itself.
   - Switchable UI themes (fonts, colours, button skins).
 
  Not yet there, but coming:
 
+  - Block/unblock accounts and whole servers.
   - Bookmarks and a "News" (most-shared) timeline.
   - Attaching more than one file per toot.
   - Polls.
