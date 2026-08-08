@@ -1,0 +1,117 @@
+; FriendSh3ep Installer Script
+; For use with the standard Amiga 'Installer' tool (v43+).
+;
+; Installs:
+;   - FriendSh3ep binary + icon  -> <dest>/
+;   - themes/                    -> <dest>/themes/
+;   - FriendSh3ep.guide          -> <dest>/
+;   - FriendSh3ep.readme         -> <dest>/
+;
+; FriendSh3ep itself needs EmojiGear v5.1 (utf8rastport.library,
+; unitexteditor.gadget, unibutton.gadget) and AmiSSL v5 already installed --
+; see the EmojiGear5.1.lha package and Aminet for AmiSSL. This installer does
+; not bring those in; it only places FriendSh3ep and its own data.
+;
+
+(set #app-name    "FriendSh3ep")
+(set #app-version "v0.8")
+(set #app-default "Work:")
+
+; ---------------------------------------------------------------------------
+; Welcome
+; ---------------------------------------------------------------------------
+(message
+    (cat
+        "Welcome to the " #app-name " " #app-version " installer!\n\n"
+        #app-name " is a Mastodon/Fediverse client for AmigaOS 3.2.x.\n\n"
+        "Before continuing, make sure you already have:\n"
+        "  - EmojiGear v5.1 installed (utf8rastport.library,\n"
+        "    unitexteditor.gadget, unibutton.gadget)\n"
+        "  - AmiSSL v5 installed\n"
+        "  - a working Internet stack\n\n"
+        "Click Proceed to choose where to install " #app-name "."
+    )
+    (all)
+)
+
+; ---------------------------------------------------------------------------
+; Choose installation directory
+; ---------------------------------------------------------------------------
+(set #parent
+    (askdir
+        (prompt
+            (cat "Where would you like to install " #app-name "?")
+        )
+        (help
+            (cat
+                "Choose a drawer for the installation.\n"
+                "A '" #app-name "' drawer will be created inside it.\n\n"
+                "Default: " #app-default #app-name
+            )
+        )
+        (default #app-default)
+    )
+)
+
+(set #dest (tackon #parent #app-name))
+
+(complete 10)
+
+; ---------------------------------------------------------------------------
+; Create destination drawer and install the binary + icon
+; ---------------------------------------------------------------------------
+(working (cat "Creating " #dest " ..."))
+(makedir #dest)
+
+(working "Copying FriendSh3ep ...")
+(copyfiles
+    (source "bin/FriendSh3ep")
+    (dest #dest)
+    (infos)
+)
+
+(complete 40)
+
+; ---------------------------------------------------------------------------
+; Install themes/
+; ---------------------------------------------------------------------------
+(set #themes-dest (tackon #dest "themes"))
+(working "Copying themes ...")
+(makedir #themes-dest)
+(copyfiles
+    (source "themes")
+    (dest #themes-dest)
+    (all)
+)
+
+(complete 75)
+
+; ---------------------------------------------------------------------------
+; Documentation
+; ---------------------------------------------------------------------------
+(working "Copying documentation ...")
+(copyfiles
+    (source "FriendSh3ep.guide")
+    (dest #dest)
+    (infos)
+)
+(copyfiles
+    (source "FriendSh3ep.readme")
+    (dest #dest)
+    (infos)
+)
+
+(complete 100)
+
+; ---------------------------------------------------------------------------
+; Done!
+; ---------------------------------------------------------------------------
+(exit
+    (cat
+        "  * * *  Installation complete!  * * *\n\n"
+        "Installed in:  " #dest "\n\n"
+        "Remember, FriendSh3ep needs EmojiGear v5.1 and AmiSSL v5\n"
+        "already installed on your system to run."
+    )
+    (quiet)
+)

@@ -1,0 +1,318 @@
+@DATABASE FriendSh3ep.guide
+@$VER: FriendSh3ep.guide 0.8 (07.08.2026)
+@AUTHOR krabobmkd
+@(C) 2026 krabobmkd
+@MASTER PROGDIR:FriendSh3ep.guide
+@NODE MAIN "FriendSh3ep - Mastodon client for AmigaOS3"
+
+@{b}FriendSh3ep v0.8@{ub}
+A Mastodon / Fediverse client for AmigaOS 3.2.x (68k)
+
+@{i}Toots, timelines, images and emoji -- the Fediverse, Amiga style.@{ui}
+
+@IMAGE PROGDIR:friendsh3ep_app.iff
+
+------------------------------------------------------------------------------
+
+  @{" System Requirements " LINK REQUIREMENTS}  What FriendSh3ep needs to run
+  @{" Mastodon & Accounts  " LINK MASTODON}     Servers, accounts, logging in
+  @{" Timeline Views       " LINK VIEWMODES}    The 8 view buttons explained
+  @{" Writing a Toot       " LINK COMPOSE}      Composing, visibility, attachments, emoji
+  @{" Play Mode & Settings " LINK PLAYSETTINGS} Autoscroll Play and preferences
+  @{" Themes & Styles      " LINK THEMES}       Fonts, colours and skins
+
+@ENDNODE
+
+
+@NODE REQUIREMENTS "System Requirements"
+@TOC MAIN
+
+@{b}Minimum system@{ub}
+
+FriendSh3ep runs on @{b}AmigaOS 3.2.x@{ub} or compatible, on a @{b}68030
+50MHz@{ub} or better. A @{b}68060@{ub} (or a fast 68040) is recommended for
+a noticeably smoother experience -- fonts, emoji and images are all
+decoded live.
+
+@{b}Required@{ub}
+
+  1. @{b}Fast, working Internet access@{ub} -- Ethernet strongly
+     recommended. Mastodon timelines, images and emoji are network-hungry;
+     dial-up/serial connections will struggle.
+  2. @{b}AmiSSL v5@{ub} -- every Mastodon server speaks HTTPS only.
+  3. The @{b}EmojiGear v5@{ub} font & emoji package -- provides the
+     TrueType/OpenType fonts and colour emoji FriendSh3ep uses by default
+     (see @{" Themes & Styles " LINK THEMES}).
+
+@{b}Optional, for a better experience@{ub}
+
+  1. The @{b}OpenURL@{ub} library, plus a web browser -- lets you jump
+     straight to links and attached URLs instead of just reading them.
+  2. @{b}AHI@{ub} and @{b}mpega.library@{ub} -- needed to play back
+     attached audio.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE MASTODON "Mastodon, the Fediverse & Your Accounts"
+@TOC MAIN
+
+@{b}What is Mastodon?@{ub}
+
+Mastodon is a social network, but unlike most others it isn't run by
+one company from one web site. It's made of thousands of independently
+run @{b}servers@{ub} (also called @{i}instances@{ui}), each with its own address --
+mastodon.social, mas.to, piaille.fr, and so on -- all talking to each
+other over a shared, open protocol. This network of servers is what
+people call the @{b}Fediverse@{ub}. An account on any server can follow,
+reply to and boost (share) accounts on any other server, exactly as 
+if they were on the same one.
+
+Each server has its own rules of moderation. A good server should update
+its mastodon code quickly , admin should communicate,
+and malevolent servers should be blocked. Yet some servers would block
+"twitter and bluesky" mirror servers , by choice , or not. 
+Servers are thematized or not, allow any languages, or not. Number
+of characters per toot, and number of attached images and video varies:
+ Think about it when you choose a server. 
+ 
+ You may create accounts for many servers, by themes: this is common practice,
+and FriendSh3ep allows you to switch servers and accounts with one click. 
+
+Also the important thing about mastodon servers is that you can "move"
+your account and its content from a server to another, which you may do
+because rules does not fit you or server is not maintained anymore.
+ 
+There is no such thing as a "FriendSh3ep account": FriendSh3ep is only
+a @{i}client@{ui}. You create your account on a server's own web site first
+(pick any server you like -- they're all part of the same Fediverse),
+and only then tell FriendSh3ep to connect to it.
+- (note you can also connect anonymously to some servers ) -
+
+@{b}Connecting an account@{ub}
+
+Click the @{b}Accounts@{ub} button in the title bar (or @{b}FriendSh3ep > Accounts...@{ub}
+in the menu) to open the Login window:
+
+  1. Type your server's address in @{b}Server@{ub} and click @{b}Login@{ub}.
+  2. FriendSh3ep asks the server for an authorization page and shows
+     its address. Open that address in your web browser, log in and
+     approve FriendSh3ep there -- the server then gives you a short
+     one-time @{b}code@{ub}.
+  3. Paste that code into the @{b}Code@{ub} field and click @{b}Submit Code@{ub}.
+
+FriendSh3ep never sees your password: only a revocable token handed to
+it by the server after you approve it in your own browser. The account
+is then remembered for next time.
+
+@{b}Multiple accounts@{ub}
+
+Every account you've connected -- on any server -- appears as a row in
+the accounts list at the bottom of the Login window. Click a row to
+switch to that account instantly; the @{b}Delete Server@{ub} button forgets
+the selected one. Switching accounts is a very Mastodon thing to do,
+and FriendSh3ep makes it a single click.
+
+@{b}Browsing anonymously@{ub}
+
+You don't need an account at all to look around. Click @{b}Anonymous@{ub}
+instead of logging in, and FriendSh3ep connects read-only to whatever
+server is currently in the @{b}Server@{ub} field -- no token, no browser
+round-trip. Anonymous browsing is limited to the @{b}Local@{ub} and
+@{b}Federated@{ub} timelines (see @{" Timeline Views " LINK VIEWMODES}): no
+posting, no Home, no Notifications, since those need a real account.
+
+To make this easy on first launch, the accounts list already comes
+pre-filled with a handful of servers confirmed to allow anonymous
+timeline browsing -- just pick one and go, or type in any server of
+your own choosing.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE VIEWMODES "Timeline Views"
+@TOC MAIN
+
+@{b}The 8 Timeline Views@{ub}
+
+The row of view buttons switches what the main toot timeline is
+showing. Each one is its own independent, remembered scroll position.
+
+@IMAGE PROGDIR:friendsh3ep_viewmodes.iff
+
+  @{b}User@{ub}
+    Your own posts (needs a real, logged-in account).
+
+  @{b}Home@{ub}
+    Friends & their re-toots -- everyone you follow.
+    They can be on any other servers.
+
+  @{b}Local@{ub}
+    Your server & your server users re-toots 
+    -- everyone posting on the same server
+    as the current account (works anonymously too),
+    boosted toots can originate from other servers.
+
+  @{b}Federated@{ub}
+    Around the world -- everything your server currently knows
+    about from the rest of the Fediverse (works anonymously too).
+    This is very different from server to server, and there
+    are more toots, and more diverse toots displayed.
+
+  @{b}Search@{ub}
+    Word and hashtag search, and account search -- see also the
+    profile pages this view can open (subscribe/unsubscribe, etc).
+
+  @{b}Notifications@{ub}
+    Favourites, boosts, replies, follows and mentions concerning you.
+
+  @{b}Bookmarks@{ub}
+    Coming soon.
+
+  @{b}News@{ub}
+    Coming soon.
+
+A @{b}Refresh@{ub} button next to the view buttons reloads the current view.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE COMPOSE "Writing a Toot"
+@TOC MAIN
+
+@{b}Composing@{ub}
+
+Click the @{b}Toot+@{ub} button in the title bar, or use @{b}FriendSh3ep > New Toot...@{ub}
+(Amiga-T), to open the Toot window. The same window is reused for
+replying to, quoting, messaging or modifying a toot -- the title line
+at the top always says which one you're doing.
+
+Type your text in the main text area; a live counter under it shows
+how many characters you've used against the server's own maximum.
+
+@{b}Visibility@{ub}
+
+A chooser sets who can see the toot:
+
+  @{b}Public@{ub}             Visible to everyone, shown in public timelines.
+  @{b}Public (Quiet)@{ub}     Visible to everyone, but hidden from public timelines.
+  @{b}Followers@{ub}          Visible only to your followers.
+  @{b}Private mention@{ub}    Visible only to @mentioned accounts -- like a PM.
+
+A second chooser, @{b}who can quote you@{ub}, offers @{b}Everybody@{ub}, @{b}Followers
+only@{ub} or @{b}Me only@{ub}. A line under both choosers always explains in
+plain words what the current combination means.
+
+@{b}Attaching a file@{ub}
+
+The @{b}Attach Media@{ub} row lets you pick one file to attach, using the
+usual ASL file requester (or type the path directly). Supported
+types are:
+
+  Images:        gif, jpg / jpeg, png
+  Audio / video: mp3, ogg, mpg, mp4
+
+Click the @{b}X@{ub} button next to it to clear the attachment before sending.
+
+@{b}Emoji@{ub}
+
+Click the smiley button in the Toot window to open the @{b}Emoji Box@{ub} --
+the same one used everywhere else in FriendSh3ep -- and insert emoji
+by clicking them, or by their assigned F-keys while the text area has
+focus.
+
+When you're ready, click @{b}Toot@{ub} (the button's label follows what
+you're doing: @{b}Reply@{ub}, @{b}Quote@{ub}, @{b}Modify@{ub}...).
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE PLAYSETTINGS "Play Mode & Settings"
+@TOC MAIN
+
+@{b}Autoscroll Play@{ub}
+
+Instead of scrolling by hand, let FriendSh3ep advance through the
+timeline for you:
+
+  @{b}Space@{ub}    Next toot -- smoothly scrolls to reveal the next one.
+            While Play mode is running, Space instead stops it.
+  @{b}P@{ub}        Start Autoscroll Play: moves to the next toot on its
+            own, every few seconds, for as long as you leave it running.
+  @{b}U@{ub}        Move to Top of the current timeline.
+
+Both are also in the @{b}Timeline@{ub} menu.
+
+@{b}Settings window@{ub}
+
+Open it from @{b}Settings > General Settings@{ub} (Amiga-P). It's a tabbed
+window; changes apply immediately and are saved when you close it.
+
+@IMAGE PROGDIR:friendsh3ep_settings.iff
+
+  @{u}Tab "User experience"@{uu}
+    @{b}Play toot time (seconds)@{ub}   How long Autoscroll Play waits on
+                                each toot before advancing (3-60s).
+    @{b}Smooth auto scroll@{ub}         On: the eased, animated scroll used
+                                by Space/Play mode above. Off: jumps
+                                straight to the next toot instead --
+                                lighter on slower machines.
+    @{b}URL Link Action@{ub}           What clicking a link does: Ask,
+                                Use OpenURL, or Copy to Clipboard.
+    @{b}Direct download .zip,.lha@{ub}  and the @{b}Download directory@{ub} used
+                                for it.
+
+  @{u}Tab "Paths & Cache"@{uu}
+    Cache and user-data directories, maximum cache size, whether to
+    keep big user icons/thumbnails on disk, and a @{b}Flush cache@{ub} button.
+
+  @{u}Tab "Thumbnails & icons"@{uu}
+    Bigger/minified thumbnails, and the scaling quality and RGB draw
+    function used to resize images -- tune these down on a plain 68020
+    or a native AGA screen, up on faster machines and RTG screens.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
+
+
+@NODE THEMES "Themes & Styles"
+@TOC MAIN
+
+@{b}Fonts & Theme window@{ub}
+
+Open it from @{b}Settings > Theme Settings@{ub}.
+
+@IMAGE PROGDIR:friendsh3ep_theme.iff
+
+  @{u}Fonts@{uu}
+    @{b}Primary font@{ub}, @{b}Fallback font 1/2@{ub}: TrueType/OpenType (.ttf/.otf)
+    fonts tried in order, so uncommon scripts still display something
+    sensible even when the primary font lacks the glyph.
+    @{b}UI emoji font@{ub}: a plain two-colour glyph font for buttons/navbar.
+    @{b}Color emoji font@{ub}: a CBDT/CBLC colour bitmap font (e.g.
+    NotoColorEmoji.ttf) for full-colour emoji in the timeline.
+
+  @{u}Options@{uu}
+    @{b}Antialias when possible@{ub} and @{b}Emoji quality scaling@{ub} -- both
+    trade a bit of speed/Chip RAM for smoother-looking text and emoji.
+    With 8 bit mode antialias can have problems with background in buttons, 
+    So 8 bit indexed palette workbench users may not use it.
+
+  @{u}Presets@{uu}
+    @{b}Low quality@{ub}, @{b}High quality@{ub}, @{b}Monospace@{ub} -- one-click
+    combinations of the options above for common setups (plain AGA
+    screen, fast RTG machine, code-style monospaced reading).
+
+  @{u}Theme@{uu}
+    A theme is a subdirectory of @{b}themes/@{ub} bundled with FriendSh3ep
+    (or added by you) holding a @{b}style.txt@{ub} plus its own images: skins
+    for buttons, title bar, colours, and so on. Pick one from the
+    @{b}Theme@{ub} chooser, or "-" for the plain built-in look. @{b}Scan Themes@{ub}
+    rescans the themes directory if you've just added a new one.
+
+@{" Back to Contents " LINK MAIN}
+@ENDNODE
