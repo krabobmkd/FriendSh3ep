@@ -24,7 +24,7 @@ add_subdirectory(network_fs3e)
 # later phases.
 
 set(FRIENDSH3EP_SOURCES
-	bdbprintf.c
+#	bdbprintf.c
     avatarimages.c
     bmimage.c
     fs3etextwrap.c
@@ -138,4 +138,4 @@ target_compile_options(FriendSh3ep PRIVATE
 install(TARGETS FriendSh3ep ARCHIVE DESTINATION bin)
 
 
-target_compile_definitions(FriendSh3ep PRIVATE USE_DEBUG_BDBPRINT=1)
+# target_compile_definitions(FriendSh3ep PRIVATE USE_DEBUG_BDBPRINT=1)

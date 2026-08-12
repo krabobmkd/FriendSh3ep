@@ -514,7 +514,7 @@ ULONG TTL_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
         }
     } else if (ie->ie_Class == IECLASS_RAWKEY)
     {
-bdbprintf("ttl input c:%08x\n",ie->ie_Code);
+//bdbprintf("ttl input c:%08x\n",ie->ie_Code);
     }
 
     return GMR_MEACTIVE;

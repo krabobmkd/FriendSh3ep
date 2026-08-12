@@ -145,11 +145,16 @@ BOOL Action_About(struct App *ctx)
     FS3ERequester_Show(NULL, "About FriendSh3ep",
         "FriendSh3ep\n"
         "A Mastodon client for AmigaOS\n"
-        " License GPL  sources at:\n"
-        "github.com/krabobmkd/EmojiGear/FriendSh3ep"
+        " by krb.\n"
+        " License GPL - sources at:\n"
+        "github.com/krabobmkd/FriendSh3ep"
         "Version " FRIENDSH3EP_VERSION "\n\n"
         "Built with utf8rastport.library\n"
-        "and BOOPSI gadgets.",
+        "UniTextEditor.gadget\n"
+        "UniButton.gadget\n"
+        "AmiSSLv5 picture.datatype\n"
+        "AHI mpega.library cjson\n\n",
+
         "OK", FS3EREQ_INFO);
     ExpungeMessages();
     return TRUE;
