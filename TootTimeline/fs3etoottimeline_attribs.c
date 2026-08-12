@@ -667,6 +667,39 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                 break;
             }
 
+            case TTIMELINE_UpdateProfileBio: {
+                const TTLProfileBioUpdate *upd = (const TTLProfileBioUpdate *)tag->ti_Data;
+                if (upd && upd->channel < TTIMELINE_NUM_VIEWMODES) {
+                    TTLChannel *channel = &inst->channels[upd->channel];
+                    if (upd->accountId && channel->headerPost &&
+                        channel->headerPost->postId &&
+                        strcmp(channel->headerPost->postId, upd->accountId) == 0)
+                    {
+                        TTLPost    *header  = channel->headerPost;
+                        const char *bioSrc  = upd->bio ? upd->bio : "";
+                        ULONG       bioLen  = (ULONG)strlen(bioSrc);
+                        char       *newBody = (char *)AllocVec(bioLen + 1, MEMF_ANY);
+
+                        if (newBody) {
+                            CopyMem((APTR)bioSrc, newBody, bioLen + 1);
+                            if (header->body) FreeVec(header->body);
+                            header->body = newBody;
+
+                            /* Bio length change can grow or shrink the
+                             * header's word-wrapped height -- same
+                             * full-relayout path TTIMELINE_RefreshPost
+                             * uses, see TTIMELINE_UpdateProfileBio's
+                             * comment in fs3etoottimeline.h. */
+                            inst->lastTileWidth = -1;
+                            inst->layoutToDo    = TRUE;
+                            redraw = TRUE;
+                        }
+                    }
+                }
+                used = 1;
+                break;
+            }
+
             case TTIMELINE_ClearPosts:
                 ttl_clear_posts(inst);
                 redraw = TRUE;
@@ -722,6 +755,8 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
             case TTIMELINE_CopySelectedText: {
                 const char *text = (inst->selectedText && inst->selectedText[0])
                                   ? inst->selectedText : NULL;
+                const char *name = text ? inst->selectedAuthorName : NULL;
+                const char *acct = text ? inst->selectedAuthorAcct : NULL;
 
                 if (!text) {
                     /* No click yet -- fall back to the topmost visible
@@ -734,6 +769,8 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                         active->headerPost->timelineY + active->headerPost->height > active->scrollY)
                     {
                         text = active->headerPost->body;
+                        name = active->headerPost->username;
+                        acct = active->headerPost->acct;
                     } else {
                         TTLPost *p;
                         for (p = (TTLPost *)active->posts.mlh_Head;
@@ -742,14 +779,41 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                         {
                             if (p->timelineY + p->height > active->scrollY) {
                                 text = p->body;
+                                name = p->username;
+                                acct = p->acct;
                                 break;
                             }
                         }
                     }
                 }
 
-                if (text && text[0])
-                    Clipboard_WriteText(text);
+                if (text && text[0]) {
+                    /* "<display name>\n@user@instance\n\n<body>" -- see
+                     * TTIMELINE_CopySelectedText's doc comment in
+                     * fs3etoottimeline.h. name/acct can legitimately be
+                     * NULL/empty (a pseudo post/header row has no author);
+                     * that line is just left blank rather than skipped, so
+                     * the body always lands on a predictable third line. */
+                    ULONG nameLen = name ? (ULONG)strlen(name) : 0;
+                    ULONG acctLen = acct ? (ULONG)strlen(acct) : 0;
+                    ULONG bodyLen = (ULONG)strlen(text);
+                    ULONG total   = nameLen + 1 + acctLen + 2 + bodyLen + 1;
+                    char *composed = (char *)AllocVec(total, MEMF_ANY);
+
+                    if (composed) {
+                        char *p = composed;
+                        if (nameLen) { CopyMem((APTR)name, p, nameLen); p += nameLen; }
+                        *p++ = '\n';
+                        if (acctLen) { CopyMem((APTR)acct, p, acctLen); p += acctLen; }
+                        *p++ = '\n';
+                        *p++ = '\n';
+                        CopyMem((APTR)text, p, bodyLen); p += bodyLen;
+                        *p = '\0';
+
+                        Clipboard_WriteText(composed);
+                        FreeVec(composed);
+                    }
+                }
 
                 used = 1;
                 break;
@@ -867,6 +931,8 @@ ULONG TTL_OnDispose(Class *cl, Object *o, Msg msg)
     ttl_tiles_free(inst);
     if (inst->waitText) { FreeVec(inst->waitText); inst->waitText = NULL; }
     if (inst->selectedText) { FreeVec(inst->selectedText); inst->selectedText = NULL; }
+    if (inst->selectedAuthorName) { FreeVec(inst->selectedAuthorName); inst->selectedAuthorName = NULL; }
+    if (inst->selectedAuthorAcct) { FreeVec(inst->selectedAuthorAcct); inst->selectedAuthorAcct = NULL; }
     if (inst->lastHotSpotStr) { FreeVec(inst->lastHotSpotStr); inst->lastHotSpotStr = NULL; }
     if (inst->lastHotSpotAudioUrl) { FreeVec(inst->lastHotSpotAudioUrl); inst->lastHotSpotAudioUrl = NULL; }
 

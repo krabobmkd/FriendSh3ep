@@ -29,6 +29,8 @@ enum FS3ENetRequestType
     FS3ENETQ_POST_STATUS,    /* publish a new status (toot)          (Phase 2) */
     FS3ENETQ_FETCH_IMAGE,    /* fetch/return cached avatar or media   (Phase 2) */
     FS3ENETQ_FLUSH_CACHE,    /* delete every file in the disk cache               */
+    FS3ENETQ_SET_CACHE_DIR,  /* live-swap the disk cache directory + max size, no restart --
+                               * see FS3ENet_SetCacheDir/FS3ENetSetCacheDirReq below */
     FS3ENETQ_VERIFY_ACCOUNT, /* re-verify an existing access token, backfill account fields */
     FS3ENETQ_FAVORITE,       /* toggle favourite/unfavourite on a status */
     FS3ENETQ_REBLOG,         /* toggle reblog/unreblog (boost) on a status */
@@ -38,6 +40,7 @@ enum FS3ENetRequestType
     FS3ENETQ_INSTANCE_INFO,  /* fetch the server's per-toot character limit */
     FS3ENETQ_EDIT_STATUS,    /* edit an existing status' text (own toots only) */
     FS3ENETQ_DELETE_STATUS,  /* delete an existing status (own toots only) */
+    FS3ENETQ_UPDATE_BIO,     /* set the connected user's own profile bio (note) */
     FS3ENETQ_UPLOAD_MEDIA,   /* POST /api/v2/media, upload one attachment file --
                                * see FS3ENetUploadMediaReq/Reply below. Fired before
                                * FS3ENETQ_POST_STATUS when composing a toot with an
@@ -372,6 +375,33 @@ void FS3ENet_Stop(struct MsgPort *requestPort, struct MsgPort *replyPort);
  */
 BOOL FS3ENet_FlushCache(struct MsgPort *requestPort, struct MsgPort *replyPort);
 
+/*
+ * FS3ENETQ_SET_CACHE_DIR — live-updates the disk cache directory and max
+ * size of an already-running network process (e.g. SettingsView's cache
+ * path GetFile gadget, which used to silently do nothing until next
+ * launch -- FS3ENet_Start()'s cacheDir/maxCacheSizeMB were only ever read
+ * once, at process startup). Re-runs FS3ECache_Init() with the new values;
+ * already-cached files under the old path are left behind, not moved.
+ */
+typedef struct FS3ENetSetCacheDirReq
+{
+    char  *fs3escd_CacheDir;
+    ULONG  fs3escd_MaxCacheSizeMB;
+} FS3ENetSetCacheDirReq;
+
+/* Allocates a flat request block for SET_CACHE_DIR. FreeVec() when done. */
+FS3ENetSetCacheDirReq *FS3ENetSetCacheDirReq_Alloc(const char *cacheDir, ULONG maxCacheSizeMB);
+
+/*
+ * Ask the network process to switch its disk cache to cacheDir/maxCacheSizeMB
+ * and wait for the reply. requestPort/replyPort as FS3ENet_Stop().
+ * Returns TRUE on FS3ENETR_OK (new dir created and now in use), FALSE
+ * otherwise (including requestPort==NULL or the new dir being uncreatable,
+ * in which case the process keeps using whatever cache dir it had before).
+ */
+BOOL FS3ENet_SetCacheDir(struct MsgPort *requestPort, struct MsgPort *replyPort,
+    const char *cacheDir, ULONG maxCacheSizeMB);
+
 /* Which direction a FS3ENETQ_TIMELINE request pages in -- echoed back into
  * FS3ENetTimelineReply so the GUI knows how to splice the results into its
  * post list (prepend at the top vs. append at the bottom) and which
@@ -587,6 +617,13 @@ typedef struct FS3ENetStatus {
     BOOL   fmas_Favourited;   /* connected user already favourited this status */
     BOOL   fmas_Reblogged;    /* connected user already boosted this status */
 
+    /* Mastodon's `sensitive` flag -- applies to the whole status incl.
+     * every attachment, not per-attachment (see FS3ENetPostStatusReq.
+     * fs3ep_Sensitive's comment for the posting-side equivalent). Drives
+     * TootTimeline's blur/reveal toggle -- see TTLPost.sensitive and
+     * TTLPost.contentRevealed. */
+    BOOL   fmas_Sensitive;
+
     /* TRUE if this status is itself a reply (src's own "in_reply_to_id" is
      * non-null) -- doesn't need the actual parent id, just whether one
      * exists: fetching GET .../statuses/:id/context with THIS status' own
@@ -685,6 +722,9 @@ typedef struct FS3ENetPostStatusReq {
     char *fs3ep_AccessToken;
     char *fs3ep_Content;     /* UTF-8 post body */
     char *fs3ep_Visibility;  /* "public", "unlisted", "private", "direct" */
+    ULONG fs3ep_Sensitive;   /* TRUE/FALSE -- Mastodon's `sensitive` flag, applies to
+                               * the whole status incl. every attachment; see
+                               * FS3ETootView's sensitiveCheck in fs3etootview.h */
     char *fs3ep_Spoiler;     /* CW text; "" = no content warning */
     char *fs3ep_InReplyToId; /* status being replied to; "" = standalone toot */
     char *fs3ep_QuoteApprovalPolicy; /* "public", "followers", "nobody" */
@@ -700,7 +740,7 @@ typedef struct FS3ENetPostStatusReq {
 
 FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     const char *apiBaseUrl, const char *accessToken,
-    const char *content, const char *visibility, const char *spoiler,
+    const char *content, const char *visibility, BOOL sensitive, const char *spoiler,
     const char *inReplyToId, const char *quoteApprovalPolicy,
     const char *quotedStatusId,
     const char *const *mediaIds, ULONG mediaCount);
@@ -773,6 +813,27 @@ FS3ENetEditStatusReq *FS3ENetEditStatusReq_Alloc(
 typedef struct FS3ENetEditStatusReply {
     char *fs3ee_StatusId; /* echoes the edited status id back */
 } FS3ENetEditStatusReply;
+
+/*
+ * FS3ENETQ_UPDATE_BIO — PATCH /api/v1/accounts/update_credentials, set the
+ * connected user's own profile bio -- see FS3EMastodon_UpdateBio. On
+ * FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetUpdateBioReply.
+ */
+typedef struct FS3ENetUpdateBioReq {
+    char *fs3eub_ApiBaseUrl;
+    char *fs3eub_AccessToken;
+    char *fs3eub_Note; /* UTF-8 new bio text */
+} FS3ENetUpdateBioReq;
+
+FS3ENetUpdateBioReq *FS3ENetUpdateBioReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *note);
+
+typedef struct FS3ENetUpdateBioReply {
+    char *fs3eub_Note; /* server-echoed bio, HTML-stripped (see
+                         * FS3ENet_HandleUpdateBio) -- ready to show as-is,
+                         * same convention as every other timeline/profile
+                         * bio text. */
+} FS3ENetUpdateBioReply;
 
 /*
  * FS3ENETQ_DELETE_STATUS — DELETE /api/v1/statuses/:id, delete an existing

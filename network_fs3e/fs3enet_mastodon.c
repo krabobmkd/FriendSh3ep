@@ -481,6 +481,7 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
 
 BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *statusText, const char *visibility,
+                            BOOL sensitive,
                             const char *inReplyToId,
                             const char *quoteApprovalPolicy,
                             const char *quotedStatusId,
@@ -501,6 +502,7 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
 
     cJSON_AddStringToObject(reqJson, "status", statusText);
     cJSON_AddStringToObject(reqJson, "visibility", visibility ? visibility : "public");
+    cJSON_AddBoolToObject(reqJson, "sensitive", sensitive);
     cJSON_AddStringToObject(reqJson, "quote_approval_policy",
                              quoteApprovalPolicy ? quoteApprovalPolicy : "public");
     if (inReplyToId && inReplyToId[0])
@@ -628,6 +630,56 @@ BOOL FS3EMastodon_EditStatus(const char *apiBaseUrl, const char *accessToken,
     if (FS3EHttp_Put(url, headers, "application/json", reqBody, strlen(reqBody), &resp))
     {
         ok = (resp.fhr_StatusCode == 200);
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    cJSON_free(reqBody);
+
+    return ok;
+}
+
+BOOL FS3EMastodon_UpdateBio(const char *apiBaseUrl, const char *accessToken,
+                            const char *note,
+                            char *outNote, ULONG outNoteSize)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *reqJson, *json;
+    char *reqBody;
+    BOOL ok = FALSE;
+
+    reqJson = cJSON_CreateObject();
+    if (!reqJson)
+        return FALSE;
+
+    cJSON_AddStringToObject(reqJson, "note", note ? note : "");
+
+    reqBody = cJSON_PrintUnformatted(reqJson);
+    cJSON_Delete(reqJson);
+
+    if (!reqBody)
+        return FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/accounts/update_credentials", apiBaseUrl);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    if (FS3EHttp_Patch(url, headers, "application/json", reqBody, strlen(reqBody), &resp))
+    {
+        if (resp.fhr_StatusCode == 200) {
+            json = cJSON_Parse((char *)resp.fhr_Body);
+            if (json) {
+                FS3EMastodon_CopyJsonString(json, "note", outNote, outNoteSize);
+                ok = TRUE;
+                cJSON_Delete(json);
+            }
+        }
         FS3EHttp_FreeResponse(&resp);
     }
 

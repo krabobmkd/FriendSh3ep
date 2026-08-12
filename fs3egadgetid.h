@@ -41,6 +41,12 @@
 #define GID_TITLEBAR_ACCOUNTS    35
 #define GID_TITLEBAR_NEWTOOT     36
 
+/* Title bar row 2, right cluster, packed left of accounts/newtoot -- image
+ * from btdeck.iff, see FS3ESTYLE_BTDECK_* in fs3estyle.h. */
+#define GID_TITLEBAR_NETWORKLED  37  /* read-only status indicator, GA_ReadOnly */
+#define GID_TITLEBAR_SCROLLUP    38  /* momentary: Action_TimelineTop */
+#define GID_TITLEBAR_PLAYMODE    39  /* toggle (BUTTON_PushButton): Action_TimelineAutoscrollPlay/Stop */
+
 /* Navigation bar (Part B, NavBarLayout) */
 #define GID_NAV_USER             40
 #define GID_NAV_HOME             41
@@ -80,6 +86,14 @@
 #define GID_THEMEV_THEME_CHOOSER      215
 #define GID_THEMEV_SCAN_THEMES        216
 
+/* New toot window (fs3etootview.c), continued -- appended here rather than
+ * next to GID_TOOT_ATTACH_MEDIA_CLEAR above, since 26-29 already run
+ * straight into the title-bar block below with no room to keep growing
+ * in place. */
+#define GID_TOOT_SENSITIVE            220 /* "Sensitive content" checkbox, in bottomBar right before tootBtn */
+#define GID_TOOT_ATTACH_MEDIA2        221 /* second [getfile][X] attach-media row, below the first */
+#define GID_TOOT_ATTACH_MEDIA2_CLEAR  222
+
 /* General settings window (fs3esettingsview.c) */
 #define GID_SETTINGSV_CACHE_PATH      300
 #define GID_SETTINGSV_USERDATA_PATH   301
@@ -99,6 +113,7 @@
 #define GID_SETTINGSV_DIRECT_DL_ARCHIVES       315
 #define GID_SETTINGSV_DOWNLOAD_PATH            316
 #define GID_SETTINGSV_TOOT_ACTIONS_DBLCLICK    317
+#define GID_SETTINGSV_CACHE_PATH_APPLY         318
 
 /* Network downloads window (fs3enetworkview.c) */
 #define GID_NETWORKV_LIST                      318
