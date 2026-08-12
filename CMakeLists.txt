@@ -7,10 +7,11 @@ set(CMAKE_C_STANDARD 11)
 list(APPEND AMIGA_COMPILER_OPTIONS -save-temps -Wall)
 list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O2)
 
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../sdk/include)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/sdk/include)
 
 #needed for OpenURL.
-include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../../amigacommonlibs/extrasdk/OpenURL/include)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../amigacommonlibs/extrasdk/OpenURL/include)
+include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../amigacommonlibs/extrasdk/ OpenURL/include)
 
 
 # ---- Network process static library --------------------------------------
@@ -59,7 +60,7 @@ set(FRIENDSH3EP_SOURCES
     fs3emachineid.c
     fs3eaudio.c
     fs3etimer.c
-    ${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/tooltypepref.c
+    tooltypepref.c
     UniButtonP9/unibuttonp9.c
     UniButtonP9/unibuttonp9_dispatch.c
     UniButtonP9/unibuttonp9_attribs.c
