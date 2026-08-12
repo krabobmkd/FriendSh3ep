@@ -102,6 +102,20 @@ FS3ENetLoginStartReq *FS3ENetLoginStartReq_Alloc(const char *apiBaseUrl)
     return req;
 }
 
+FS3ENetSetCacheDirReq *FS3ENetSetCacheDirReq_Alloc(const char *cacheDir, ULONG maxCacheSizeMB)
+{
+    ULONG total = sizeof(FS3ENetSetCacheDirReq) + FS3ENet_PackLen(cacheDir);
+    FS3ENetSetCacheDirReq *req =
+        (FS3ENetSetCacheDirReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3escd_CacheDir, &p, cacheDir);
+    req->fs3escd_MaxCacheSizeMB = maxCacheSizeMB;
+    return req;
+}
+
 FS3ENetLoginFinishReq *FS3ENetLoginFinishReq_Alloc(const char *apiBaseUrl,
     const char *clientId, const char *clientSecret, const char *code)
 {
@@ -186,7 +200,7 @@ FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
 
 FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     const char *apiBaseUrl, const char *accessToken,
-    const char *content, const char *visibility, const char *spoiler,
+    const char *content, const char *visibility, BOOL sensitive, const char *spoiler,
     const char *inReplyToId, const char *quoteApprovalPolicy,
     const char *quotedStatusId,
     const char *const *mediaIds, ULONG mediaCount)
@@ -215,6 +229,7 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     FS3ENet_PackStr(&req->fs3ep_AccessToken,  &p, accessToken);
     FS3ENet_PackStr(&req->fs3ep_Content,      &p, content);
     FS3ENet_PackStr(&req->fs3ep_Visibility,   &p, visibility);
+    req->fs3ep_Sensitive = (ULONG)sensitive;
     FS3ENet_PackStr(&req->fs3ep_Spoiler,      &p, spoiler);
     FS3ENet_PackStr(&req->fs3ep_InReplyToId,  &p, inReplyToId);
     FS3ENet_PackStr(&req->fs3ep_QuoteApprovalPolicy, &p, quoteApprovalPolicy);
@@ -259,6 +274,25 @@ FS3ENetEditStatusReq *FS3ENetEditStatusReq_Alloc(
         req->fs3ee_MediaIds[i] = NULL;
     req->fs3ee_MediaCount = mediaCount;
 
+    return req;
+}
+
+FS3ENetUpdateBioReq *FS3ENetUpdateBioReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *note)
+{
+    ULONG total = sizeof(FS3ENetUpdateBioReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(note);
+    FS3ENetUpdateBioReq *req =
+        (FS3ENetUpdateBioReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3eub_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3eub_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3eub_Note,        &p, note);
     return req;
 }
 
@@ -612,6 +646,14 @@ struct MsgPort *FS3ENet_Start(const char *cacheDir, ULONG maxCacheSizeMB)
         NP_Entry,     (ULONG)FS3ENet_ProcEntry,
         NP_Name,      (ULONG)FS3ENET_PROC_NAME,
         NP_StackSize, (ULONG)FS3ENET_STACK_SIZE,
+        /* Experimental: one notch below the GUI task's default priority
+         * (0), so a burst of ready network work never wins a tie against
+         * input/render on a real, slower CPU -- see the real-68060
+         * scroll-freeze investigation this followed. Exec is preemptive,
+         * so this only affects who gets the CPU when both are ready to
+         * run at the same instant; it doesn't bound how long any single
+         * synchronous call here (a blocking DOS/socket call) takes. */
+     //   NP_Priority,  (LONG)-1,
         TAG_DONE);
 
     if (!proc)
@@ -678,6 +720,42 @@ BOOL FS3ENet_FlushCache(struct MsgPort *requestPort, struct MsgPort *replyPort)
     GetMsg(replyPort);
 
     return (msg.fs3em_Result == FS3ENETR_OK);
+}
+
+BOOL FS3ENet_SetCacheDir(struct MsgPort *requestPort, struct MsgPort *replyPort,
+    const char *cacheDir, ULONG maxCacheSizeMB)
+{
+    FS3ENetMessage          msg;
+    FS3ENetSetCacheDirReq  *req;
+    BOOL                    ok;
+
+    if (!requestPort)
+        return FALSE;
+
+    req = FS3ENetSetCacheDirReq_Alloc(cacheDir, maxCacheSizeMB);
+    if (!req)
+        return FALSE;
+
+    memset(&msg, 0, sizeof(msg));
+    msg.fs3em_Msg.mn_ReplyPort = replyPort;
+    msg.fs3em_Msg.mn_Length    = sizeof(msg);
+    msg.fs3em_Type             = FS3ENETQ_SET_CACHE_DIR;
+    msg.fs3em_Data             = req;
+    msg.fs3em_DataLen          = sizeof(*req);
+
+    PutMsg(requestPort, (struct Message *)&msg);
+
+    WaitPort(replyPort);
+    GetMsg(replyPort);
+
+    /* On success the handler frees req itself and clears fs3em_Data; on
+     * error it leaves fs3em_Data pointing at req (same convention as every
+     * other handler's error path), so this FreeVec is only live then --
+     * FreeVec(NULL) is a safe no-op. */
+    ok = (msg.fs3em_Result == FS3ENETR_OK);
+    FreeVec(msg.fs3em_Data);
+
+    return ok;
 }
 
 /* Debug: peek how many requests are queued on requestPort without removing
@@ -1459,6 +1537,33 @@ static void FS3ENet_StepActiveDownloads(void)
     {
         dl->fs3ead_RetryCount = 0;
         gotLen = resp.fhr_BodyLen;
+
+#ifdef BDBTRACEMULTIPART
+        /* On the very first chunk, print a printable-only preview of what
+         * came back -- a server that doesn't honor Range (status != 206)
+         * or a redirect-following-less raw request landing on an HTML
+         * interstitial/error page instead of the archive still looks like
+         * a "successful" small chunk to the finished-check below (status
+         * 200 or gotLen < FS3ENET_CHUNK_SIZE); this makes that visible in
+         * the log instead of silently writing garbage to disk as if it
+         * were the whole file. */
+        if (dl->fs3ead_BytesSoFar == 0)
+        {
+            char        preview[81];
+            const UBYTE *body = (const UBYTE *)resp.fhr_Body;
+            ULONG n = gotLen < 80 ? gotLen : 80;
+            ULONG i;
+            for (i = 0; i < n; i++)
+            {
+                UBYTE c = body[i];
+                preview[i] = (c >= 32 && c < 127) ? (char)c : '.';
+            }
+            preview[n] = '\0';
+            bdbprintf_now("StepDL: first chunk url=%s status=%lu totalLen=%lu gotLen=%lu preview=\"%s\"\n",
+                           dl->fs3ead_Req->fs3enf_Url, (unsigned long)status,
+                           (unsigned long)totalLen, (unsigned long)gotLen, preview);
+        }
+#endif
 
         if (gotLen > 0 &&
             Write(dl->fs3ead_FH, resp.fhr_Body, (LONG)gotLen) != (LONG)gotLen)
@@ -2306,6 +2411,9 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
     v = cJSON_GetObjectItemCaseSensitive(src, "reblogged");
     dst->fmas_Reblogged = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
 
+    v = cJSON_GetObjectItemCaseSensitive(src, "sensitive");
+    dst->fmas_Sensitive = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
+
     v = cJSON_GetObjectItemCaseSensitive(src, "in_reply_to_id");
     dst->fmas_IsReply = (v && !cJSON_IsNull(v)) ? TRUE : FALSE;
 
@@ -2839,7 +2947,8 @@ static void FS3ENet_HandlePostStatus(FS3ENetMessage *fs3em)
 
 
     if (!FS3EMastodon_PostStatus(req->fs3ep_ApiBaseUrl, req->fs3ep_AccessToken,
-            req->fs3ep_Content, req->fs3ep_Visibility, req->fs3ep_InReplyToId,
+            req->fs3ep_Content, req->fs3ep_Visibility, (BOOL)req->fs3ep_Sensitive,
+            req->fs3ep_InReplyToId,
             req->fs3ep_QuoteApprovalPolicy, req->fs3ep_QuotedStatusId,
             (const char *const *)req->fs3ep_MediaIds, req->fs3ep_MediaCount,
             statusId, sizeof(statusId)))
@@ -2889,6 +2998,47 @@ static void FS3ENet_HandleEditStatus(FS3ENetMessage *fs3em)
 
     p = (char *)reply + sizeof(*reply);
     FS3ENet_PackStr(&reply->fs3ee_StatusId, &p, req->fs3ee_StatusId);
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
+/* FS3ENETQ_UPDATE_BIO — set the connected user's own profile bio (note).
+ * FS3EMastodon_UpdateBio hands back the server-echoed note as RAW HTML
+ * (same convention as FS3EMastodonAccount.fma_Note) -- StripHTML it here
+ * before packing the reply, same treatment every other bio/content field
+ * in this file already gets (see FS3ENet_HandleAccountLookup). */
+static void FS3ENet_HandleUpdateBio(FS3ENetMessage *fs3em)
+{
+    FS3ENetUpdateBioReq   *req = (FS3ENetUpdateBioReq *)fs3em->fs3em_Data;
+    FS3ENetUpdateBioReply *reply;
+    char  rawNote[2048];
+    char  stripped[2048];
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    if (!FS3EMastodon_UpdateBio(req->fs3eub_ApiBaseUrl, req->fs3eub_AccessToken,
+            req->fs3eub_Note, rawNote, sizeof(rawNote)))
+    {
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    StripHTML(rawNote, stripped, sizeof(stripped));
+
+    total = sizeof(FS3ENetUpdateBioReply) + FS3ENet_PackLen(stripped);
+    reply = (FS3ENetUpdateBioReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3eub_Note, &p, stripped);
 
     FreeVec(fs3em->fs3em_Data);
     fs3em->fs3em_Data    = reply;
@@ -3330,6 +3480,33 @@ static void FS3ENet_HandleFlushCache(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result = FS3ECache_Flush() ? FS3ENETR_OK : FS3ENETR_NETWORK_ERROR;
 }
 
+/* FS3ENETQ_SET_CACHE_DIR — live-swap the disk cache directory/max size
+ * without restarting the network process. FS3ECache_Init() is already
+ * safe to call again (FreeVec's the old g_CacheDir, mkdir's the new one,
+ * re-clamps g_MaxCacheBytes, and enforces the limit against whatever's
+ * already there) -- see fs3enet_cache.c. Files already cached under the
+ * old directory are simply left behind, same as if the new path had been
+ * set before this launch. */
+static void FS3ENet_HandleSetCacheDir(FS3ENetMessage *fs3em)
+{
+    FS3ENetSetCacheDirReq *req = (FS3ENetSetCacheDirReq *)fs3em->fs3em_Data;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    if (!FS3ECache_Init(req->fs3escd_CacheDir, req->fs3escd_MaxCacheSizeMB)) {
+        fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+        return;
+    }
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = NULL;
+    fs3em->fs3em_DataLen = 0;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
 /* Handles one request. FS3ENETQ_TIMELINE and FS3ENETQ_POST_STATUS are
  * stubbed until Phase 2 completes the timeline/post flow.
  *
@@ -3358,6 +3535,10 @@ static BOOL FS3ENet_Dispatch(FS3ENetMessage *fs3em)
             FS3ENet_HandleFlushCache(fs3em);
             break;
 
+        case FS3ENETQ_SET_CACHE_DIR:
+            FS3ENet_HandleSetCacheDir(fs3em);
+            break;
+
         case FS3ENETQ_TIMELINE:
             FS3ENet_HandleTimeline(fs3em);
             break;
@@ -3368,6 +3549,10 @@ static BOOL FS3ENet_Dispatch(FS3ENetMessage *fs3em)
 
         case FS3ENETQ_EDIT_STATUS:
             FS3ENet_HandleEditStatus(fs3em);
+            break;
+
+        case FS3ENETQ_UPDATE_BIO:
+            FS3ENet_HandleUpdateBio(fs3em);
             break;
 
         case FS3ENETQ_DELETE_STATUS:

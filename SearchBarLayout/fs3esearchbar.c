@@ -67,10 +67,17 @@ static void setBounds(Object *child, WORD l, WORD t, WORD w, WORD h)
 static void getChildDomain(Object *child, struct GadgetInfo *gi,
                             WORD *outW, WORD *outH)
 {
+
     struct gpDomain dm;
     dm.MethodID        = GM_DOMAIN;
     dm.gpd_GInfo       = gi;
-    dm.gpd_RPort       = NULL;
+    /* Was unconditionally NULL (a synthetic "probe" RastPort) -- chooser.gadget's
+     * own GM_LAYOUT-time GM_DOMAIN handling doesn't tolerate that (confirmed via
+     * MMU trap: NULL+offset read inside chooser.gadget's layout code). Use the
+     * real one when we have it; gi itself is still legitimately NULL before a
+     * window/screen exists (see SearchBarLayout_OnDomain's pre-window probe),
+     * so this must stay guarded, not just gi->gi_RastPort. */
+    dm.gpd_RPort       = gi ? gi->gi_RastPort : NULL;
     dm.gpd_Which       = GDOMAIN_MINIMUM;
     dm.gpd_Domain.Left = 0;
     dm.gpd_Domain.Top  = 0;

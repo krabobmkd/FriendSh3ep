@@ -39,6 +39,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Creating a new toot",
     /* MSG_TOOT_CONTEXT_MODIFY */
     "Modify your toot",
+    /* MSG_TOOT_CONTEXT_MODIFY_BIO */
+    "Modifying your bio",
     /* MSG_TOOT_CONTEXT_POLL */
     "Creating a new poll",
     /* MSG_TOOT_CONTEXT_REPLY_FORMAT */
@@ -49,6 +51,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Messaging %s",
     /* MSG_TOOT_ATTACH_MEDIA */
     "Attach Media",
+    /* MSG_TOOT_SENSITIVE */
+    "Sensitive content",
     /* MSG_TOOT_VISIBILITY_PUBLIC */
     "Public",
     /* MSG_TOOT_VISIBILITY_UNLISTED -- API value "unlisted", shown with the
@@ -223,6 +227,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Paths",
     /* MSG_SETTINGSV_CACHE_PATH */
     "Cache directory",
+    /* MSG_SETTINGSV_CACHE_PATH_APPLY */
+    "Apply",
     /* MSG_SETTINGSV_USERDATA_PATH */
     "User data directory",
     /* MSG_SETTINGSV_CACHE_GROUP */
@@ -259,6 +265,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "ScalePixelArray()",
     /* MSG_SETTINGSV_RGBDRAW_INTERNAL_BILINEAR */
     "Internal Bilinear (>=68060)",
+    /* MSG_SETTINGSV_THUMBNAILS_RESTART_NOTE */
+    "These settings apply only to thumbnails fetched after restarting FriendSh3ep.",
     /* MSG_SETTINGSV_TOOTPLAYBACK_GROUP */
     "Toot Timeline Playback",
     /* MSG_SETTINGSV_PLAY_TOOT_TIME */
@@ -330,13 +338,15 @@ static const char *defaultStrings[MSG_COUNT] = {
     " a qualified repair technician to service your machine.\n"
     "\n"
     " You may also configure the cache directory on a\n"
-    " non-sensitive drive. About 80MB is needed.\n"
+    " non-sensitive drive. 80Mb is minimum. If you have more than 128Mb,\n"
+    " RAM:T/cache will let your disk safe and speed up FriendSh3ep.\n\n"
     " You may delete the whole .cache dir at any moment.\n"
+    " Note PROGDIR: is just your installation directory.\n"
     "\n"
-    "\n"
+    " Configure the cache directory in:\n"
     "\n",
     /* MSG_FIRSTUSE_GADGETS */
-    "Go|Quit",
+    "PROGDIR:.cache|Ram:T/FriendSh3ep|Quit",
 };
 
 /* LocaleBase declared in friendsh3ep.c */

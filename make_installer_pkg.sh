@@ -38,6 +38,7 @@ check_file "$BUILD/FriendSh3ep"
 check_file "$SCRIPT_DIR/FriendSh3ep.info"
 check_file "$SCRIPT_DIR/FriendSh3ep.guide"
 check_file "$SCRIPT_DIR/FriendSh3ep.readme"
+check_file "$SCRIPT_DIR/LICENSE"
 check_file "$INSTALLER_SRC/Install"
 check_file "$INSTALLER_SRC/Install.info"
 check_file "$INSTALLER_SRC/FriendSh3ep.guide.info"
@@ -95,6 +96,7 @@ cp "$SCRIPT_DIR/FriendSh3ep.guide"            "$PKG/FriendSh3ep.guide"
 cp "$INSTALLER_SRC/FriendSh3ep.guide.info"   "$PKG/FriendSh3ep.guide.info"
 cp "$SCRIPT_DIR/FriendSh3ep.readme"           "$PKG/FriendSh3ep.readme"
 cp "$INSTALLER_SRC/FriendSh3ep.readme.info"  "$PKG/FriendSh3ep.readme.info"
+cp "$SCRIPT_DIR/LICENSE"                      "$PKG/LICENSE"
 
 # ---------------------------------------------------------------------------
 # Summary

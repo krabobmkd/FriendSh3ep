@@ -6,6 +6,7 @@
 ;   - themes/                    -> <dest>/themes/
 ;   - FriendSh3ep.guide          -> <dest>/
 ;   - FriendSh3ep.readme         -> <dest>/
+;   - LICENSE                    -> <dest>/
 ;
 ; FriendSh3ep itself needs EmojiGear v5.1 (utf8rastport.library,
 ; unitexteditor.gadget, unibutton.gadget) and AmiSSL v5 already installed --
@@ -99,6 +100,10 @@
     (source "FriendSh3ep.readme")
     (dest #dest)
     (infos)
+)
+(copyfiles
+    (source "LICENSE")
+    (dest #dest)
 )
 
 (complete 100)

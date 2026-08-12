@@ -33,13 +33,16 @@ enum {
     MSG_TOOT_TITLE,
     MSG_TOOT_CONTEXT_NEW,          /* FS3ETOOT_KIND_NEW contextMessage text */
     MSG_TOOT_CONTEXT_MODIFY,       /* FS3ETOOT_KIND_MODIFY contextMessage text */
+    MSG_TOOT_CONTEXT_MODIFY_BIO,   /* FS3ETOOT_KIND_MODIFY_BIO contextMessage text */
     MSG_TOOT_CONTEXT_POLL,         /* FS3ETOOT_KIND_POLL contextMessage text */
     MSG_TOOT_CONTEXT_REPLY_FORMAT, /* FS3ETOOT_KIND_REPLY contextMessage format: "Reply to %s's
                                      * toot" + a second line reminding to stay civil -- UniButton
                                      * renders the embedded \n\n as real line breaks */
     MSG_TOOT_CONTEXT_QUOTE_FORMAT, /* FS3ETOOT_KIND_QUOTE contextMessage format: "Quoting %s's toot" */
     MSG_TOOT_CONTEXT_MESSAGE_FORMAT, /* FS3ETOOT_KIND_MESSAGE contextMessage format: "Messaging %s" */
-    MSG_TOOT_ATTACH_MEDIA, /* "Attach Media" -- label above the attachMediaGF/attachMediaClearBtn row */
+    MSG_TOOT_ATTACH_MEDIA, /* "Attach Media" -- label above the attachMediaGF/attachMediaClearBtn row,
+                             * reused as-is for the attachMedia2GF/attachMedia2ClearBtn row below it */
+    MSG_TOOT_SENSITIVE,    /* "Sensitive content" -- label next to sensitiveCheck in bottomBar */
     MSG_TOOT_VISIBILITY_PUBLIC,
     MSG_TOOT_VISIBILITY_UNLISTED,
     MSG_TOOT_VISIBILITY_PRIVATE,
@@ -168,6 +171,9 @@ enum {
     MSG_SETTINGSV_TITLE,
     MSG_SETTINGSV_PATHS_GROUP,
     MSG_SETTINGSV_CACHE_PATH,
+    MSG_SETTINGSV_CACHE_PATH_APPLY,     /* "Apply" button next to the cache path gadget --
+                                          * applies a typed-in-place path without opening
+                                          * the requester (see GID_SETTINGSV_CACHE_PATH_APPLY) */
     MSG_SETTINGSV_USERDATA_PATH,
     MSG_SETTINGSV_CACHE_GROUP,
     MSG_SETTINGSV_MAX_CACHE_SIZE,
@@ -186,6 +192,13 @@ enum {
     MSG_SETTINGSV_RGB_DRAW_FUNCTION,
     MSG_SETTINGSV_RGBDRAW_SCALEPIXELARRAY,
     MSG_SETTINGSV_RGBDRAW_INTERNAL_BILINEAR,
+    /* Read-only note under the 4 thumbnail/icon-scaling controls above
+     * (biggerThumbnailsCheck/minifyThumbnailsCheck/scalingQualityChooser/
+     * rgbDrawFunctionChooser) -- unlike every other setting in this window,
+     * changing those 4 doesn't retroactively redecode/rescale thumbnails
+     * already fetched this session, so the change won't visibly take
+     * effect until FriendSh3ep is restarted. */
+    MSG_SETTINGSV_THUMBNAILS_RESTART_NOTE,
     MSG_SETTINGSV_TOOTPLAYBACK_GROUP, /* was "Playback", now "Toot Timeline Playback" */
     MSG_SETTINGSV_PLAY_TOOT_TIME,
     MSG_SETTINGSV_SMOOTH_AUTO_SCROLL,
@@ -231,11 +244,17 @@ enum {
     MSG_NETWORKV_IDLE,           /* default status-bar text, no activity yet */
 
     /* First-use disk-cache-usage warning (friendsh3ep.c, main()) -- shown
-     * once via EasyRequestArgs right after the main window first opens,
-     * gated on app->settings.warningDone (fs3esettings.h). */
+     * once via EasyRequestArgs before the network process starts and before
+     * the main window opens (NULL window, screen-wide requester), gated on
+     * app->settings.warningDone (fs3esettings.h). The 3 gadgets double as
+     * the cache directory picker: the two non-Quit choices are directory
+     * paths, written straight into app->settings.cachePath before
+     * FS3ENet_Start() ever runs. */
     MSG_FIRSTUSE_TITLE,          /* window title */
     MSG_FIRSTUSE_TEXT,           /* body text, \n-separated lines */
-    MSG_FIRSTUSE_GADGETS,        /* es_GadgetFormat: "Go|Quit" -- Go=1, Quit(rightmost)=0 */
+    MSG_FIRSTUSE_GADGETS,        /* es_GadgetFormat: "PROGDIR:.cache|Ram:T/FriendSh3ep|Quit" --
+                                   * left-to-right numbering is 1,...,N-1,0: PROGDIR:.cache=1,
+                                   * Ram:T/FriendSh3ep=2, Quit(rightmost)=0 */
 
     /* Must be last */
     MSG_COUNT

@@ -8,7 +8,7 @@
 #include "fs3esettings.h"
 #include "friendsh3ep.h"
 #include "fs3eboopsimainwindow.h"
-#include "../EmojiGear/tooltypepref.h"
+#include "tooltypepref.h"
 #include "network_fs3e/fs3enet_cache.h"
 
 #include <stdio.h>
