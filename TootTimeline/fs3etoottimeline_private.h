@@ -372,6 +372,32 @@ typedef struct TTLPost {
     BOOL   isOwn;      /* see TTLPostSetup.isOwn */
     BOOL   isThreadReply; /* see TTLPostSetup.isThreadReply */
 
+    /* Server-side translation -- see TTLPostSetup.canTranslate/language and
+     * TTL_HOT_TRANSLATE. canTranslate/language are copied straight from
+     * setup (like sensitive above); origBody/translatedBody/
+     * showingTranslation are purely local state this gadget owns.
+     * origBody is an independent AllocVec'd copy of the untranslated body,
+     * taken once at alloc time (and refreshed alongside body on
+     * TTIMELINE_RefreshPost) -- kept separate from `body` above so `body`
+     * itself can be freely swapped to point at a fresh copy of either
+     * buffer's content without ever losing the other (see
+     * TTIMELINE_ApplyTranslation's handling in fs3etoottimeline_attribs.c;
+     * layout/render/hot-spot-scanning only ever read `body`, unchanged).
+     * translatedBody is NULL until a translation is actually fetched;
+     * non-NULL from then on for the lifetime of this TTLPost (cleared and
+     * re-fetchable again only via a full TTIMELINE_RefreshPost, which
+     * treats a content refetch as a new post's worth of text). */
+    BOOL   canTranslate;
+    char  *language;
+    char  *origBody;
+    char  *translatedBody;
+    BOOL   showingTranslation;
+    /* "Translate"/"Original Text" row -- post-relative Y, computed once by
+     * ttl_toot_layout and reused as-is by render/build_hotspots, same
+     * "store once, never re-derive" rule as threadRowY/pollBlockY. 0 when
+     * !canTranslate (no row reserved). */
+    WORD   translateRowY;
+
     /* Sensitive-content blur/reveal -- see TTLPostSetup.sensitive's doc
      * comment. sensitive is copied straight from the server; contentRevealed
      * is purely local/transient UI state (never sent anywhere, reset back to
@@ -954,6 +980,13 @@ void     ttl_boundary_render(TTLData *inst, struct RastPort *rp,
  * fs3etoottimeline_profile.c. */
 extern const TTLItemClass TTLProfileHeader_Class;
 TTLPost *ttl_profile_header_alloc(const TTLProfileHeaderSetup *setup); /* fs3etoottimeline_profile.c */
+
+/* Server/instance info header row (see TTIMELINE_ShowInstanceInfo) -- same
+ * "lives outside channel->posts, in TTLChannel.headerPost" placement as
+ * TTLProfileHeader_Class above, just a simpler row (no avatar/buttons).
+ * Defined in the new fs3etoottimeline_instance.c. */
+extern const TTLItemClass TTLInstanceHeader_Class;
+TTLPost *ttl_instance_header_alloc(const TTLInstanceHeaderSetup *setup); /* fs3etoottimeline_instance.c */
 
 /* Account-only notification row (FOLLOW/FOLLOW_REQUEST -- see
  * TTLPostSetup.notifType) -- unlike TTLProfileHeader_Class above, this IS

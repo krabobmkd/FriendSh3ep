@@ -50,6 +50,7 @@
 #define TT_DIRECTDLARCHIVES   "DIRECTDOWNLOADARCHIVES" /* "1" or "0"              */
 #define TT_DOWNLOADPATH       "DOWNLOADPATH"        /* download directory path    */
 #define TT_TOOTACTIONSDBLCLICK "TOOTACTIONSNEEDDOUBLECLICK" /* "1" or "0"         */
+#define TT_TOOTLANGUAGE       "TOOTLANGUAGE"        /* ISO 639 code, "" = unspecified */
 #define TT_WARNINGDONE        "WARNINGDONE"         /* "1" or "0"                  */
 
 /* -------------------------------------------------------------------------- */
@@ -230,6 +231,12 @@ void FS3ESettings_Load(FS3ESettings *s)
     val = ToolTypePrefs_Get(TT_TOOTACTIONSDBLCLICK);
     if (val) s->tootActionsNeedDoubleClick = (val[0] != '0');
 
+    /* "" (unspecified) if never saved before -- Get returns NULL for a
+     * missing key (never saved) vs. "" for a present-but-empty one (saved
+     * as unspecified last time); both cases want the same default here. */
+    val = ToolTypePrefs_Get(TT_TOOTLANGUAGE);
+    s->tootLanguage = StrDup(val ? val : "");
+
     s->warningDone = FALSE;
     val = ToolTypePrefs_Get(TT_WARNINGDONE);
     if (val) s->warningDone = (val[0] != '0');
@@ -391,6 +398,11 @@ void FS3ESettings_Save(FS3ESettings *s)
 
     ToolTypePrefs_Set(TT_TOOTACTIONSDBLCLICK, s->tootActionsNeedDoubleClick ? "1" : "0");
 
+    /* Written even when empty ("" = unspecified is a real, meaningful
+     * value here, not "no override" the way themeName's removed-when-empty
+     * convention means) -- see this field's own comment in fs3esettings.h. */
+    ToolTypePrefs_Set(TT_TOOTLANGUAGE, s->tootLanguage ? s->tootLanguage : "");
+
     ToolTypePrefs_Set(TT_WARNINGDONE, s->warningDone ? "1" : "0");
 
     /* Main window position */
@@ -452,6 +464,7 @@ void FS3ESettings_Close(FS3ESettings *s)
     FreeVec(s->cachePath);         s->cachePath         = NULL;
     FreeVec(s->userDataPath);      s->userDataPath      = NULL;
     FreeVec(s->downloadPath);      s->downloadPath      = NULL;
+    FreeVec(s->tootLanguage);      s->tootLanguage      = NULL;
 
     ToolTypePrefs_Close();
 }

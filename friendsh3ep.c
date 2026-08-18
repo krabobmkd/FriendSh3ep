@@ -110,6 +110,7 @@
 #include "fs3ethemeview.h"
 #include "fs3eemojibox.h"
 #include "fs3elocale.h"
+#include "fs3eoslocale.h"
 #include "fs3emenu.h"
 #include "fs3eaction.h"
 #include "fs3etimer.h"
@@ -558,12 +559,16 @@ static const char *QuotePolicyString(LONG idx)
  * sites (and a third one, this function itself, for the deferred-upload
  * path via pendingTootBody). sensitive maps straight to Mastodon's
  * `sensitive` flag on the POST path only -- MODIFY doesn't send it, same
- * as it already doesn't send visibility/spoiler (see below).
+ * as it already doesn't send visibility/spoiler (see below). language is
+ * the same story -- an ISO 639 code from FS3ETootView_GetLanguage() (""
+ * = unspecified, omitted entirely -- see FS3EMastodon_PostStatus), sent
+ * on the POST path only; Mastodon's edit endpoint doesn't accept changing
+ * it either.
  *
  * Not static: fs3erequests.c's FS3ENETQ_UPLOAD_MEDIA reply handler calls
  * this directly too -- see the extern declaration there. */
 void FS3EApp_SubmitToot(const char *body, LONG visibility, LONG quotePolicy,
-                         BOOL sensitive,
+                         BOOL sensitive, const char *language,
                          const char *const *newMediaIds, ULONG newMediaCount)
 {
     if (!body || !body[0] || !app->accountAccessToken) {
@@ -625,7 +630,7 @@ void FS3EApp_SubmitToot(const char *body, LONG visibility, LONG quotePolicy,
                 app->accountApiBaseUrl, app->accountAccessToken,
                 body, VisibilityString(visibility), sensitive, "",
                 inReplyToId, QuotePolicyString(quotePolicy), quotedStatusId,
-                mediaIds, mediaCount);
+                mediaIds, mediaCount, language);
         FreeVec((APTR)body);
         FS3EApp_NetSend(FS3ENETQ_POST_STATUS, req, sizeof(*req));
     }
@@ -1128,6 +1133,8 @@ void StartSearchFromLine()
 
     if (active == FS3ESEARCHTYPE_PEOPLE) {
         FS3EApp_SearchAccount(text);
+    } else if (active == FS3ESEARCHTYPE_SERVER) {
+        FS3EApp_SearchInstance(text);
     } else {
         /* Hashtag ("#tag", '#' kept as typed/
          * prefilled -- see TTL_HOT_HASHTAG
@@ -1260,6 +1267,7 @@ int main(int argc, char **argv)
 
     LocaleBase = (struct LocaleBase *)OpenLibrary("locale.library", 38);
     FS3ELocale_Init("FriendSh3ep.catalog", 0);
+    FS3EOSLocale_Init();
     FS3EAction_Init();
 
     app = (struct App *)AllocVec(sizeof(struct App), MEMF_CLEAR);
@@ -1628,9 +1636,9 @@ int main(int argc, char **argv)
      * fs3etootview.c's visibilityChooser. */
     NewList(&app->searchWordTypeList);
     {
-        static const ULONG searchTypeMsgIds[2] = { MSG_SEARCH_TYPE_WORD, MSG_SEARCH_TYPE_PEOPLE };
+        static const ULONG searchTypeMsgIds[3] = { MSG_SEARCH_TYPE_WORD, MSG_SEARCH_TYPE_PEOPLE, MSG_SEARCH_TYPE_SERVER };
         int i;
-        for (i = 0; i < 2; i++) {
+        for (i = 0; i < 3; i++) {
             struct Node *node = NULL;
             if (ChooserBase)
                 node = AllocChooserNode(CNA_Text, (ULONG)LOC(searchTypeMsgIds[i]), TAG_END);
@@ -1781,6 +1789,15 @@ int main(int argc, char **argv)
      * FS3EApp_SeedDefaultAnonymousAccount() above -- needs a live
      * netRequestPort, which didn't exist yet back there. */
     FS3EApp_VerifyStoredAccount(); /* no-op for the anonymous account seeded above (empty token) */
+
+    /* Same "needs a live netRequestPort" fix as FS3EApp_VerifyStoredAccount()
+     * just above -- FS3EApp_SetAccount()'s own FS3ENETQ_INSTANCE_INFO fire
+     * (from FS3EApp_LoadAccount()/FS3EApp_SeedDefaultAnonymousAccount()
+     * above) silently dropped every cold boot with no netRequestPort yet,
+     * leaving accountMaxChars/accountTranslationEnabled stuck unknown for
+     * the whole session (no error, just a message that never went
+     * anywhere) -- see FS3EApp_RequestInstanceInfo's own doc comment. */
+    FS3EApp_RequestInstanceInfo();
 
 // printf("fs3e_setViewMode\n");
     /* Home by default for a real login -- it needs a token and would just
@@ -2391,6 +2408,7 @@ int main(int argc, char **argv)
                                 LONG visibility     = FS3ETootView_GetVisibility(&app->tootView);
                                 LONG quotePolicy    = FS3ETootView_GetQuotePolicy(&app->tootView);
                                 BOOL sensitive      = FS3ETootView_GetSensitive(&app->tootView);
+                                const char *language = FS3ETootView_GetLanguage(&app->tootView);
 
                                 if (app->tootView.composeKind == FS3ETOOT_KIND_MODIFY_BIO) {
                                     /* No status, no attachments/visibility/
@@ -2437,7 +2455,7 @@ int main(int argc, char **argv)
                                         FreeVec((APTR)body);
                                     } else if (st1 != FS3ETOOT_ATTACH_OK && st2 != FS3ETOOT_ATTACH_OK) {
                                         /* Neither row has a file -- send as-is. */
-                                        FS3EApp_SubmitToot(body, visibility, quotePolicy, sensitive, NULL, 0);
+                                        FS3EApp_SubmitToot(body, visibility, quotePolicy, sensitive, language, NULL, 0);
                                     } else {
                                         /* At least one attachment ready -- upload it first; queue
                                          * the second behind it if both are ready (Mastodon's media
@@ -2464,6 +2482,9 @@ int main(int argc, char **argv)
                                         app->pendingTootVisibility  = visibility;
                                         app->pendingTootQuotePolicy = quotePolicy;
                                         app->pendingTootSensitive   = sensitive;
+                                        strncpy(app->pendingTootLanguage, language,
+                                                sizeof(app->pendingTootLanguage) - 1);
+                                        app->pendingTootLanguage[sizeof(app->pendingTootLanguage) - 1] = '\0';
                                         app->pendingTootMediaCount  = 0;
                                         app->pendingTootMediaIds[0] = NULL;
                                         app->pendingTootMediaIds[1] = NULL;
@@ -2722,6 +2743,31 @@ int main(int argc, char **argv)
                                              * menu entry, same reasoning
                                              * as Action_ToggleFavorite. */
                                             Action_ToggleFollow(app, app->searchProfileAccountId, hotSpotFollowing);
+                                            break;
+
+                                        case TTL_HOT_TRANSLATE:
+                                            /* hotSpotString is the "already
+                                             * cached" sentinel ("1") set by
+                                             * ttl_toot_build_hotspots when
+                                             * post->translatedBody is
+                                             * already fetched -- see
+                                             * TTL_HOT_TRANSLATE's own doc
+                                             * comment in fs3etoottimeline.h.
+                                             * Non-NULL: pure local toggle,
+                                             * no network round-trip. NULL:
+                                             * fetch a translation first. */
+                                            if (hotSpotString) {
+                                                TTLTranslationSetup setup;
+                                                setup.postId         = hotSpotId;
+                                                setup.translatedText = NULL;
+                                                SetAttrs(app->tootTimeline, TTIMELINE_ApplyTranslation,
+                                                         (ULONG)&setup, TAG_DONE);
+                                                if (CurrentMainWindow)
+                                                    RefreshGList((struct Gadget *)app->tootTimeline,
+                                                                 CurrentMainWindow, NULL, 1);
+                                            } else {
+                                                FS3EApp_TranslateStatus(hotSpotId);
+                                            }
                                             break;
 
                                         case TTL_HOT_FOLLOWERS_LIST:

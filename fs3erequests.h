@@ -39,6 +39,11 @@ void FS3EApp_OpenDiscussion(const char *statusId, BOOL includeAncestors);
  * data in place (see TTIMELINE_GetVisiblePosts/RefreshPost). */
 void FS3EApp_RefreshVisibleToots(void);
 
+/* TTL_HOT_TRANSLATE click ("not cached yet" branch) -- fires
+ * FS3ENETQ_TRANSLATE_STATUS for postId, targeting the OS's own preferred
+ * language (FS3EOSLocale_LanguageCode()). See fs3erequests.c. */
+void FS3EApp_TranslateStatus(const char *postId);
+
 /* Word/hashtag search in the Search channel. */
 void FS3EApp_SearchWord(const char *query);
 
@@ -46,6 +51,14 @@ void FS3EApp_SearchWord(const char *query);
  * rows, no profile header) -- single page only, see FS3ENETQ_ACCOUNTS_LIST's
  * doc comment in fs3enet.h. */
 void FS3EApp_SearchAccount(const char *query);
+
+/* "Tell me about this server" lookup in the Search channel -- domainOrUrl
+ * may be a bare domain ("mastodon.social") or a full "https://..." URL;
+ * works for ANY reachable Mastodon-API-compatible server, not just the
+ * connected account's own (no access token needed, see
+ * FS3ENETQ_INSTANCE_DETAILS' doc comment in fs3enet.h). See fs3erequests.c
+ * for the full doc comment. */
+void FS3EApp_SearchInstance(const char *domainOrUrl);
 
 /* Show app->searchProfileAccountId's followers/following list in the Search
  * channel, same flat account-row list as FS3EApp_SearchAccount -- called

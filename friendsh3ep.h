@@ -31,7 +31,7 @@
 #include "fs3esettings.h"
 #include "avatarimages.h"
 
-#define FRIENDSH3EP_VERSION "0.8.3"
+#define FRIENDSH3EP_VERSION "0.9.0"
 
 /* Login two-phase OAuth state machine */
 typedef enum {
@@ -70,15 +70,23 @@ typedef enum {
                              * flat list of TTLAccountRow_Class rows, no profile header */
     FS3ESEARCH_FOLLOWERS,  /* see FS3EApp_ShowFollowers(); searchProfileAccountId's
                              * followers, same flat account-row list */
-    FS3ESEARCH_FOLLOWING   /* see FS3EApp_ShowFollowing(); same, but following */
+    FS3ESEARCH_FOLLOWING,  /* see FS3EApp_ShowFollowing(); same, but following */
+    FS3ESEARCH_INSTANCE    /* see FS3EApp_SearchInstance(); "tell me about this
+                             * server" lookup -- a pinned TTLInstanceHeaderSetup
+                             * header (TTIMELINE_ShowInstanceInfo), no post list
+                             * below it, same "no toots to page" reasoning as
+                             * FS3ESEARCH_DISCUSSION has none either (that one
+                             * DOES have a post list though; this one has none
+                             * at all) */
 } FS3ESearchMode;
 
-/* searchWordTypeChooser's two entries (CHOOSER_Active), read by
- * StartSearchFromLine() to decide whether Return dispatches a word search
- * or an account search. */
+/* searchWordTypeChooser's three entries (CHOOSER_Active), read by
+ * StartSearchFromLine() to decide whether Return dispatches a word search,
+ * an account search, or a server lookup. */
 typedef enum {
     FS3ESEARCHTYPE_WORD = 0,
-    FS3ESEARCHTYPE_PEOPLE
+    FS3ESEARCHTYPE_PEOPLE,
+    FS3ESEARCHTYPE_SERVER
 } FS3ESearchTypeChoice;
 
 /* One saved "search view configuration" for the Back-navigation stack
@@ -181,7 +189,7 @@ struct App {
     int     searchWordEditor_activateNextRound;
     Object *searchWordTypeChooser;
     struct List   searchWordTypeList;
-    struct Node  *searchWordTypeNodes[2]; /* 0="Word", 1="People" -- see FS3ESearchTypeChoice */
+    struct Node  *searchWordTypeNodes[3]; /* 0="Word", 1="People", 2="Server" -- see FS3ESearchTypeChoice */
     Object *searchBackButton;
     Object *tootTimeline;
 
@@ -253,6 +261,11 @@ struct App {
     LONG   pendingTootVisibility;
     LONG   pendingTootQuotePolicy;
     BOOL   pendingTootSensitive;
+    char   pendingTootLanguage[8]; /* ISO 639 code copy (see FS3ETootView_GetLanguage) --
+                                     * fixed buffer, not AllocVec'd: codes are a handful
+                                     * of bytes at most, same "small enough to just copy"
+                                     * reasoning as pendingTootMedia2Path's mime type isn't
+                                     * but this is even smaller. "" = unspecified. */
 
     /* Second attach-media row (FS3ETootView.attachMedia2GF) queued behind
      * the first -- Mastodon's media endpoint takes one file per request, so
@@ -316,6 +329,17 @@ struct App {
      * FS3ENetInstanceInfoReply with fs3eii_Known TRUE.
      * See FS3EMastodon_GetInstanceInfo in network_fs3e/fs3enet_mastodon.h. */
     ULONG  accountMaxChars;
+
+    /* Whether the CONNECTED account's own server offers server-side toot
+     * translation (see FS3ENETQ_INSTANCE_INFO's fs3eii_TranslationEnabled/
+     * Known) -- drives whether TootTimeline offers a "Translate" hot-spot
+     * at all (see FS3EApp_MapStatusToPostSetup's canTranslate computation).
+     * accountTranslationEnabled is meaningless (FALSE) unless
+     * accountTranslationKnown is TRUE -- same "unknown isn't a confirmed
+     * no" rule as accountMaxChars/fs3eii_Known. Both reset FALSE on every
+     * real account change, same as accountMaxChars. */
+    BOOL   accountTranslationEnabled;
+    BOOL   accountTranslationKnown;
 
     /* VIEWMODE_User's own profile header (bio, follower/following counts --
      * see TTIMELINE_ShowProfile) -- fetched once per real account via

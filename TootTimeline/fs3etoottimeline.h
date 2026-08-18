@@ -211,6 +211,17 @@
  * for a different account id than accountId (a stale reply racing a new
  * profile being opened). */
 #define TTIMELINE_UpdateProfileBio    (TTIMELINE_Base + 43)
+/* [S] TTLInstanceHeaderSetup*: show a "tell me about this server" info
+ * block in setup->channel -- clears that channel and seeds it with a
+ * pinned header (domain/title, optional version subtitle, and one
+ * word-wrapped info block the caller has already formatted), with NO post
+ * list below it (unlike TTIMELINE_ShowProfile, this channel's own toots
+ * aren't fetched -- a server isn't a timeline). See FS3EApp_SearchInstance()
+ * (fs3erequests.c), which targets TTL_SEARCH_CHANNEL for both "look up any
+ * server" and "about the connected server". Same "header lives outside the
+ * channel's post list" placement as TTIMELINE_ShowProfile -- see
+ * TTLChannel.headerPost. */
+#define TTIMELINE_ShowInstanceInfo   (TTIMELINE_Base + 44)
 /* [S] any: like TTIMELINE_ClearPosts, but every channel (0..
  * TTIMELINE_NUM_VIEWMODES-1), not just the currently active one -- for
  * switching the connected account, where every channel's posts belong to
@@ -245,6 +256,24 @@
  * Silently a no-op if no channel currently has that postId, same as
  * TTIMELINE_UpdatePost/RemovePost. */
 #define TTIMELINE_RefreshPost         (TTIMELINE_Base + 34)
+/* [S] TTLTranslationSetup*: apply or toggle a translation for
+ * setup->postId (matched by targetId falling back to postId, same
+ * convention as TTIMELINE_UpdatePost). Two distinct meanings depending on
+ * setup->translatedText:
+ *   - non-NULL/non-empty: a translation was just fetched (see
+ *     FS3EApp_TranslateStatus/FS3ENETQ_TRANSLATE_STATUS) -- stored as the
+ *     post's translatedBody, shown immediately (showingTranslation=TRUE).
+ *   - NULL/"": no network round-trip involved -- toggles showingTranslation
+ *     between whatever's already cached (post->origBody vs
+ *     post->translatedBody); a no-op if translatedBody isn't cached yet
+ *     (shouldn't happen -- the click handler only sends this branch when
+ *     TTL_HOT_TRANSLATE's hot-spot data said it already was, see that
+ *     define's own comment).
+ * Either way, forces the same full-relayout path TTIMELINE_RefreshPost/
+ * UpdateProfileBio use (word-wrapped height can change between original
+ * and translated text). Silently a no-op if no channel currently has that
+ * postId, same as TTIMELINE_UpdatePost/RefreshPost. */
+#define TTIMELINE_ApplyTranslation    (TTIMELINE_Base + 45)
 
 /* ------------------------------------------------------------------ */
 /* Notification tags  (sent to ICA_TARGET via OM_NOTIFY)               */
@@ -564,6 +593,16 @@ typedef struct TTLPostSetup {
      * content yours to edit/delete. */
     BOOL        isOwn;
 
+    /* Server-side translation (see TTL_HOT_TRANSLATE and
+     * FS3EApp_MapStatusToPostSetup, which computes canTranslate from the
+     * connected account's own accountTranslationEnabled plus a language
+     * mismatch against FS3EOSLocale_LanguageCode()). canTranslate FALSE
+     * means language is irrelevant and not even read. language is the raw
+     * ISO 639 code from the server (may be "" -- undetected -- even when
+     * canTranslate is FALSE, which it always is in that case). */
+    BOOL        canTranslate;
+    const char *language;
+
     /* TRUE marks this post as one of the replies in a "discussion mode"
      * view (see TTL_HOT_THREAD) -- draws a full-height vertical accent
      * line down the tile's left edge, otherwise laid out identically to
@@ -655,6 +694,20 @@ typedef struct TTLPostUpdate {
 } TTLPostUpdate;
 
 /* ------------------------------------------------------------------ */
+/* Translation setup/toggle descriptor (passed via                     */
+/* TTIMELINE_ApplyTranslation) -- see that tag's own doc comment.      */
+/* The gadget copies translatedText; the caller owns the struct, same  */
+/* lifetime rule as TTLPostSetup/TTLPostUpdate.                        */
+/* ------------------------------------------------------------------ */
+
+typedef struct TTLTranslationSetup {
+    const char *postId;         /* which post (matched by targetId falling back to
+                                  * postId, see TTIMELINE_ApplyTranslation's comment) */
+    const char *translatedText; /* NULL/"" = pure local toggle; non-empty = a freshly
+                                  * fetched translation to store and show */
+} TTLTranslationSetup;
+
+/* ------------------------------------------------------------------ */
 /* Visible-posts query descriptor (passed via TTIMELINE_GetVisiblePosts) */
 /* Caller zeroes the struct, gadget fills entries[]/count in place; the  */
 /* gadget AllocVec's a copy of each id string, so the caller must        */
@@ -742,6 +795,27 @@ typedef struct TTLProfileBioUpdate {
                                * caller (same convention as
                                * TTLProfileHeaderSetup.bio) -- may be "" */
 } TTLProfileBioUpdate;
+
+/* ------------------------------------------------------------------ */
+/* Instance/server info header descriptor (passed via                  */
+/* TTIMELINE_ShowInstanceInfo) -- see that tag's comment. The gadget    */
+/* copies every string; the caller owns the struct, same lifetime rule */
+/* as TTLPostSetup/TTLProfileHeaderSetup.                               */
+/* ------------------------------------------------------------------ */
+
+typedef struct TTLInstanceHeaderSetup {
+    ULONG       channel;   /* fs3eViewMode channel this header targets -- see
+                             * TTLProfileHeaderSetup.channel's comment, same convention */
+    const char *domain;    /* shown as the big title line, e.g. "mastodon.social" */
+    const char *subtitle;  /* e.g. "Mastodon 4.2.1"; NULL/"" = no subtitle line */
+    const char *body;      /* pre-formatted, already word-wrap-ready plain text --
+                             * description, char/media/poll limits, translation
+                             * support, registrations, contact, rules, etc., all
+                             * folded into one blob by the caller (see
+                             * FS3EApp_SearchInstance, fs3erequests.c) -- TootTimeline
+                             * itself doesn't know or care what any of it means, same
+                             * as it doesn't parse a toot's own body */
+} TTLInstanceHeaderSetup;
 
 /* ------------------------------------------------------------------ */
 /* Hot-spot types  (forwarded in TTLHotSpotActivated notification)     */
@@ -852,6 +926,25 @@ typedef struct TTLProfileBioUpdate {
                                  * window (fs3etootview.c) in a new "modify bio" mode
                                  * prefilled with the current bio, same FS3ETootView_Open
                                  * pattern as TTL_HOT_MESSAGE. */
+#define TTL_HOT_TRANSLATE    26 /* "Translate"/"Original Text" row, shown only when
+                                 * post->canTranslate (see TTLPostSetup.canTranslate) --
+                                 * own dedicated row, same placement convention as
+                                 * TTL_HOT_THREAD/THREAD_UP (post->translateRowY).
+                                 * data/dataLen carry the sentinel string "1" (dataLen 1)
+                                 * when post->translatedBody is ALREADY cached at click
+                                 * time, NULL/0 when it isn't -- a non-NULL EMPTY string
+                                 * would NOT work as a distinct sentinel here (see
+                                 * ttl_notify_hotspot's "if (data && dataLen > 0)" check,
+                                 * which treats any dataLen==0 the same as data==NULL).
+                                 * This lets the click handler tell "just toggle back/
+                                 * forth locally (see TTIMELINE_ApplyTranslation,
+                                 * translatedText=NULL)" apart from "fetch a translation
+                                 * first (see FS3EApp_TranslateStatus)" without a separate
+                                 * notify tag. postId is this post's targetId (the id to
+                                 * translate), same convention as TTL_HOT_REPLY/BOOST/
+                                 * FAVORITE/MODIFY/DELETE/THREAD. The toggle itself (once
+                                 * cached) is purely local -- see TTIMELINE_ApplyTranslation's
+                                 * own doc comment. */
 
 /* Opaque handle; cast to TTLHotSpot* from private header if needed */
 typedef struct TTLHotSpot TTLHotSpot;

@@ -167,6 +167,19 @@ FS3ENetInstanceInfoReq *FS3ENetInstanceInfoReq_Alloc(const char *apiBaseUrl)
     return req;
 }
 
+FS3ENetInstanceDetailsReq *FS3ENetInstanceDetailsReq_Alloc(const char *apiBaseUrl)
+{
+    ULONG total = sizeof(FS3ENetInstanceDetailsReq) + FS3ENet_PackLen(apiBaseUrl);
+    FS3ENetInstanceDetailsReq *req =
+        (FS3ENetInstanceDetailsReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3eid_ApiBaseUrl, &p, apiBaseUrl);
+    return req;
+}
+
 FS3ENetTimelineReq *FS3ENetTimelineReq_Alloc(ULONG viewModeBit,
     ULONG pageDirection, ULONG accountGeneration, ULONG responseShape,
     const char *apiBaseUrl, const char *accessToken, const char *timeline,
@@ -203,7 +216,8 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     const char *content, const char *visibility, BOOL sensitive, const char *spoiler,
     const char *inReplyToId, const char *quoteApprovalPolicy,
     const char *quotedStatusId,
-    const char *const *mediaIds, ULONG mediaCount)
+    const char *const *mediaIds, ULONG mediaCount,
+    const char *language)
 {
     ULONG total = sizeof(FS3ENetPostStatusReq)
                 + FS3ENet_PackLen(apiBaseUrl)
@@ -213,7 +227,8 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
                 + FS3ENet_PackLen(spoiler)
                 + FS3ENet_PackLen(inReplyToId)
                 + FS3ENet_PackLen(quoteApprovalPolicy)
-                + FS3ENet_PackLen(quotedStatusId);
+                + FS3ENet_PackLen(quotedStatusId)
+                + FS3ENet_PackLen(language);
     FS3ENetPostStatusReq *req;
     char *p;
     ULONG i;
@@ -239,6 +254,7 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     for (; i < FS3ENET_MAX_MEDIA; i++)
         req->fs3ep_MediaIds[i] = NULL;
     req->fs3ep_MediaCount = mediaCount;
+    FS3ENet_PackStr(&req->fs3ep_Language, &p, language);
     return req;
 }
 
@@ -521,6 +537,28 @@ FS3ENetFollowReq *FS3ENetFollowReq_Alloc(
     FS3ENet_PackStr(&req->fs3efo_AccessToken, &p, accessToken);
     FS3ENet_PackStr(&req->fs3efo_AccountId,   &p, accountId);
     req->fs3efo_Follow = follow;
+    return req;
+}
+
+FS3ENetTranslateStatusReq *FS3ENetTranslateStatusReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *statusId, const char *targetLang)
+{
+    ULONG total = sizeof(FS3ENetTranslateStatusReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(statusId)
+                + FS3ENet_PackLen(targetLang);
+    FS3ENetTranslateStatusReq *req =
+        (FS3ENetTranslateStatusReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3ets_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3ets_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3ets_StatusId,    &p, statusId);
+    FS3ENet_PackStr(&req->fs3ets_TargetLang,  &p, targetLang);
     return req;
 }
 
@@ -1105,6 +1143,7 @@ static void FS3ENet_HandleInstanceInfo(FS3ENetMessage *fs3em)
     FS3ENetInstanceInfoReply *reply;
     ULONG maxChars;
     BOOL  known;
+    BOOL  translationEnabled, translationKnown;
 
     if (!req || fs3em->fs3em_DataLen < sizeof(*req))
     {
@@ -1119,7 +1158,8 @@ static void FS3ENet_HandleInstanceInfo(FS3ENetMessage *fs3em)
      * return value says whether that's a real, server-confirmed limit or
      * just the fallback guess, and the reply carries that distinction
      * through as fs3eii_Known so the GUI doesn't present a guess as fact. */
-    known = FS3EMastodon_GetInstanceInfo(req->fs3eii_ApiBaseUrl, &maxChars);
+    known = FS3EMastodon_GetInstanceInfo(req->fs3eii_ApiBaseUrl, &maxChars,
+                                          &translationEnabled, &translationKnown);
 
     reply = (FS3ENetInstanceInfoReply *)AllocVec(sizeof(FS3ENetInstanceInfoReply),
                                                   MEMF_ANY | MEMF_PUBLIC);
@@ -1128,12 +1168,98 @@ static void FS3ENet_HandleInstanceInfo(FS3ENetMessage *fs3em)
         fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
         return;
     }
-    reply->fs3eii_MaxChars = maxChars;
-    reply->fs3eii_Known    = known;
+    reply->fs3eii_MaxChars              = maxChars;
+    reply->fs3eii_Known                 = known;
+    reply->fs3eii_TranslationEnabled    = translationEnabled;
+    reply->fs3eii_TranslationKnown      = translationKnown;
 
     FreeVec(fs3em->fs3em_Data);
     fs3em->fs3em_Data    = reply;
     fs3em->fs3em_DataLen = sizeof(*reply);
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
+/* FS3ENETQ_INSTANCE_DETAILS -- see FS3EMastodon_GetInstanceDetails and this
+ * request's own doc comment in fs3enet.h. Same "fetch into a temp struct of
+ * individually-AllocVec'd strings, then pack into one flat reply block, then
+ * free the temp" pattern FS3ENet_HandleLoginFinish already uses for
+ * FS3EMastodonAccount. */
+static void FS3ENet_HandleInstanceDetails(FS3ENetMessage *fs3em)
+{
+    FS3ENetInstanceDetailsReq   *req = (FS3ENetInstanceDetailsReq *)fs3em->fs3em_Data;
+    FS3ENetInstanceDetailsReply *reply;
+    FS3EMastodonInstanceDetails  det;
+    ULONG total, i;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req))
+    {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    if (!FS3EMastodon_GetInstanceDetails(req->fs3eid_ApiBaseUrl, &det))
+    {
+        FS3EMastodonInstanceDetails_Free(&det);
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    total = sizeof(FS3ENetInstanceDetailsReply)
+          + FS3ENet_PackLen(det.fmid_Domain)
+          + FS3ENet_PackLen(det.fmid_Title)
+          + FS3ENet_PackLen(det.fmid_Version)
+          + FS3ENet_PackLen(det.fmid_Description)
+          + FS3ENet_PackLen(det.fmid_ContactEmail)
+          + FS3ENet_PackLen(det.fmid_ContactAccount);
+    for (i = 0; i < det.fmid_RuleCount; i++)
+        total += FS3ENet_PackLen(det.fmid_Rules[i]);
+
+    reply = (FS3ENetInstanceDetailsReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply)
+    {
+        FS3EMastodonInstanceDetails_Free(&det);
+        fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+        return;
+    }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr     (&reply->fs3eid_Domain,         &p, det.fmid_Domain);
+    FS3ENet_PackStrClean(&reply->fs3eid_Title,          &p, det.fmid_Title);
+    FS3ENet_PackStr     (&reply->fs3eid_Version,        &p, det.fmid_Version);
+    FS3ENet_PackStr     (&reply->fs3eid_Description,    &p, det.fmid_Description);
+    FS3ENet_PackStr     (&reply->fs3eid_ContactEmail,   &p, det.fmid_ContactEmail);
+    FS3ENet_PackStr     (&reply->fs3eid_ContactAccount, &p, det.fmid_ContactAccount);
+
+    reply->fs3eid_MaxChars              = det.fmid_MaxChars;
+    reply->fs3eid_MaxCharsKnown         = det.fmid_MaxCharsKnown;
+    reply->fs3eid_MaxMediaAttachments   = det.fmid_MaxMediaAttachments;
+    reply->fs3eid_ImageSizeLimit        = det.fmid_ImageSizeLimit;
+    reply->fs3eid_VideoSizeLimit        = det.fmid_VideoSizeLimit;
+    reply->fs3eid_PollMaxOptions        = det.fmid_PollMaxOptions;
+    reply->fs3eid_PollMaxExpirationSecs = det.fmid_PollMaxExpirationSecs;
+    reply->fs3eid_TranslationEnabled    = det.fmid_TranslationEnabled;
+    reply->fs3eid_TranslationKnown      = det.fmid_TranslationKnown;
+    reply->fs3eid_RegistrationsEnabled  = det.fmid_RegistrationsEnabled;
+    reply->fs3eid_RegistrationsKnown    = det.fmid_RegistrationsKnown;
+    reply->fs3eid_ApprovalRequired      = det.fmid_ApprovalRequired;
+    reply->fs3eid_UserCount             = det.fmid_UserCount;
+    reply->fs3eid_UserCountKnown        = det.fmid_UserCountKnown;
+    reply->fs3eid_StatusCount           = det.fmid_StatusCount;
+    reply->fs3eid_StatusCountKnown      = det.fmid_StatusCountKnown;
+    reply->fs3eid_ActiveMonthUsers      = det.fmid_ActiveMonthUsers;
+    reply->fs3eid_ActiveMonthUsersKnown = det.fmid_ActiveMonthUsersKnown;
+
+    reply->fs3eid_RuleCount = (det.fmid_RuleCount <= FS3ENET_MAX_INSTANCE_RULES)
+                            ? det.fmid_RuleCount : FS3ENET_MAX_INSTANCE_RULES;
+    for (i = 0; i < reply->fs3eid_RuleCount; i++)
+        FS3ENet_PackStrClean(&reply->fs3eid_Rules[i], &p, det.fmid_Rules[i]);
+
+    FS3EMastodonInstanceDetails_Free(&det);
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 
@@ -2057,6 +2183,12 @@ static ULONG FS3ENet_SizeStatusFields(const cJSON *item, const cJSON *src)
     v = cJSON_GetObjectItemCaseSensitive(src, "id");
     total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
 
+    /* fmas_Language -- belongs to src, same as content/media_attachments
+     * above. Nullable (JSON null when undetected), sized the same as any
+     * other possibly-absent string field. */
+    v = cJSON_GetObjectItemCaseSensitive(src, "language");
+    total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
     /* media_attachments belongs to src (the reblogged status for boosts),
      * same as "content" above. */
     v = cJSON_GetObjectItemCaseSensitive(src, "media_attachments");
@@ -2219,6 +2351,13 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
     v = cJSON_GetObjectItemCaseSensitive(src, "id");
     str = (v && cJSON_IsString(v)) ? v->valuestring : "";
     FS3ENet_PackStr(&dst->fmas_TargetId, p, str);
+
+    /* fmas_Language -- see the matching block in FS3ENet_SizeStatusFields.
+     * "" when the server left it JSON null (cJSON_IsString is FALSE for
+     * null, same NULL-safe fallback every other nullable field here uses). */
+    v = cJSON_GetObjectItemCaseSensitive(src, "language");
+    str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+    FS3ENet_PackStr(&dst->fmas_Language, p, str);
 
     /* media_attachments -- see the matching block in FS3ENet_SizeStatusFields. */
     v = cJSON_GetObjectItemCaseSensitive(src, "media_attachments");
@@ -2951,6 +3090,7 @@ static void FS3ENet_HandlePostStatus(FS3ENetMessage *fs3em)
             req->fs3ep_InReplyToId,
             req->fs3ep_QuoteApprovalPolicy, req->fs3ep_QuotedStatusId,
             (const char *const *)req->fs3ep_MediaIds, req->fs3ep_MediaCount,
+            req->fs3ep_Language,
             statusId, sizeof(statusId)))
     {
         fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
@@ -3474,6 +3614,52 @@ static void FS3ENet_HandleFollow(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 
+/* FS3ENETQ_TRANSLATE_STATUS -- see FS3EMastodon_TranslateStatus and this
+ * request's own doc comment in fs3enet.h. FS3EMastodon_TranslateStatus
+ * hands back RAW HTML (same convention as FS3EMastodon_UpdateBio's
+ * outNote) -- stripped here via StripHTML, same "GUI-side stripping"
+ * split every other toot/bio content field already follows in this file. */
+static void FS3ENet_HandleTranslateStatus(FS3ENetMessage *fs3em)
+{
+    FS3ENetTranslateStatusReq   *req = (FS3ENetTranslateStatusReq *)fs3em->fs3em_Data;
+    FS3ENetTranslateStatusReply *reply;
+    char rawContent[4096];
+    char stripped[4096];
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    rawContent[0] = '\0';
+    if (!FS3EMastodon_TranslateStatus(req->fs3ets_ApiBaseUrl, req->fs3ets_AccessToken,
+            req->fs3ets_StatusId, req->fs3ets_TargetLang,
+            rawContent, sizeof(rawContent)))
+    {
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    StripHTML(rawContent, stripped, sizeof(stripped));
+
+    total = sizeof(FS3ENetTranslateStatusReply)
+          + FS3ENet_PackLen(req->fs3ets_StatusId)
+          + FS3ENet_PackLen(stripped);
+    reply = (FS3ENetTranslateStatusReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3ets_StatusId,          &p, req->fs3ets_StatusId);
+    FS3ENet_PackStr(&reply->fs3ets_TranslatedContent, &p, stripped);
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
 /* FS3ENETQ_FLUSH_CACHE — delete every file in the disk cache directory. */
 static void FS3ENet_HandleFlushCache(FS3ENetMessage *fs3em)
 {
@@ -3599,8 +3785,16 @@ static BOOL FS3ENet_Dispatch(FS3ENetMessage *fs3em)
             FS3ENet_HandleFollow(fs3em);
             break;
 
+        case FS3ENETQ_TRANSLATE_STATUS:
+            FS3ENet_HandleTranslateStatus(fs3em);
+            break;
+
         case FS3ENETQ_INSTANCE_INFO:
             FS3ENet_HandleInstanceInfo(fs3em);
+            break;
+
+        case FS3ENETQ_INSTANCE_DETAILS:
+            FS3ENet_HandleInstanceDetails(fs3em);
             break;
 
         default:

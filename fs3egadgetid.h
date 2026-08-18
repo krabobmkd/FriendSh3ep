@@ -93,6 +93,7 @@
 #define GID_TOOT_SENSITIVE            220 /* "Sensitive content" checkbox, in bottomBar right before tootBtn */
 #define GID_TOOT_ATTACH_MEDIA2        221 /* second [getfile][X] attach-media row, below the first */
 #define GID_TOOT_ATTACH_MEDIA2_CLEAR  222
+#define GID_TOOT_LANGUAGE             223 /* language chooser, same column as GID_TOOT_SENSITIVE */
 
 /* General settings window (fs3esettingsview.c) */
 #define GID_SETTINGSV_CACHE_PATH      300

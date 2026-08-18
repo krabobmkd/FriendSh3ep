@@ -59,6 +59,7 @@ static FS3EAction s_actions[FS3EACTION_COUNT] = {
     /* FS3EACTION_VIEW_NEWS      */ { Action_ViewNews,     MSG_VIEW_NEWS,           NULL },
 
    /* FS3EACTION_VIEW_REFRESH   */ { Action_Refresh,     MSG_VIEW_REFRESH,           NULL },
+   /* FS3EACTION_VIEW_ABOUT_SERVER */ { Action_ViewAboutServer, MSG_MENU_ABOUT_SERVER, NULL },
 
     /* FS3EACTION_TIMELINE_NEXT_TOOT       */ { Action_TimelineNextToot,       MSG_TIMELINE_NEXT_TOOT,       NULL },
     /* FS3EACTION_TIMELINE_TOP             */ { Action_TimelineTop,            MSG_TIMELINE_TOP,             NULL },
@@ -236,6 +237,13 @@ BOOL Action_Refresh(struct App *ctx)
 {
     (void)ctx;
     FS3EApp_RefreshVisibleToots();
+    return TRUE;
+}
+
+BOOL Action_ViewAboutServer(struct App *ctx)
+{
+    if (!ctx->accountApiBaseUrl || !ctx->accountApiBaseUrl[0]) return FALSE;
+    FS3EApp_SearchInstance(ctx->accountApiBaseUrl);
     return TRUE;
 }
 

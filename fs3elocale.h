@@ -43,6 +43,7 @@ enum {
     MSG_TOOT_ATTACH_MEDIA, /* "Attach Media" -- label above the attachMediaGF/attachMediaClearBtn row,
                              * reused as-is for the attachMedia2GF/attachMedia2ClearBtn row below it */
     MSG_TOOT_SENSITIVE,    /* "Sensitive content" -- label next to sensitiveCheck in bottomBar */
+    MSG_TOOT_LANGUAGE,     /* "Language" -- label next to languageChooser, same column as sensitiveCheck */
     MSG_TOOT_VISIBILITY_PUBLIC,
     MSG_TOOT_VISIBILITY_UNLISTED,
     MSG_TOOT_VISIBILITY_PRIVATE,
@@ -107,6 +108,7 @@ enum {
     MSG_VIEW_NEWS,
 
     MSG_VIEW_REFRESH,
+    MSG_MENU_ABOUT_SERVER, /* "About This Server" -- see FS3EACTION_VIEW_ABOUT_SERVER */
 
     /* Menu: Timeline -- navigation/action shortcuts for whichever toot
      * list is currently on screen (see FS3EACTION_TIMELINE_* in
@@ -232,6 +234,7 @@ enum {
      * same order as FS3ESearchTypeChoice. */
     MSG_SEARCH_TYPE_WORD,
     MSG_SEARCH_TYPE_PEOPLE,
+    MSG_SEARCH_TYPE_SERVER,
 
     /* Network downloads window (fs3enetworkview.c) */
     MSG_NETWORKV_TITLE,          /* window title, and Settings menu entry */

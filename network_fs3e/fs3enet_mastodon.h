@@ -206,6 +206,13 @@ void FS3EMastodon_UrlEncode(const char *src, char *dst, ULONG dstSize);
  * uploaded -- see FS3EMastodon_UploadMedia) media ids to the new status,
  * same media_ids key FS3EMastodon_EditStatus sends; omitted entirely when
  * mediaCount==0, same "don't send an empty key" reasoning.
+ * language, if non-NULL/non-empty, is an ISO 639 code (e.g. "en", "fr" --
+ * see FS3ETootView_GetLanguage) sent as Mastodon's `language` field, telling
+ * the server (and other clients) what language this toot is written in.
+ * Omitted entirely when NULL/"" (FS3ETootView's "(Unspecified)" choice),
+ * same "don't send an empty key" reasoning as quotedStatusId -- an omitted
+ * language lets the server fall back to its own guess/the account's default,
+ * which an explicit empty string would not.
  */
 BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *statusText, const char *visibility,
@@ -214,6 +221,7 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *quoteApprovalPolicy,
                             const char *quotedStatusId,
                             const char *const *mediaIds, ULONG mediaCount,
+                            const char *language,
                             char *outStatusId, ULONG outStatusIdSize);
 
 /*
@@ -370,6 +378,30 @@ BOOL FS3EMastodon_Follow(const char *apiBaseUrl, const char *accessToken,
                          const char *accountId, BOOL follow,
                          BOOL *outFollowing);
 
+/*
+ * POST /api/v1/statuses/:id/translate (Mastodon 4.0+) -- asks the SERVER to
+ * translate statusId's content into targetLang (an ISO 639 code, e.g. "en"
+ * -- see FS3EOSLocale_LanguageCode()); "lang" is omitted from the request
+ * entirely when targetLang is NULL/"" (server falls back to its own
+ * default target), same "don't send an empty key" reasoning as
+ * FS3EMastodon_PostStatus's quotedStatusId. Requires the connected
+ * account's own server to have translation configured -- see
+ * FS3EMastodon_GetInstanceInfo's outTranslationEnabled/Known, checked
+ * client-side before this is ever called (fs3erequests.c's canTranslate
+ * computation) so a "not supported" 404/422 here should be rare in
+ * practice, not something this call retries or works around.
+ *
+ * On success, outContent is filled with the translation's "content" field
+ * -- RAW HTML, same convention as FS3EMastodonAccount.fma_Note/
+ * FS3EMastodon_UpdateBio's outNote (the caller, FS3ENet_HandleTranslateStatus
+ * in fs3enet.c, strips it the same way toot content already is) -- and
+ * returns TRUE. Deliberately does not surface detected_source_language or
+ * provider: neither is shown anywhere in the UI yet.
+ */
+BOOL FS3EMastodon_TranslateStatus(const char *apiBaseUrl, const char *accessToken,
+                                  const char *statusId, const char *targetLang,
+                                  char *outContent, ULONG outContentSize);
+
 /* Mastodon's own historical per-toot character limit -- used as
  * outMaxChars' fallback value by FS3EMastodon_GetInstanceInfo() when
  * neither the v2 nor v1 instance endpoint hands back a usable number, so
@@ -390,7 +422,113 @@ BOOL FS3EMastodon_Follow(const char *apiBaseUrl, const char *accessToken,
  * fallback default) -- callers that don't care about that distinction can
  * ignore the return value and just use outMaxChars either way.
  * No accessToken needed; both endpoints are public.
+ *
+ * outTranslationEnabled/outTranslationKnown read the SAME v2 response's
+ * configuration.translation.enabled (Mastodon 4.0+) -- no extra request.
+ * *outTranslationKnown is TRUE only when the server actually answered that
+ * field (v1-only servers, or v2 responses predating that field, leave it
+ * FALSE) -- callers must not treat outTranslationEnabled as a confirmed
+ * "no" when Known is FALSE, same "unknown isn't a negative" rule
+ * outMaxChars/return-value already follows above.
  */
-BOOL FS3EMastodon_GetInstanceInfo(const char *apiBaseUrl, ULONG *outMaxChars);
+BOOL FS3EMastodon_GetInstanceInfo(const char *apiBaseUrl, ULONG *outMaxChars,
+                                  BOOL *outTranslationEnabled, BOOL *outTranslationKnown);
+
+/* Max rules kept by FS3EMastodon_GetInstanceDetails() below -- mirrored as
+ * FS3ENET_MAX_INSTANCE_RULES in fs3enet.h (that header can't include this
+ * one's definition site without a circular include, same "self-contained
+ * plain mirror" convention TootTimeline's TTL_MEDIA_KIND_xxx /
+ * FS3ENetMediaKind pair already uses across this codebase's module
+ * boundaries -- see fs3etoottimeline.h's own comment on that). Both MUST
+ * stay numerically equal. */
+#define FS3E_MASTODON_MAX_RULES 16
+
+/*
+ * Richer sibling of FS3EMastodon_GetInstanceInfo() above -- everything a
+ * "tell me about this server" display wants, not just the compose-time
+ * character limit. Used by FS3EApp_SearchInstance() (fs3erequests.c) to
+ * look up ANY server the user types a domain for, not just the connected
+ * account's own instance -- every field here comes from Mastodon's public
+ * instance endpoints, so no access token is needed and the target server
+ * doesn't need to be one the user has an account on.
+ *
+ * All char * fields are individually AllocVec'd (NULL if the server didn't
+ * provide that field) -- free with FS3EMastodonInstanceDetails_Free(). The
+ * *Known BOOL siblings distinguish "the server told us FALSE/0" from "we
+ * couldn't determine this at all" (e.g. an older server with no
+ * configuration.translation block) -- callers must not present an unknown
+ * field as a confirmed negative (same reasoning FS3EMastodon_GetInstanceInfo's
+ * own outMaxChars/return-value pair already follows for max chars).
+ */
+typedef struct FS3EMastodonInstanceDetails
+{
+    char *fmid_Domain;         /* "" if the server didn't echo its own domain */
+    char *fmid_Title;
+    char *fmid_Version;
+    char *fmid_Description;    /* plain text (v2's "description"); raw HTML only
+                                 * on the v1-only fallback path (old/uncommon
+                                 * servers unreachable via v2) -- not stripped,
+                                 * see FS3EMastodon_GetInstanceDetails' comment */
+    char *fmid_ContactEmail;
+    char *fmid_ContactAccount; /* acct string, NULL if none given */
+
+    ULONG fmid_MaxChars;
+    BOOL  fmid_MaxCharsKnown;
+    ULONG fmid_MaxMediaAttachments;
+    ULONG fmid_ImageSizeLimit;   /* bytes, 0 = unknown */
+    ULONG fmid_VideoSizeLimit;   /* bytes, 0 = unknown */
+    ULONG fmid_PollMaxOptions;
+    ULONG fmid_PollMaxExpirationSecs;
+
+    BOOL  fmid_TranslationEnabled; /* configuration.translation.enabled (v2, Mastodon
+                                     * 4.0+) -- whether THIS server offers server-side
+                                     * toot translation at all */
+    BOOL  fmid_TranslationKnown;
+
+    BOOL  fmid_RegistrationsEnabled;
+    BOOL  fmid_RegistrationsKnown;
+    BOOL  fmid_ApprovalRequired;   /* meaningful only if RegistrationsKnown && Enabled */
+
+    ULONG fmid_UserCount;          /* v1-only "stats" -- v2 dropped totals in favor of
+                                     * ActiveMonthUsers below, so this is fetched via a
+                                     * supplemental v1 GET even when v2 succeeded */
+    BOOL  fmid_UserCountKnown;
+    ULONG fmid_StatusCount;
+    BOOL  fmid_StatusCountKnown;
+    ULONG fmid_ActiveMonthUsers;   /* v2's usage.users.active_month */
+    BOOL  fmid_ActiveMonthUsersKnown;
+
+    ULONG fmid_RuleCount;
+    char *fmid_Rules[FS3E_MASTODON_MAX_RULES]; /* server rules' "text", in order */
+} FS3EMastodonInstanceDetails;
+
+/* Frees every individually-AllocVec'd field, including fmid_Rules[0..RuleCount).
+ * Safe to call on an all-zero (memset) struct, same convention as
+ * FS3EMastodonAccount_Free(). */
+void FS3EMastodonInstanceDetails_Free(FS3EMastodonInstanceDetails *details);
+
+/*
+ * GET /api/v2/instance, falling back to GET /api/v1/instance in full if v2
+ * is unreachable or unparseable (mirrors FS3EMastodon_GetInstanceInfo's own
+ * fallback). When v2 DOES succeed, a supplemental GET /api/v1/instance is
+ * still made afterward purely for its "stats" object (user_count/
+ * status_count) -- v2 no longer exposes those totals, only the monthly
+ * active count -- best-effort: a failure of that second call is silently
+ * ignored, leaving fmid_UserCountKnown/StatusCountKnown FALSE rather than
+ * failing the whole lookup over a field this call's caller may not even
+ * display.
+ *
+ * *out is memset to zero before anything else, so every field is in a
+ * defined (NULL/0/FALSE) state even on total failure.
+ *
+ * Returns TRUE if at least one instance endpoint answered with parseable
+ * JSON (i.e. *out carries real, if partial, server data) -- FALSE means the
+ * server was unreachable outright (DNS/connect/TLS failure, or neither
+ * endpoint returned anything cJSON could parse), same "confirmed reachable
+ * vs. never got an answer" distinction FS3EMastodon_VerifyCredentials'
+ * outRejected already draws elsewhere in this file.
+ */
+BOOL FS3EMastodon_GetInstanceDetails(const char *apiBaseUrl,
+                                     FS3EMastodonInstanceDetails *out);
 
 #endif /* FS3ENET_MASTODON_H */

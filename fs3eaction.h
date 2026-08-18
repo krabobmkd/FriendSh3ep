@@ -47,6 +47,7 @@ typedef enum {
     FS3EACTION_VIEW_NEWS,
 
     FS3EACTION_VIEW_REFRESH,
+    FS3EACTION_VIEW_ABOUT_SERVER,
 
     /* Timeline menu -- see fs3elocale.h's MSG_MENU_TIMELINE comment for
      * the Space/AUTOSCROLL_STOP-vs-NEXT_TOOT key-sharing note. */
@@ -103,6 +104,13 @@ BOOL Action_ViewNotif(struct App *ctx);
 BOOL Action_ViewBookmark(struct App *ctx);
 BOOL Action_ViewNews(struct App *ctx);
 BOOL Action_Refresh(struct App *ctx);
+
+/* "About This Server" -- looks up the connected account's own instance the
+ * same way FS3EApp_SearchInstance does for a typed domain (rich info
+ * header in the Search channel: char/media/poll limits, translation
+ * support, registrations, rules, ...). No-op if not logged into any
+ * server (app->accountApiBaseUrl unset). */
+BOOL Action_ViewAboutServer(struct App *ctx);
 
 /* Timeline menu -- see FS3EACTION_TIMELINE_* in the enum above.
  * NEXT_TOOT is implemented (an FS3ETimer-driven animated scroll, see

@@ -40,6 +40,14 @@
  * ("public"/"followers"/"nobody"), added server-side in Mastodon 4.5. */
 #define FS3ETOOT_NUM_QUOTEPOLICIES 3
 
+/* Language picker -- Mastodon's `language` status field (ISO 639-1, a few
+ * ISO 639-2/3 codes for languages with none), sent so the server (and
+ * other clients) know what language this toot is written in rather than
+ * guessing. Entry 0 is "(Unspecified)" -- see fs3etootLanguages' own
+ * comment in fs3etootview.c for why that means "send no language field at
+ * all", not an empty string sent to the server. */
+#define FS3ETOOT_NUM_LANGUAGES 63
+
 /* What FS3ETootView_SetComposeContext configures the window to submit when
  * "Toot" is pressed. The contextMessage title text is derived from this +
  * the accompanying FS3ETootComposeParams internally -- callers pick a kind
@@ -137,6 +145,17 @@ typedef struct FS3ETootView {
     struct List   quotePolicyList;
     struct Node  *quotePolicyNodes[FS3ETOOT_NUM_QUOTEPOLICIES];
     Object       *quotePolicyChooser;
+
+    /* Language picker, same column as sensitiveCheck below (see
+     * FS3ETootView_Create's sensitiveLanguageCol) -- always editable
+     * (Mastodon's edit endpoint doesn't take it either way, so unlike
+     * visibilityChooser there's no MODIFY-specific gating to speak of).
+     * Read directly via FS3ETootView_GetLanguage() at send time, same "no
+     * separate copy kept here" convention as visibilityChooser/
+     * quotePolicyChooser. */
+    struct List   languageList;
+    struct Node  *languageNodes[FS3ETOOT_NUM_LANGUAGES];
+    Object       *languageChooser;
 
     Object *charCountLabel;
     char    charCountText[32];
@@ -247,6 +266,12 @@ LONG FS3ETootView_GetQuotePolicy(FS3ETootView *tv);
  * Mastodon's status-level `sensitive` field, see sensitiveCheck's comment
  * above. */
 BOOL FS3ETootView_GetSensitive(FS3ETootView *tv);
+
+/* ISO 639 code of the currently selected language (e.g. "en", "fr"), or ""
+ * for the "(Unspecified)" first entry -- see languageChooser's comment.
+ * Returns a pointer into a static table, never AllocVec'd -- caller must
+ * NOT FreeVec() it (unlike FS3ETootView_GetUTF8Body). */
+const char *FS3ETootView_GetLanguage(FS3ETootView *tv);
 
 /* FS3ETootView_CheckAttachment()'s result -- see its doc comment. */
 typedef enum FS3ETootAttachStatus {

@@ -86,6 +86,14 @@ void FS3EApp_SeedDefaultAnonymousAccount(void);
  * startup right after FS3EApp_LoadAccount(). */
 void FS3EApp_VerifyStoredAccount(void);
 
+/* Fires FS3ENETQ_INSTANCE_INFO for the active account's own server. Called
+ * internally by FS3EApp_SetAccount() on every real account change, AND
+ * explicitly from friendsh3ep.c's main() right after FS3ENet_Start() -- see
+ * this function's own doc comment in fs3eaccounts.c for why both call
+ * sites are needed (the cold-boot one silently fails: no netRequestPort
+ * yet at that point in main()). */
+void FS3EApp_RequestInstanceInfo(void);
+
 /* Rebuild the login window's accounts list from app->accounts[]. */
 void FS3EApp_RefreshLoginAccountsList(void);
 

@@ -552,6 +552,85 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                 break;
             }
 
+            case TTIMELINE_ApplyTranslation: {
+                const TTLTranslationSetup *setup = (const TTLTranslationSetup *)tag->ti_Data;
+                if (setup && setup->postId && setup->postId[0]) {
+                    ULONG ch;
+                    BOOL  matched = FALSE;
+
+                    for (ch = 0; ch < TTIMELINE_NUM_VIEWMODES; ch++) {
+                        TTLChannel *channel = &inst->channels[ch];
+                        TTLPost    *post;
+
+                        for (post = (TTLPost *)channel->posts.mlh_Head;
+                             post->node.mln_Succ;
+                             post = (TTLPost *)post->node.mln_Succ)
+                        {
+                            /* Matched by targetId (falling back to postId),
+                             * same convention as TTIMELINE_UpdatePost -- the
+                             * id this translation was fetched for is
+                             * whatever id FS3EApp_TranslateStatus actually
+                             * sent to the server (see TTLPostSetup.targetId). */
+                            const char *matchId = (post->targetId && post->targetId[0])
+                                                 ? post->targetId : post->postId;
+                            if (!matchId || strcmp(matchId, setup->postId) != 0)
+                                continue;
+
+                            if (setup->translatedText && setup->translatedText[0]) {
+                                /* Freshly fetched -- store it and show it. */
+                                ULONG len = (ULONG)strlen(setup->translatedText);
+                                char *copy = (char *)AllocVec(len + 1, MEMF_ANY);
+                                if (copy) {
+                                    CopyMem((APTR)setup->translatedText, copy, len + 1);
+                                    if (post->translatedBody) FreeVec(post->translatedBody);
+                                    post->translatedBody    = copy;
+                                    post->showingTranslation = TRUE;
+                                }
+                            } else if (post->translatedBody) {
+                                /* Pure local toggle, no network involved --
+                                 * see TTIMELINE_ApplyTranslation's own doc
+                                 * comment in fs3etoottimeline.h. */
+                                post->showingTranslation = !post->showingTranslation;
+                            }
+
+                            /* Swap a FRESH copy of whichever text is now
+                             * active into post->body -- layout/render/hot-
+                             * spot-scanning only ever read post->body, see
+                             * TTLPost.origBody's own comment for why this is
+                             * a copy rather than just repointing post->body
+                             * at origBody/translatedBody directly. */
+                            {
+                                const char *active = post->showingTranslation
+                                                    ? post->translatedBody : post->origBody;
+                                ULONG alen = active ? (ULONG)strlen(active) : 0;
+                                char *newBody = (char *)AllocVec(alen + 1, MEMF_ANY);
+                                if (newBody) {
+                                    CopyMem((APTR)(active ? active : ""), newBody, alen + 1);
+                                    if (post->body) FreeVec(post->body);
+                                    post->body = newBody;
+                                }
+                            }
+
+                            post->dirty         = TRUE;
+                            post->hotSpotsDirty = TRUE;
+                            matched = TRUE;
+                            break; /* unique within this channel's list */
+                        }
+                    }
+
+                    if (matched) {
+                        /* Word-wrapped height can differ between original
+                         * and translated text -- same full-relayout path
+                         * TTIMELINE_RefreshPost/UpdateProfileBio use. */
+                        inst->lastTileWidth = -1;
+                        inst->layoutToDo    = TRUE;
+                        redraw = TRUE;
+                    }
+                    used = 1;
+                }
+                break;
+            }
+
             case TTIMELINE_ShowProfile: {
                 const TTLProfileHeaderSetup *setup = (const TTLProfileHeaderSetup *)tag->ti_Data;
                 if (setup && setup->channel < TTIMELINE_NUM_VIEWMODES) {
@@ -625,6 +704,49 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                             AddTail((struct List *)&channel->posts, (struct Node *)&loadOlder->node);
                             channel->contentBottomY += loadOlder->height;
                         }
+
+                        if (chanIdx == inst->viewMode)
+                            ttl_tiles_invalidate_all(inst);
+                        redraw = TRUE;
+                    }
+                    used = 1;
+                }
+                break;
+            }
+
+            case TTIMELINE_ShowInstanceInfo: {
+                const TTLInstanceHeaderSetup *setup = (const TTLInstanceHeaderSetup *)tag->ti_Data;
+                if (setup && setup->channel < TTIMELINE_NUM_VIEWMODES) {
+                    ULONG       chanIdx = setup->channel;
+                    TTLChannel *channel = &inst->channels[chanIdx];
+                    TTLPost    *header;
+
+                    ttl_clear_channel(inst, chanIdx);
+
+                    header = ttl_instance_header_alloc(setup);
+                    if (header) {
+                        if (header->cls && header->cls->layout)
+                            header->cls->layout(inst, header);
+
+                        /* Same "never a member of channel->posts, lives only
+                         * via headerPost" placement as TTIMELINE_ShowProfile
+                         * above -- see that case's comment for why a double
+                         * AddHead would double-free on the next lookup. */
+                        header->timelineY = 0;
+
+                        channel->headerPost     = header;
+                        channel->contentTopY    = header->height;
+                        channel->contentBottomY = header->height;
+                        channel->scrollY        = 0;
+                        /* Sentinel, not a real toot count -- a server info
+                         * lookup has no toot list to page at all (unlike
+                         * TTIMELINE_ShowProfile), so channel->posts is left
+                         * genuinely empty: no "Load more…" row is added,
+                         * there's nothing beneath the header to paginate.
+                         * Still needed so ttl_is_waiting() reads this
+                         * channel as "has content" (postCount==0 would show
+                         * the waiting screen instead of the header). */
+                        channel->postCount = 1;
 
                         if (chanIdx == inst->viewMode)
                             ttl_tiles_invalidate_all(inst);

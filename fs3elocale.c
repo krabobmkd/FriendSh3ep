@@ -53,6 +53,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Attach Media",
     /* MSG_TOOT_SENSITIVE */
     "Sensitive content",
+    /* MSG_TOOT_LANGUAGE */
+    "Language",
     /* MSG_TOOT_VISIBILITY_PUBLIC */
     "Public",
     /* MSG_TOOT_VISIBILITY_UNLISTED -- API value "unlisted", shown with the
@@ -138,6 +140,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Bookmarks",
     "News",
     "Refresh",
+    /* MSG_MENU_ABOUT_SERVER */
+    "About This Server",
 
     /* MSG_MENU_TIMELINE */
     "Timeline",
@@ -307,6 +311,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Word",
     /* MSG_SEARCH_TYPE_PEOPLE */
     "People",
+    /* MSG_SEARCH_TYPE_SERVER */
+    "Server",
 
     /* MSG_NETWORKV_TITLE */
     "Network",

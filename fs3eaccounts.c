@@ -137,6 +137,11 @@ void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,
         app->accountMaxChars = 0;
         FS3ETootView_UpdateCharCount(&app->tootView);
 
+        /* Same reasoning again -- a different server may not offer
+         * translation at all, or vice versa. */
+        app->accountTranslationEnabled = FALSE;
+        app->accountTranslationKnown   = FALSE;
+
         /* Same "belongs to the account being left" reasoning as
          * accountMaxChars above -- the new account's own profile header
          * (VIEWMODE_User, see FS3EApp_ShowOwnProfileHeader) hasn't been
@@ -144,12 +149,7 @@ void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,
         app->accountProfileFetched       = FALSE;
         app->accountProfileLookupPending = FALSE;
 
-        if (app->accountApiBaseUrl) {
-            FS3ENetInstanceInfoReq *iiReq =
-                FS3ENetInstanceInfoReq_Alloc(app->accountApiBaseUrl);
-            if (iiReq)
-                FS3EApp_NetSend(FS3ENETQ_INSTANCE_INFO, iiReq, sizeof(*iiReq));
-        }
+        FS3EApp_RequestInstanceInfo();
     }
 
     /* Tell the title bar which account to draw the row-2 icon for -- see
@@ -611,6 +611,31 @@ BOOL FS3EApp_LoadAccount(void)
         app->loginPhase = FS3ELOGIN_DONE;
         return TRUE;
     }
+}
+
+/* Fires FS3ENETQ_INSTANCE_INFO for the active account's own server (char
+ * limit + translation support -- see app->accountMaxChars/
+ * accountTranslationEnabled/Known). No-op if there's no active server yet
+ * (app->accountApiBaseUrl NULL) or FS3EApp_NetSend() itself can't send
+ * (most notably: no netRequestPort yet -- see this function's own call
+ * sites). Not static: friendsh3ep.c's main() calls this too, right after
+ * FS3ENet_Start() -- FS3EApp_SetAccount()'s own call below (fired from
+ * FS3EApp_LoadAccount(), which runs BEFORE FS3ENet_Start() in main())
+ * silently drops the request every cold boot, same "no netRequestPort yet"
+ * problem FS3EApp_VerifyStoredAccount() already had and was moved to fix
+ * -- see that function's own call site in main(). This one wasn't moved
+ * the same way (SetAccount fires it internally, not from main() directly),
+ * so main() re-fires it explicitly instead once the network process
+ * actually exists. */
+void FS3EApp_RequestInstanceInfo(void)
+{
+    FS3ENetInstanceInfoReq *req;
+
+    if (!app->accountApiBaseUrl) return;
+
+    req = FS3ENetInstanceInfoReq_Alloc(app->accountApiBaseUrl);
+    if (req)
+        FS3EApp_NetSend(FS3ENETQ_INSTANCE_INFO, req, sizeof(*req));
 }
 
 /* Re-verifies the active account's token every launch (not just when

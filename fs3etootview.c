@@ -51,6 +51,7 @@
 #include "fs3eboopsimessage.h"
 #include "fs3egadgetid.h"
 #include "fs3elocale.h"
+#include "fs3enetworkhelper.h"
 
 #include "friendsh3ep.h"
 #include "network_fs3e/fs3enet.h"
@@ -190,6 +191,87 @@ static const ULONG quotePolicyMeaningMsgIds[FS3ETOOT_NUM_QUOTEPOLICIES] = {
     MSG_TOOT_QUOTEPOLICY_MEANING_NOBODY
 };
 
+/* languageChooser's entries -- code is the ISO 639 code sent as Mastodon's
+ * `language` status field (see FS3EMastodon_PostStatus), name is what the
+ * chooser/popup shows. Plain static English names, NOT run through
+ * LOC()/fs3elocale.c: chooser.gadget/label.image are classic AmigaOS3
+ * gadgets with no UTF-8 decoding of their own (unlike bodyEditor's
+ * UniTextEditor or a toot's own utf8rastport-rendered content), so native-
+ * script names (Cyrillic/CJK/Arabic/Devanagari/...) would risk rendering as
+ * tofu/garbage here even where they render fine elsewhere in this app --
+ * ASCII English names sidestep that entirely, same reasoning
+ * searchWordTypeChooser's/visibilityChooser's own plain-ASCII labels
+ * already follow. code[0]=='\0' (index 0, "(Unspecified)") means "don't
+ * send a language field at all" -- see FS3ETootView_GetLanguage and
+ * FS3EMastodon_PostStatus's own "omit rather than send empty" convention
+ * for in_reply_to_id/quoted_status_id. Ordering: unspecified first, then
+ * roughly by how many Mastodon users each language sees. */
+static const struct { const char *code; const char *name; } fs3eTootLanguages[FS3ETOOT_NUM_LANGUAGES] = {
+    { "",   "(Unspecified)" },
+    { "en", "English" },
+    { "fr", "French" },
+    { "de", "German" },
+    { "es", "Spanish" },
+    { "it", "Italian" },
+    { "pt", "Portuguese" },
+    { "nl", "Dutch" },
+    { "pl", "Polish" },
+    { "ru", "Russian" },
+    { "uk", "Ukrainian" },
+    { "ja", "Japanese" },
+    { "zh", "Chinese" },
+    { "ko", "Korean" },
+    { "ar", "Arabic" },
+    { "tr", "Turkish" },
+    { "sv", "Swedish" },
+    { "no", "Norwegian" },
+    { "da", "Danish" },
+    { "fi", "Finnish" },
+    { "cs", "Czech" },
+    { "el", "Greek" },
+    { "he", "Hebrew" },
+    { "hi", "Hindi" },
+    { "id", "Indonesian" },
+    { "vi", "Vietnamese" },
+    { "th", "Thai" },
+    { "ro", "Romanian" },
+    { "hu", "Hungarian" },
+    { "bg", "Bulgarian" },
+    { "hr", "Croatian" },
+    { "sk", "Slovak" },
+    { "sl", "Slovenian" },
+    { "sr", "Serbian" },
+    { "lt", "Lithuanian" },
+    { "lv", "Latvian" },
+    { "et", "Estonian" },
+    { "ca", "Catalan" },
+    { "eu", "Basque" },
+    { "gl", "Galician" },
+    { "eo", "Esperanto" },
+    { "ga", "Irish" },
+    { "is", "Icelandic" },
+    { "cy", "Welsh" },
+    { "fa", "Persian" },
+    { "ur", "Urdu" },
+    { "bn", "Bengali" },
+    { "ta", "Tamil" },
+    { "te", "Telugu" },
+    { "ml", "Malayalam" },
+    { "mr", "Marathi" },
+    { "gu", "Gujarati" },
+    { "kn", "Kannada" },
+    { "pa", "Punjabi" },
+    { "sw", "Swahili" },
+    { "af", "Afrikaans" },
+    { "sq", "Albanian" },
+    { "az", "Azerbaijani" },
+    { "be", "Belarusian" },
+    { "bs", "Bosnian" },
+    { "ka", "Georgian" },
+    { "hy", "Armenian" },
+    { "kk", "Kazakh" },
+};
+
 /* Defined below FS3ETootKindConfig/tootKindConfig (needs both); forward-
  * declared here since it's called from FS3ETootView_HandleInput, which
  * comes first in the file. */
@@ -227,6 +309,8 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
     Object *attachMediaRow2;
     Object *attachMediaLabel2;
     Object *sensitiveLabel;
+    Object *languageLabel;
+    Object *sensitiveLanguageCol;
 
     int i;
 
@@ -404,6 +488,25 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         TAG_END);
     if (!tv->quotePolicyChooser) return FALSE;
 
+    NewList(&tv->languageList);
+    for (i = 0; i < FS3ETOOT_NUM_LANGUAGES; i++) {
+        struct Node *node = NULL;
+        if (ChooserBase)
+            node = AllocChooserNode(CNA_Text, (ULONG)fs3eTootLanguages[i].name, TAG_END);
+        tv->languageNodes[i] = node;
+        if (node) AddTail(&tv->languageList, node);
+    }
+
+    tv->languageChooser = (Object *)NewObject(CHOOSER_GetClass(), NULL,
+        GA_ID,          (ULONG)GID_TOOT_LANGUAGE,
+        GA_RelVerify,   TRUE,
+        ICA_TARGET,     (ULONG)TargetInstance,
+        CHOOSER_PopUp,  TRUE,
+        CHOOSER_Labels, (ULONG)&tv->languageList,
+        CHOOSER_Active, 0UL,
+        TAG_END);
+    if (!tv->languageChooser) return FALSE;
+
     {
         char maxBuf[16];
         FormatMaxChars(app->accountMaxChars, maxBuf, sizeof(maxBuf));
@@ -442,6 +545,22 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
     sensitiveLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_TOOT_SENSITIVE), TAG_END);
 
+    languageLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_TOOT_LANGUAGE), TAG_END);
+
+    /* Language chooser + "Sensitive content" checkbox stacked vertically in
+     * their own sub-column, same "stack instead of widening bottomBar"
+     * reasoning as choosersCol above -- this replaces sensitiveCheck's old
+     * standalone bottomBar slot. */
+    sensitiveLanguageCol = (Object *)NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation,  LAYOUT_ORIENT_VERT,
+        LAYOUT_AddChild,     (ULONG)tv->languageChooser,
+            CHILD_Label,         (ULONG)languageLabel,
+        LAYOUT_AddChild,     (ULONG)tv->sensitiveCheck,
+            CHILD_Label,         (ULONG)sensitiveLabel,
+        TAG_END);
+    if (!sensitiveLanguageCol) return FALSE;
+
     tv->tootBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,        (ULONG)GID_TOOT_SEND_BUTTON,
         GA_RelVerify, TRUE,
@@ -478,9 +597,8 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
             CHILD_WeightedWidth, 0,
         LAYOUT_AddChild,     (ULONG)Spacer(),
             CHILD_WeightedWidth, 1,
-        LAYOUT_AddChild,     (ULONG)tv->sensitiveCheck,
+        LAYOUT_AddChild,     (ULONG)sensitiveLanguageCol,
             CHILD_WeightedWidth, 0,
-            CHILD_Label,         (ULONG)sensitiveLabel,
         LAYOUT_AddChild,     (ULONG)tv->tootBtn,
             CHILD_WeightedWidth, 0,
         TAG_END);
@@ -569,6 +687,12 @@ void FS3ETootView_Dispose(FS3ETootView *tv)
                 tv->quotePolicyNodes[i] = NULL;
             }
         }
+        for (i = 0; i < FS3ETOOT_NUM_LANGUAGES; i++) {
+            if (tv->languageNodes[i]) {
+                FreeChooserNode(tv->languageNodes[i]);
+                tv->languageNodes[i] = NULL;
+            }
+        }
     }
 }
 
@@ -596,6 +720,25 @@ void FS3ETootView_Open(FS3ETootView *tv)
     if (tv->quotePolicyChooser) {
         SetAttrs(tv->quotePolicyChooser, CHOOSER_Active, 0UL, TAG_END);
         FS3ETootView_UpdateVisibilityMeaning(tv);
+    }
+    /* Unlike visibility/quote-policy above, the language pick is NOT reset
+     * to "(Unspecified)" here -- it's restored from app->settings.tootLanguage
+     * (persisted across sessions, see FS3EApp_SubmitToot's own comment on
+     * where that gets updated), so a user who always toots in the same
+     * language doesn't have to reselect it on every single compose. Falls
+     * back to index 0 if the saved code isn't found in fs3eTootLanguages
+     * (empty/unset, or a code this build's table doesn't carry). */
+    if (tv->languageChooser) {
+        ULONG idx = 0, i;
+        if (app->settings.tootLanguage && app->settings.tootLanguage[0]) {
+            for (i = 0; i < FS3ETOOT_NUM_LANGUAGES; i++) {
+                if (strcmp(fs3eTootLanguages[i].code, app->settings.tootLanguage) == 0) {
+                    idx = i;
+                    break;
+                }
+            }
+        }
+        SetAttrs(tv->languageChooser, CHOOSER_Active, idx, TAG_END);
     }
     /* Same reasoning again: a leftover attachment from a previous, unrelated
      * toot shouldn't silently carry over into this one. */
@@ -745,6 +888,21 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                                    GETFILE_File,   (ULONG)"",
                                    GETFILE_Drawer, (ULONG)"",
                                    TAG_DONE);
+                } else if( gadId == GID_TOOT_LANGUAGE)
+                {
+                    /* Sync app->settings.tootLanguage the instant the
+                     * chooser selection changes, not only when a toot is
+                     * actually sent -- see that field's doc comment in
+                     * fs3esettings.h. Persisted to disk at the next
+                     * FS3ESettings_Save() call (app quit, or any other
+                     * settings save). */
+                    const char *language = FS3ETootView_GetLanguage(tv);
+                    if (!app->settings.tootLanguage ||
+                        strcmp(app->settings.tootLanguage, language) != 0)
+                    {
+                        if (app->settings.tootLanguage) FreeVec(app->settings.tootLanguage);
+                        app->settings.tootLanguage = NetStrDup(language);
+                    }
                 }
 
                 BoopsiDelay_BeginMessage(DelayQueue, gadId);
@@ -1220,6 +1378,17 @@ BOOL FS3ETootView_GetSensitive(FS3ETootView *tv)
 
     GetAttr(GA_Selected, tv->sensitiveCheck, &selected);
     return selected ? TRUE : FALSE;
+}
+
+const char *FS3ETootView_GetLanguage(FS3ETootView *tv)
+{
+    ULONG active = 0;
+
+    if (!tv || !tv->languageChooser) return "";
+
+    GetAttr(CHOOSER_Active, tv->languageChooser, &active);
+    if (active >= FS3ETOOT_NUM_LANGUAGES) return "";
+    return fs3eTootLanguages[active].code;
 }
 
 /* Case-insensitive full-string match -- avoids a Stricmp()/UtilityBase

@@ -125,6 +125,22 @@ typedef struct FS3ESettings {
      * fs3esettingsview.c alongside the other click-behavior settings. */
     short tootActionsNeedDoubleClick;
 
+    /* Last language picked in the New Toot window's language chooser (see
+     * FS3ETootView_GetLanguage/languageChooser in fs3etootview.h) -- an ISO
+     * 639 code (e.g. "en", "fr"), carried over from session to session so
+     * a user who always toots in the same language doesn't have to
+     * reselect it every time the compose window opens. AllocVec'd, always
+     * non-NULL; default "" (the chooser's "(Unspecified)" first entry --
+     * same "empty means unspecified, not unset" meaning
+     * FS3ETootView_GetLanguage/FS3EMastodon_PostStatus already give it, NOT
+     * removed from the tooltype file when empty the way themeName's
+     * "no override" NULL is -- see FS3ESettings_Save). Updated in memory
+     * the instant the chooser selection changes (GID_TOOT_LANGUAGE in
+     * FS3ETootView_HandleInput, fs3etootview.c), not only when a toot is
+     * actually sent -- persisted to disk at the next FS3ESettings_Save()
+     * call, same as every other non-live-window setting here. */
+    char *tootLanguage;
+
     /* FALSE (default) until the user has acknowledged the disk-cache-usage
      * warning EasyRequestArgs shown once, right after the main window
      * first opens (see friendsh3ep.c, main()) -- set TRUE and saved

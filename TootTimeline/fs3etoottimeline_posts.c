@@ -255,6 +255,13 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
         post->username  = dup_str(setup->username);
         post->acct      = dup_str(setup->acct);
         post->body      = dup_str(setup->body);
+        /* Independent copy, not the same pointer as post->body -- see
+         * TTLPost.origBody's own comment for why. translatedBody/
+         * showingTranslation are left at their MEMF_CLEAR default
+         * (NULL/FALSE) -- nothing to translate yet. */
+        post->origBody      = dup_str(setup->body);
+        post->canTranslate  = setup->canTranslate;
+        post->language      = (setup->language && setup->language[0]) ? dup_str(setup->language) : NULL;
         post->timestamp = dup_str(setup->timestamp);
         post->boostBy   = (setup->boostBy  && setup->boostBy[0])  ? dup_str(setup->boostBy)  : NULL;
         post->boostByAcct = (setup->boostByAcct && setup->boostByAcct[0]) ? dup_str(setup->boostByAcct) : NULL;
@@ -386,6 +393,9 @@ void ttl_post_refresh_fields(TTLPost *post, const TTLPostSetup *setup)
     if (post->username)  FreeVec(post->username);
     if (post->acct)       FreeVec(post->acct);
     if (post->body)       FreeVec(post->body);
+    if (post->origBody)       FreeVec(post->origBody);
+    if (post->translatedBody) FreeVec(post->translatedBody);
+    if (post->language)   FreeVec(post->language);
     if (post->timestamp)  FreeVec(post->timestamp);
     if (post->boostBy)    FreeVec(post->boostBy);
     if (post->boostByAcct) FreeVec(post->boostByAcct);
@@ -412,6 +422,16 @@ void ttl_post_refresh_fields(TTLPost *post, const TTLPostSetup *setup)
     post->username  = dup_str(setup->username);
     post->acct      = dup_str(setup->acct);
     post->body      = dup_str(setup->body);
+    /* Fresh content from the server -- any previously fetched translation
+     * belonged to the OLD body text and no longer applies (a re-fetched
+     * toot could even be a text edit -- see FS3ETOOT_KIND_MODIFY). Reset
+     * to the untranslated state; the user can re-request a translation of
+     * the new text via TTL_HOT_TRANSLATE same as any other toot. */
+    post->origBody      = dup_str(setup->body);
+    post->translatedBody = NULL;
+    post->showingTranslation = FALSE;
+    post->canTranslate  = setup->canTranslate;
+    post->language      = (setup->language && setup->language[0]) ? dup_str(setup->language) : NULL;
     post->timestamp = dup_str(setup->timestamp);
     post->boostBy   = (setup->boostBy  && setup->boostBy[0])  ? dup_str(setup->boostBy)  : NULL;
     post->boostByAcct = (setup->boostByAcct && setup->boostByAcct[0]) ? dup_str(setup->boostByAcct) : NULL;
@@ -541,6 +561,9 @@ static void ttl_toot_dispose(TTLPost *post)
     if (post->username)  FreeVec(post->username);
     if (post->acct)      FreeVec(post->acct);
     if (post->body)      FreeVec(post->body);
+    if (post->origBody)      FreeVec(post->origBody);
+    if (post->translatedBody) FreeVec(post->translatedBody);
+    if (post->language)  FreeVec(post->language);
     if (post->timestamp) FreeVec(post->timestamp);
     if (post->boostBy)   FreeVec(post->boostBy);
     if (post->boostByAcct) FreeVec(post->boostByAcct);
@@ -910,6 +933,18 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
         curRelY += inst->miniLineHeight;
     }
 
+    /* ---- "Translate"/"Original Text" row -- reserved only when
+     * post->canTranslate (see TTLPostSetup.canTranslate), independent of
+     * repliesCount/isReply -- a post can have any combination of the three
+     * rows. Same "store once, never re-derive" rule as threadRowY/
+     * pollBlockY above. ---- */
+    post->translateRowY = 0;
+    if (post->canTranslate) {
+        curRelY += avatarGap;
+        post->translateRowY = (WORD)curRelY;
+        curRelY += inst->miniLineHeight;
+    }
+
     /* ---- Action bar: ↩ Reply N  🔁 Boost N  ⭐/💫 N ----
      * Only the row's height is needed for layout; exact button rects are
      * (re)computed lazily in ttl_post_build_hotspots from
@@ -1247,6 +1282,26 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
         WORD rowW = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
         ttl_hs_add(post, TTL_HOT_THREAD, textX, post->threadRowY,
                    rowW, inst->miniLineHeight, NULL, 0);
+    }
+
+    /* "Translate"/"Original Text" row -- see TTLPost.translateRowY. Same
+     * full-width clickable treatment as the thread rows above. data is the
+     * "already cached" sentinel -- see TTL_HOT_TRANSLATE's own comment in
+     * fs3etoottimeline.h for why it must be a real 1-byte string, not an
+     * empty one, to be distinguishable from "no data" (NULL). postId
+     * itself travels through the generic ttl_notify_hotspot() targetId
+     * parameter, same as every other hot-spot on this post -- not carried
+     * here. */
+    if (post->canTranslate && post->translateRowY > 0 &&
+        post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT)
+    {
+        WORD rowW = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
+        if (post->translatedBody)
+            ttl_hs_add(post, TTL_HOT_TRANSLATE, textX, post->translateRowY,
+                       rowW, inst->miniLineHeight, "1", 1);
+        else
+            ttl_hs_add(post, TTL_HOT_TRANSLATE, textX, post->translateRowY,
+                       rowW, inst->miniLineHeight, NULL, 0);
     }
 
     /* Action bar buttons: same geometry rule ttl_post_layout used to

@@ -5,6 +5,7 @@
  */
 
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 
 #include <exec/types.h>
@@ -23,6 +24,7 @@
 #include "bdbprintf.h"
 
 #include "friendsh3ep.h"
+#include "fs3eoslocale.h"
 #include "fs3eboopsimainwindow.h"
 #include "fs3eloginview.h"
 #include "fs3etootview.h"
@@ -46,7 +48,7 @@ extern void  FS3EApp_CheckConnectionState(void);
 extern void  FS3EApp_UpdateUserIcon(void);
 extern void  FS3EApp_UpdateNetworkLed(void);
 extern void  FS3EApp_SubmitToot(const char *body, LONG visibility, LONG quotePolicy,
-                                 BOOL sensitive,
+                                 BOOL sensitive, const char *language,
                                  const char *const *newMediaIds, ULONG newMediaCount);
 
 /* Send a pre-allocated request block to the network process asynchronously.
@@ -346,15 +348,20 @@ static void searchStackPush(void)
             break;
         case FS3ESEARCH_WORD:
         case FS3ESEARCH_ACCOUNT:
+        case FS3ESEARCH_INSTANCE:
             /* app->searchLastQueryText, NOT a live read of searchWordEditor
              * -- see that field's own comment in friendsh3ep.h for why the
              * gadget can't be trusted here (it already shows the NEW query
              * by the time this push runs, when re-searching within the
              * same mode). Chooser selection is implied by the mode itself,
-             * not stored/read separately. */
+             * not stored/read separately. FS3ESEARCH_INSTANCE reuses these
+             * same two fields (the domain/URL typed, and the chooser
+             * position) rather than adding its own -- same shape of state
+             * as a word/account query. */
             entry.queryText    = NetStrDup(app->searchLastQueryText);
-            entry.queryChooser = (app->searchMode == FS3ESEARCH_ACCOUNT)
-                                ? FS3ESEARCHTYPE_PEOPLE : FS3ESEARCHTYPE_WORD;
+            entry.queryChooser = (app->searchMode == FS3ESEARCH_ACCOUNT)  ? FS3ESEARCHTYPE_PEOPLE
+                                : (app->searchMode == FS3ESEARCH_INSTANCE) ? FS3ESEARCHTYPE_SERVER
+                                : FS3ESEARCHTYPE_WORD;
             break;
         default:
             break;
@@ -436,12 +443,15 @@ void FS3EApp_SearchGoBack(void)
             break;
         case FS3ESEARCH_WORD:
         case FS3ESEARCH_ACCOUNT:
+        case FS3ESEARCH_INSTANCE:
             if (app->searchWordEditor)
                 SetGdAttrs(app->searchWordEditor, UTED_Text, (ULONG)popped.queryText, TAG_END);
             if (app->searchWordTypeChooser)
                 SetGdAttrs(app->searchWordTypeChooser, CHOOSER_Active, popped.queryChooser, TAG_END);
             if (popped.mode == FS3ESEARCH_ACCOUNT)
                 FS3EApp_SearchAccount(popped.queryText);
+            else if (popped.mode == FS3ESEARCH_INSTANCE)
+                FS3EApp_SearchInstance(popped.queryText);
             else
                 FS3EApp_SearchWord(popped.queryText);
             break;
@@ -699,6 +709,28 @@ void FS3EApp_RefreshVisibleToots(void)
     }
 }
 
+/* TTL_HOT_TRANSLATE click, "not cached yet" branch (see that hot-spot's own
+ * doc comment in fs3etoottimeline.h) -- fires FS3ENETQ_TRANSLATE_STATUS
+ * targeting the OS's own preferred language. The "already cached, just
+ * toggle" branch needs no network call at all -- see friendsh3ep.c's
+ * TTL_HOT_TRANSLATE case, which calls TIMELINE_ApplyTranslation directly
+ * instead of this function. postId is the status to translate (the
+ * hot-spot's own targetId, see ttl_notify_hotspot). */
+void FS3EApp_TranslateStatus(const char *postId)
+{
+    const char *osLang = FS3EOSLocale_LanguageCode();
+    FS3ENetTranslateStatusReq *req;
+
+    if (!postId || !postId[0]) return;
+    if (!app->accountApiBaseUrl || !app->accountAccessToken || !app->accountAccessToken[0]) return;
+
+    req = FS3ENetTranslateStatusReq_Alloc(app->accountApiBaseUrl, app->accountAccessToken,
+                                          postId, osLang);
+    if (!req) return;
+
+    FS3EApp_NetSend(FS3ENETQ_TRANSLATE_STATUS, req, sizeof(*req));
+}
+
 /* Index into the MSG_SEARCHV_WAIT1..4 rotation -- bumped once per search
  * fired below, NOT on every FS3EApp_CheckConnectionState call (that runs on
  * all sorts of unrelated state changes too, e.g. login phase or account
@@ -792,6 +824,192 @@ void FS3EApp_SearchAccount(const char *query)
               app->accountAccessToken ? app->accountAccessToken : "",
               "", query);
     if (req && FS3EApp_NetSend(FS3ENETQ_ACCOUNTS_LIST, req, sizeof(*req))) {
+        app->timelineFetchedMask |= (1UL << VIEWMODE_Search);
+        s_searchWaitMsgIdx++;
+        FS3EApp_CheckConnectionState();
+    }
+}
+
+/* Strips a leading '@'/whitespace and a trailing slash/whitespace from
+ * user-typed server text, and adds the "https://" scheme if it's missing --
+ * the common case is a bare domain ("mastodon.social"), not a full URL.
+ * outUrl is a caller-owned buffer; truncates rather than overflows it (a
+ * domain long enough to matter here isn't realistic). Shared by
+ * FS3EApp_SearchInstance below. */
+static void FS3EInstance_NormalizeUrl(const char *raw, char *outUrl, ULONG outUrlSize)
+{
+    const char *s = raw;
+    ULONG len;
+
+    while (*s == ' ' || *s == '\t' || *s == '@') s++;
+    len = (ULONG)strlen(s);
+    while (len > 0 && (s[len - 1] == ' ' || s[len - 1] == '\t' || s[len - 1] == '/'))
+        len--;
+
+    if (strncmp(s, "https://", 8) == 0 || strncmp(s, "http://", 7) == 0)
+        snprintf(outUrl, outUrlSize, "%.*s", (int)len, s);
+    else
+        snprintf(outUrl, outUrlSize, "https://%.*s", (int)len, s);
+}
+
+/* Appends a formatted fragment at *p (bounded by end), same "cursor +
+ * remaining size" idiom snprintf-chaining elsewhere in this codebase uses,
+ * just varargs so FS3EInstance_BuildInfoText below doesn't need a
+ * strlen()+strncat() dance after every single field. Silently truncates
+ * (never overruns) if the info text somehow runs past bufSize -- see that
+ * function's own buffer size for how generous a margin that leaves in
+ * practice. */
+static void FS3EInstance_Appendf(char **p, char *end, const char *fmt, ...)
+{
+    va_list ap;
+    int n;
+
+    if (*p >= end) return;
+
+    va_start(ap, fmt);
+    n = vsnprintf(*p, (ULONG)(end - *p), fmt, ap);
+    va_end(ap);
+
+    if (n > 0) {
+        if (*p + n > end) *p = end;
+        else *p += n;
+    }
+}
+
+/* Formats every FS3ENetInstanceDetailsReply field worth showing into one
+ * plain-text blob for TTLInstanceHeaderSetup.body -- TootTimeline itself
+ * doesn't interpret any of this, it just word-wraps and draws it like a
+ * bio (see fs3etoottimeline_instance.c). Only server-CONFIRMED fields are
+ * shown (the *Known flags) -- a field the server didn't answer (e.g. an
+ * old server with no configuration.translation block) is simply omitted,
+ * never presented as a confirmed "no" (same rule FS3ENETQ_INSTANCE_INFO's
+ * own fs3eii_Known already follows for the char limit). */
+static void FS3EInstance_BuildInfoText(char *buf, ULONG bufSize,
+                                       const FS3ENetInstanceDetailsReply *r)
+{
+    char *p = buf;
+    char *end = buf + bufSize;
+    ULONG i;
+
+    *p = '\0';
+
+    if (r->fs3eid_Description && r->fs3eid_Description[0])
+        FS3EInstance_Appendf(&p, end, "%s\n\n", r->fs3eid_Description);
+
+    if (r->fs3eid_MaxCharsKnown)
+        FS3EInstance_Appendf(&p, end, "Max post length: %lu characters\n",
+                              (unsigned long)r->fs3eid_MaxChars);
+
+    if (r->fs3eid_MaxMediaAttachments > 0) {
+        FS3EInstance_Appendf(&p, end, "Attachments: up to %lu per post",
+                              (unsigned long)r->fs3eid_MaxMediaAttachments);
+        if (r->fs3eid_ImageSizeLimit > 0)
+            FS3EInstance_Appendf(&p, end, ", images up to %lu MB",
+                                  (unsigned long)(r->fs3eid_ImageSizeLimit / (1024UL * 1024UL)));
+        if (r->fs3eid_VideoSizeLimit > 0)
+            FS3EInstance_Appendf(&p, end, ", video up to %lu MB",
+                                  (unsigned long)(r->fs3eid_VideoSizeLimit / (1024UL * 1024UL)));
+        FS3EInstance_Appendf(&p, end, "\n");
+    }
+
+    if (r->fs3eid_PollMaxOptions > 0) {
+        FS3EInstance_Appendf(&p, end, "Polls: up to %lu options",
+                              (unsigned long)r->fs3eid_PollMaxOptions);
+        if (r->fs3eid_PollMaxExpirationSecs > 0)
+            FS3EInstance_Appendf(&p, end, ", up to %lu days",
+                                  (unsigned long)(r->fs3eid_PollMaxExpirationSecs / 86400UL));
+        FS3EInstance_Appendf(&p, end, "\n");
+    }
+
+    if (r->fs3eid_TranslationKnown)
+        FS3EInstance_Appendf(&p, end, "Translation: %s\n",
+                              r->fs3eid_TranslationEnabled ? "Supported" : "Not supported");
+
+    if (r->fs3eid_RegistrationsKnown) {
+        if (r->fs3eid_RegistrationsEnabled)
+            FS3EInstance_Appendf(&p, end, "Registrations: Open%s\n",
+                                  r->fs3eid_ApprovalRequired ? " (approval required)" : "");
+        else
+            FS3EInstance_Appendf(&p, end, "Registrations: Closed\n");
+    }
+
+    if (r->fs3eid_UserCountKnown || r->fs3eid_ActiveMonthUsersKnown) {
+        FS3EInstance_Appendf(&p, end, "Users:");
+        if (r->fs3eid_UserCountKnown)
+            FS3EInstance_Appendf(&p, end, " %lu total", (unsigned long)r->fs3eid_UserCount);
+        if (r->fs3eid_ActiveMonthUsersKnown)
+            FS3EInstance_Appendf(&p, end, "%s%lu active this month",
+                                  r->fs3eid_UserCountKnown ? ", " : " ",
+                                  (unsigned long)r->fs3eid_ActiveMonthUsers);
+        FS3EInstance_Appendf(&p, end, "\n");
+    }
+
+    if (r->fs3eid_StatusCountKnown)
+        FS3EInstance_Appendf(&p, end, "Statuses: %lu\n", (unsigned long)r->fs3eid_StatusCount);
+
+    if ((r->fs3eid_ContactEmail && r->fs3eid_ContactEmail[0]) ||
+        (r->fs3eid_ContactAccount && r->fs3eid_ContactAccount[0]))
+    {
+        FS3EInstance_Appendf(&p, end, "\nContact:");
+        if (r->fs3eid_ContactEmail && r->fs3eid_ContactEmail[0])
+            FS3EInstance_Appendf(&p, end, " %s", r->fs3eid_ContactEmail);
+        if (r->fs3eid_ContactAccount && r->fs3eid_ContactAccount[0])
+            FS3EInstance_Appendf(&p, end, "%s@%s",
+                                  (r->fs3eid_ContactEmail && r->fs3eid_ContactEmail[0]) ? "," : "",
+                                  r->fs3eid_ContactAccount);
+        FS3EInstance_Appendf(&p, end, "\n");
+    }
+
+    if (r->fs3eid_RuleCount > 0) {
+        FS3EInstance_Appendf(&p, end, "\nRules:\n");
+        for (i = 0; i < r->fs3eid_RuleCount; i++)
+            FS3EInstance_Appendf(&p, end, "%lu. %s\n", (unsigned long)(i + 1), r->fs3eid_Rules[i]);
+    }
+}
+
+/*
+ * "Tell me about this server" lookup -- typing a bare domain (or a full
+ * https://... URL) into the search bar with the "Server" chooser entry
+ * selected (see FS3ESEARCHTYPE_SERVER, friendsh3ep.c), or invoked directly
+ * for the connected account's own instance (see the "About This Server"
+ * menu item). Works for ANY reachable Mastodon-API-compatible server, not
+ * just the connected account's own -- FS3ENETQ_INSTANCE_DETAILS needs no
+ * access token (see its own doc comment in fs3enet.h), so this works even
+ * logged out.
+ *
+ * Mirrors FS3EApp_SearchWord/SearchAccount: pushes the search stack, clears
+ * the Search channel (so the waiting screen shows while the lookup is in
+ * flight, same as any other search mode), fires the request. The rest of
+ * the flow -- formatting the info text and applying
+ * TTIMELINE_ShowInstanceInfo -- happens in the FS3ENETQ_INSTANCE_DETAILS
+ * reply handler (FS3EApp_HandleNetReply) once the server has answered.
+ */
+void FS3EApp_SearchInstance(const char *domainOrUrl)
+{
+    char apiBaseUrl[256];
+    FS3ENetInstanceDetailsReq *req;
+
+    if (!domainOrUrl || !domainOrUrl[0]) return;
+
+    FS3EInstance_NormalizeUrl(domainOrUrl, apiBaseUrl, sizeof(apiBaseUrl));
+    if (!apiBaseUrl[0]) return;
+
+    searchStackPush();
+
+    if (app->searchProfileAcct)        { FreeVec(app->searchProfileAcct);        app->searchProfileAcct        = NULL; }
+    if (app->searchProfileAccountId)   { FreeVec(app->searchProfileAccountId);   app->searchProfileAccountId   = NULL; }
+    if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
+    if (app->searchLastQueryText)      { FreeVec(app->searchLastQueryText);      app->searchLastQueryText      = NULL; }
+    app->searchLastQueryText = NetStrDup(domainOrUrl);
+    app->searchMode = FS3ESEARCH_INSTANCE;
+
+    fs3e_setViewMode(VIEWMODE_Search);
+
+    if (app->tootTimeline)
+        SetAttrs(app->tootTimeline, TTIMELINE_ClearPosts, TRUE, TAG_DONE);
+
+    req = FS3ENetInstanceDetailsReq_Alloc(apiBaseUrl);
+    if (req && FS3EApp_NetSend(FS3ENETQ_INSTANCE_DETAILS, req, sizeof(*req))) {
         app->timelineFetchedMask |= (1UL << VIEWMODE_Search);
         s_searchWaitMsgIdx++;
         FS3EApp_CheckConnectionState();
@@ -973,6 +1191,24 @@ static void FS3EApp_MapStatusToPostSetup(TTLPostSetup *post, const FS3ENetStatus
     post->quotable        = st->fmas_Quotable;
     post->isReply         = st->fmas_IsReply;
     post->sensitive       = st->fmas_Sensitive;
+
+    /* "Translate" hot-spot -- offered only when the CONNECTED account's own
+     * server confirmed it supports server-side translation (see
+     * app->accountTranslationEnabled/Known, FS3ENETQ_INSTANCE_INFO) AND the
+     * server told us this status' own language AND we could detect the
+     * OS's preferred language (FS3EOSLocale_LanguageCode) AND the two
+     * differ -- a toot already in the reader's own language has nothing
+     * useful to translate. Case-sensitive compare is fine: both sides are
+     * server/OS-supplied lowercase ISO 639 codes ("en", "fr", ...), never
+     * user-typed text. */
+    {
+        const char *osLang = FS3EOSLocale_LanguageCode();
+        post->language     = st->fmas_Language;
+        post->canTranslate = (app->accountTranslationKnown && app->accountTranslationEnabled &&
+                               st->fmas_Language && st->fmas_Language[0] &&
+                               osLang && osLang[0] &&
+                               strcmp(st->fmas_Language, osLang) != 0);
+    }
 
     post->hasQuote        = st->fmas_HasQuote;
     post->quoteId         = st->fmas_QuoteId;
@@ -1272,9 +1508,65 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 app->accountMaxChars = reply->fs3eii_MaxChars;
                 FS3ETootView_UpdateCharCount(&app->tootView);
             }
+            if (reply->fs3eii_TranslationKnown) {
+                app->accountTranslationEnabled = reply->fs3eii_TranslationEnabled;
+                app->accountTranslationKnown   = TRUE;
+            }
         } else {
 		/* tell instance info failed to wait state message */
 	}
+        break;
+
+    case FS3ENETQ_INSTANCE_DETAILS:
+        /* See FS3EApp_SearchInstance's own doc comment -- fired for both
+         * the "type a domain" search flow and the "About This Server" menu
+         * item, always into the Search channel. Clears the same wait-state
+         * bit FS3EApp_SearchInstance set, whether the lookup succeeded or
+         * the server was simply unreachable (a typo'd domain is common
+         * here, unlike a normal timeline fetch) -- same "no special error
+         * requester, just stop waiting" choice FS3ENETQ_TIMELINE/
+         * ACCOUNTS_LIST's own Search-mode failures already make. */
+        app->timelineFetchedMask &= ~(1UL << VIEWMODE_Search);
+
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetInstanceDetailsReply *reply = (FS3ENetInstanceDetailsReply *)msg->fs3em_Data;
+            TTLInstanceHeaderSetup setup;
+            char subtitle[160];
+            char bodyText[4096];
+            const char *domain = (reply->fs3eid_Domain && reply->fs3eid_Domain[0])
+                                ? reply->fs3eid_Domain
+                                : (app->searchLastQueryText ? app->searchLastQueryText : "");
+
+            subtitle[0] = '\0';
+            if (reply->fs3eid_Title && reply->fs3eid_Title[0]) {
+                if (reply->fs3eid_Version && reply->fs3eid_Version[0])
+                    snprintf(subtitle, sizeof(subtitle), "%s (v%s)",
+                             reply->fs3eid_Title, reply->fs3eid_Version);
+                else
+                    snprintf(subtitle, sizeof(subtitle), "%s", reply->fs3eid_Title);
+            } else if (reply->fs3eid_Version && reply->fs3eid_Version[0]) {
+                snprintf(subtitle, sizeof(subtitle), "v%s", reply->fs3eid_Version);
+            }
+
+            FS3EInstance_BuildInfoText(bodyText, sizeof(bodyText), reply);
+
+            memset(&setup, 0, sizeof(setup));
+            setup.channel  = TTL_SEARCH_CHANNEL;
+            setup.domain   = domain;
+            setup.subtitle = subtitle;
+            setup.body     = bodyText;
+
+            SetAttrs(app->tootTimeline, TTIMELINE_ShowInstanceInfo, (ULONG)&setup, TAG_DONE);
+
+            /* Back-restore scroll position -- see FS3EApp_SearchGoBack;
+             * same best-effort "apply as soon as the header exists" timing
+             * FS3ENETQ_ACCOUNT_LOOKUP's own Search branch already uses. */
+            searchApplyPendingScroll();
+
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+        }
         break;
 
     case FS3ENETQ_TIMELINE:
@@ -2175,6 +2467,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 app->pendingTootBody = NULL;
                 FS3EApp_SubmitToot(pendingBody, app->pendingTootVisibility,
                                     app->pendingTootQuotePolicy, app->pendingTootSensitive,
+                                    app->pendingTootLanguage,
                                     (const char *const *)app->pendingTootMediaIds,
                                     app->pendingTootMediaCount);
 
@@ -2499,6 +2792,23 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     RefreshGList((struct Gadget *)app->tootTimeline,
                                  CurrentMainWindow, NULL, 1);
             }
+        }
+        break;
+
+    case FS3ENETQ_TRANSLATE_STATUS:
+        /* No error requester on failure -- see FS3ENETQ_TRANSLATE_STATUS's
+         * own doc comment in fs3enet.h: the toot simply keeps showing its
+         * original text, same as if the Translate row had never been
+         * clicked. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetTranslateStatusReply *reply = (FS3ENetTranslateStatusReply *)msg->fs3em_Data;
+            TTLTranslationSetup setup;
+            setup.postId         = reply->fs3ets_StatusId;
+            setup.translatedText = reply->fs3ets_TranslatedContent;
+            SetAttrs(app->tootTimeline, TTIMELINE_ApplyTranslation, (ULONG)&setup, TAG_DONE);
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
         }
         break;
 

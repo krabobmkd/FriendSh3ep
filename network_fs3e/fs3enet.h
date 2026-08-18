@@ -38,6 +38,9 @@ enum FS3ENetRequestType
     FS3ENETQ_RELATIONSHIP,   /* fetch following/followed-by state for an account id */
     FS3ENETQ_FOLLOW,         /* toggle follow/unfollow on an account */
     FS3ENETQ_INSTANCE_INFO,  /* fetch the server's per-toot character limit */
+    FS3ENETQ_INSTANCE_DETAILS, /* fetch a full "about this server" profile for
+                               * ANY domain (not just the connected account's own) --
+                               * see FS3ENetInstanceDetailsReq/Reply below */
     FS3ENETQ_EDIT_STATUS,    /* edit an existing status' text (own toots only) */
     FS3ENETQ_DELETE_STATUS,  /* delete an existing status (own toots only) */
     FS3ENETQ_UPDATE_BIO,     /* set the connected user's own profile bio (note) */
@@ -55,6 +58,8 @@ enum FS3ENetRequestType
                                * below; used to badge account-row list items,
                                * unlike singular FS3ENETQ_RELATIONSHIP which only
                                * ever targets the profile header's one account */
+    FS3ENETQ_TRANSLATE_STATUS, /* server-side translate a status (Mastodon 4.0+) --
+                               * see FS3ENetTranslateStatusReq/Reply below */
     FS3ENETQ_FETCH_PROGRESS /* net-process-originated ONLY -- never sent by the GUI.
                               * A one-way PutMsg() of an FS3ENetFetchProgress block to
                               * app->netReplyPort while a chunked FS3ENETQ_FETCH_IMAGE
@@ -227,7 +232,78 @@ typedef struct FS3ENetInstanceInfoReply
 {
     ULONG fs3eii_MaxChars;
     BOOL  fs3eii_Known;
+    BOOL  fs3eii_TranslationEnabled; /* configuration.translation.enabled (v2, Mastodon
+                                       * 4.0+) -- whether the CONNECTED account's own
+                                       * server offers server-side toot translation.
+                                       * Read only when fs3eii_TranslationKnown is TRUE,
+                                       * same "unknown isn't a negative" rule as
+                                       * fs3eii_Known/fs3eii_MaxChars above. */
+    BOOL  fs3eii_TranslationKnown;
 } FS3ENetInstanceInfoReply;
+
+/*
+ * FS3ENETQ_INSTANCE_DETAILS — a full "about this server" profile for
+ * fs3eid_ApiBaseUrl (see FS3EMastodon_GetInstanceDetails), not just the
+ * compose-time character limit FS3ENETQ_INSTANCE_INFO above covers.
+ * Deliberately a separate, heavier request type: fs3eid_ApiBaseUrl here
+ * need not be the connected account's own instance -- see
+ * FS3EApp_SearchInstance() (fs3erequests.c), which looks up ANY domain the
+ * user types, logged in there or not. No access token needed; every field
+ * comes from Mastodon's public instance endpoints.
+ *
+ * On FS3ENETR_OK, fs3em_Data is replaced with a flat
+ * FS3ENetInstanceDetailsReply. On FS3ENETR_HTTP_ERROR (server unreachable
+ * outright), fs3em_Data still points at the original request block.
+ */
+typedef struct FS3ENetInstanceDetailsReq
+{
+    char *fs3eid_ApiBaseUrl;
+} FS3ENetInstanceDetailsReq;
+
+/* Allocates a flat request block for INSTANCE_DETAILS. FreeVec() when done. */
+FS3ENetInstanceDetailsReq *FS3ENetInstanceDetailsReq_Alloc(const char *apiBaseUrl);
+
+/* Mirrors FS3E_MASTODON_MAX_RULES in fs3enet_mastodon.h -- both MUST stay
+ * numerically equal, see that define's own comment for why this is a
+ * mirrored plain value rather than a shared include. */
+#define FS3ENET_MAX_INSTANCE_RULES 16
+
+typedef struct FS3ENetInstanceDetailsReply
+{
+    char *fs3eid_Domain;         /* "" if the server didn't echo its own domain --
+                                   * caller falls back to whatever it looked up */
+    char *fs3eid_Title;
+    char *fs3eid_Version;
+    char *fs3eid_Description;    /* plain text (v2), or raw HTML on the v1-only
+                                   * fallback path -- see FS3EMastodon_GetInstanceDetails */
+    char *fs3eid_ContactEmail;
+    char *fs3eid_ContactAccount; /* acct string, "" if none */
+
+    ULONG fs3eid_MaxChars;
+    BOOL  fs3eid_MaxCharsKnown;
+    ULONG fs3eid_MaxMediaAttachments;
+    ULONG fs3eid_ImageSizeLimit;  /* bytes, 0 = unknown */
+    ULONG fs3eid_VideoSizeLimit;  /* bytes, 0 = unknown */
+    ULONG fs3eid_PollMaxOptions;
+    ULONG fs3eid_PollMaxExpirationSecs;
+
+    BOOL  fs3eid_TranslationEnabled;
+    BOOL  fs3eid_TranslationKnown;
+
+    BOOL  fs3eid_RegistrationsEnabled;
+    BOOL  fs3eid_RegistrationsKnown;
+    BOOL  fs3eid_ApprovalRequired; /* meaningful only if RegistrationsKnown && Enabled */
+
+    ULONG fs3eid_UserCount;
+    BOOL  fs3eid_UserCountKnown;
+    ULONG fs3eid_StatusCount;
+    BOOL  fs3eid_StatusCountKnown;
+    ULONG fs3eid_ActiveMonthUsers;
+    BOOL  fs3eid_ActiveMonthUsersKnown;
+
+    ULONG fs3eid_RuleCount; /* <= FS3ENET_MAX_INSTANCE_RULES */
+    char *fs3eid_Rules[FS3ENET_MAX_INSTANCE_RULES];
+} FS3ENetInstanceDetailsReply;
 
 /* FS3ECache subdirectories (see fs3enet_cache.h) -- user avatars and toot
  * media thumbnails are fetched through the identical pipeline but kept in
@@ -581,6 +657,12 @@ typedef struct FS3ENetStatus {
                                * what a click on the "X boosted" line actually needs
                                * to look up their profile; the display name alone
                                * isn't a valid /api/v1/accounts/lookup query. */
+    char *fmas_Language;     /* status.language -- ISO 639 code, "" if the server left
+                               * it null (undetected/unset). Belongs to src, same as
+                               * fmas_Content (a reblog's language is the boosted
+                               * status's own). Drives TootTimeline's "Translate"
+                               * hot-spot -- see TTLPostSetup.canTranslate/
+                               * FS3EApp_MapStatusToPostSetup. */
 
     /* media_attachments[].preview_url (falling back to .url if no
      * preview_url) for up to FS3ENET_MAX_MEDIA attachments; entries
@@ -736,6 +818,8 @@ typedef struct FS3ENetPostStatusReq {
                                * this request once that reply's media id is in
                                * hand. */
     ULONG fs3ep_MediaCount;
+    char *fs3ep_Language;    /* ISO 639 code (e.g. "en"), "" = unspecified -- see
+                               * FS3ETootView_GetLanguage/FS3EMastodon_PostStatus */
 } FS3ENetPostStatusReq;
 
 FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
@@ -743,7 +827,8 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     const char *content, const char *visibility, BOOL sensitive, const char *spoiler,
     const char *inReplyToId, const char *quoteApprovalPolicy,
     const char *quotedStatusId,
-    const char *const *mediaIds, ULONG mediaCount);
+    const char *const *mediaIds, ULONG mediaCount,
+    const char *language);
 
 typedef struct FS3ENetPostStatusReply {
     char *fs3ep_StatusId; /* new status id string */
@@ -1132,5 +1217,37 @@ typedef struct FS3ENetFollowReply {
     char *fs3efo_AccountId;
     BOOL  fs3efo_Following;
 } FS3ENetFollowReply;
+
+/*
+ * FS3ENETQ_TRANSLATE_STATUS — POST /api/v1/statuses/:id/translate
+ * (Mastodon 4.0+, see FS3EMastodon_TranslateStatus). fs3ets_TargetLang is
+ * an ISO 639 code (see FS3EOSLocale_LanguageCode()); "" lets the server
+ * fall back to its own default target.
+ *
+ * On FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetTranslateStatusReply.
+ * On FS3ENETR_HTTP_ERROR (translation not configured/supported for this
+ * language/status), fs3em_Data still points at the original request block --
+ * the GUI's reply handler (fs3erequests.c) simply leaves the toot showing
+ * its original text, no error requester (translation failures are common
+ * enough -- an unsupported language pair, a status too short to detect --
+ * not worth interrupting the user over).
+ */
+typedef struct FS3ENetTranslateStatusReq {
+    char *fs3ets_ApiBaseUrl;
+    char *fs3ets_AccessToken;
+    char *fs3ets_StatusId;
+    char *fs3ets_TargetLang;
+} FS3ENetTranslateStatusReq;
+
+FS3ENetTranslateStatusReq *FS3ENetTranslateStatusReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *statusId, const char *targetLang);
+
+typedef struct FS3ENetTranslateStatusReply {
+    char *fs3ets_StatusId;         /* echoed from the request -- see
+                                     * TTIMELINE_ApplyTranslation's postId match */
+    char *fs3ets_TranslatedContent; /* HTML-stripped plain text, same convention
+                                     * as FS3ENetStatus.fmas_Content */
+} FS3ENetTranslateStatusReply;
 
 #endif /* FS3ENET_H */

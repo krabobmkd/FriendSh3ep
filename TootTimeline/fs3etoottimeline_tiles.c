@@ -1113,6 +1113,30 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                                    "\xE2\x86\x93 Follow discussion \xE2\x80\xA2\xE2\x80\xA2\xE2\x80\xA2" /* "↓ Follow discussion •••" */, dcMini);
                 }
 
+                /* "Translate"/"Original Text" -- translateRowY was computed
+                 * once by ttl_toot_layout and is reused verbatim here, same
+                 * rule as pollBlockY/threadRowY above. Clickable -- see
+                 * TTL_HOT_TRANSLATE. Label reflects post->showingTranslation,
+                 * NOT merely whether translatedBody is cached -- a post can
+                 * have a cached translation currently toggled back to
+                 * showing the original. */
+                if (post->canTranslate && post->translateRowY > 0) {
+                    LONG accentPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT);
+                    WORD rowY    = (WORD)(drawY + post->translateRowY);
+                    WORD barBotY = (WORD)(rowY + inst->miniLineHeight - 1);
+
+                    SetAPen(rp, accentPen);
+                    Move(rp, textX, rowY);
+                    Draw(rp, textX, barBotY);
+
+                    URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                    tile_draw_text(inst, rp, (WORD)(textX + 6), (WORD)(rowY + inst->miniLineAscent),
+                                   post->showingTranslation
+                                       ? "\xF0\x9F\x8C\x90 Original Text" /* "🌐 Original Text" */
+                                       : "\xF0\x9F\x8C\x90 Translate"     /* "🌐 Translate" */,
+                                   dcMini);
+                }
+
                 /* Action bar: ↩ Reply N  🔁 Boost N  ⭐/💫 N — right-aligned,
                  * normal font. Same row Y formula, and the same labels/
                  * ttl_actionTypes[], that the hot-spot rects in
