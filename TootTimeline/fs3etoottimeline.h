@@ -534,6 +534,18 @@ typedef struct TTLPostSetup {
      * an account row -- see TTLListTitle_Class in fs3etoottimeline_posts.c. */
     BOOL        isListTitle;
 
+    /* TRUE: this is a trending-link "news" card (VIEWMODE_News), not a
+     * toot -- checked alongside isListTitle/isAccountRow, dispatches to
+     * ttl_news_card_alloc() instead. Reuses the existing card fields below
+     * (cardTitle/cardDescription/cardUrl/cardProviderName/cardImageUrl)
+     * for the link's own title/description/url/provider/thumbnail, plus
+     * `timestamp` (otherwise a toot-only field) for the link's published
+     * date -- see FS3ENetNewsItem/FS3EApp_HandleNetReply's FS3ENETQ_NEWS
+     * case. Every other TTLPostSetup field is ignored, same "wholly
+     * different kind of row" treatment isAccountRow/isListTitle get -- see
+     * TTLNewsCard_Class in fs3etoottimeline_news.c. */
+    BOOL        isNewsCard;
+
     /* Action-bar counts/state, shown next to the Reply/Boost/Fave buttons
      * and (favourited) toggling the Fave glyph between empty/full star --
      * see ttl_build_action_labels() in fs3etoottimeline_tiles.c. */

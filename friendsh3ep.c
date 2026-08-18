@@ -1545,12 +1545,12 @@ int main(int argc, char **argv)
 
     app->nav_btns[4] = makeBtn(GID_NAV_SEARCH,        "\xF0\x9F\x94\x8D Search",    dpiH,TRUE);
     app->nav_btns[5] = makeBtn(GID_NAV_NOTIFICATIONS, "\xF0\x9F\x9A\x80 Notif.",    dpiH,TRUE);
-/* correct, when enabled for next version
+
     app->nav_btns[6] = makeBtn(GID_NAV_BOOKMARKS, "\xF0\x9F\x94\x96 Bookmark",    dpiH,TRUE);
     app->nav_btns[7] = makeBtn(GID_NAV_NEWS, "\xF0\x9F\x93\xB0 News",    dpiH,TRUE);
-*/
-    app->nav_btns[6] = makeBtn(GID_NAV_BOOKMARKS, "-",    dpiH,TRUE);
-    app->nav_btns[7] = makeBtn(GID_NAV_NEWS, "-",    dpiH,TRUE);
+
+
+
 
 }
 

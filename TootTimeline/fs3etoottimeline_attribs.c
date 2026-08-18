@@ -152,6 +152,8 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                             post = ttl_list_title_alloc(setup);
                         else if (setup->isAccountRow)
                             post = ttl_account_row_alloc(setup);
+                        else if (setup->isNewsCard)
+                            post = ttl_news_card_alloc(setup);
                         else if (setup->notifType == TTL_NOTIF_FOLLOW ||
                                  setup->notifType == TTL_NOTIF_FOLLOW_REQUEST)
                             post = ttl_notif_follow_alloc(setup);
@@ -176,13 +178,14 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                             /* Pin the "look for something new" / "load
                              * more…" rows around real content -- but NOT
                              * for a search-list row (account row or its
-                             * title): those are single-page, non-
-                             * paginated fetches (see FS3ENetAccountsListReq's
-                             * doc comment), so "check for newer"/"load
+                             * title) or a news card: all are single-page,
+                             * non-paginated fetches (see
+                             * FS3ENetAccountsListReq's/FS3ENetNewsReq's own
+                             * doc comments), so "check for newer"/"load
                              * older" don't apply and would be misleading
                              * pinned above/below a flat search/followers/
-                             * following list. */
-                            if (!setup->isAccountRow && !setup->isListTitle)
+                             * following/news list. */
+                            if (!setup->isAccountRow && !setup->isListTitle && !setup->isNewsCard)
                                 ttl_channel_add_boundaries(inst, channel);
                         } else {
                             /* Prepend: new post goes above the current top
@@ -216,12 +219,14 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
 
                         if (!(setup->viewModeBits & (1UL << ch))) continue;
 
-                        /* Same isListTitle/isAccountRow/notifType dispatch
-                         * as TTIMELINE_AddPost above -- see its comment. */
+                        /* Same isListTitle/isAccountRow/isNewsCard/notifType
+                         * dispatch as TTIMELINE_AddPost above -- see its comment. */
                         if (setup->isListTitle)
                             post = ttl_list_title_alloc(setup);
                         else if (setup->isAccountRow)
                             post = ttl_account_row_alloc(setup);
+                        else if (setup->isNewsCard)
+                            post = ttl_news_card_alloc(setup);
                         else if (setup->notifType == TTL_NOTIF_FOLLOW ||
                                  setup->notifType == TTL_NOTIF_FOLLOW_REQUEST)
                             post = ttl_notif_follow_alloc(setup);
@@ -245,9 +250,9 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                             AddHead((struct List *)&channel->posts, (struct Node *)&post->node);
                             channel->postCount++;
                             /* See the matching comment in TTIMELINE_AddPost
-                             * above -- search-list rows never get the
-                             * newer/older boundaries. */
-                            if (!setup->isAccountRow && !setup->isListTitle)
+                             * above -- search-list rows and news cards never
+                             * get the newer/older boundaries. */
+                            if (!setup->isAccountRow && !setup->isListTitle && !setup->isNewsCard)
                                 ttl_channel_add_boundaries(inst, channel);
                         } else {
                             /* Append: new post goes below the current

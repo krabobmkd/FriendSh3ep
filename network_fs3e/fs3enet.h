@@ -60,6 +60,8 @@ enum FS3ENetRequestType
                                * ever targets the profile header's one account */
     FS3ENETQ_TRANSLATE_STATUS, /* server-side translate a status (Mastodon 4.0+) --
                                * see FS3ENetTranslateStatusReq/Reply below */
+    FS3ENETQ_NEWS,           /* fetch trending links (VIEWMODE_News) -- see
+                               * FS3ENetNewsReq/Reply below */
     FS3ENETQ_FETCH_PROGRESS /* net-process-originated ONLY -- never sent by the GUI.
                               * A one-way PutMsg() of an FS3ENetFetchProgress block to
                               * app->netReplyPort while a chunked FS3ENETQ_FETCH_IMAGE
@@ -1249,5 +1251,45 @@ typedef struct FS3ENetTranslateStatusReply {
     char *fs3ets_TranslatedContent; /* HTML-stripped plain text, same convention
                                      * as FS3ENetStatus.fmas_Content */
 } FS3ENetTranslateStatusReply;
+
+/*
+ * FS3ENETQ_NEWS — GET /api/v1/trends/links (Mastodon's "Explore/News"
+ * trending-links list, VIEWMODE_News). fs3enw_AccessToken may be "" --
+ * this endpoint is public, same as timelines/public. Deliberately a
+ * single-page, non-paginated fetch (like FS3ENETQ_ACCOUNTS_LIST) -- the
+ * endpoint's own max_id/min_id-style pagination isn't wired up here, same
+ * "no pagination yet" scope accepted elsewhere for a first cut.
+ *
+ * On FS3ENETR_OK, fs3em_Data is replaced with a flat FS3ENetNewsReply
+ * block; fs3em_Data on error still points at the original request block.
+ */
+typedef struct FS3ENetNewsReq {
+    char *fs3enw_ApiBaseUrl;
+    char *fs3enw_AccessToken;
+} FS3ENetNewsReq;
+
+FS3ENetNewsReq *FS3ENetNewsReq_Alloc(const char *apiBaseUrl, const char *accessToken);
+
+/* One trending-link entry. All char * fields point into the enclosing
+ * FS3ENetNewsReply's own flat block -- one FreeVec() frees everything,
+ * same convention as FS3ENetStatus. Fields mirror a toot's own embedded
+ * link-preview card (FS3ENetStatus.fmas_Card*) -- this endpoint returns
+ * the identical PreviewCard shape, just as bare top-level array entries
+ * instead of nested inside a status -- plus fnn_PublishedAt, which only
+ * trending-link entries carry (Mastodon 4.3+; "" on older servers). */
+typedef struct FS3ENetNewsItem {
+    char *fnn_Title;
+    char *fnn_Description;
+    char *fnn_Url;
+    char *fnn_ProviderName;
+    char *fnn_ImageUrl;
+    char *fnn_PublishedAt; /* ISO 8601, "" if the server doesn't provide one */
+} FS3ENetNewsItem;
+
+/* Header of the flat news reply block.
+ * FS3ENetNewsItem[fs3enw_Count] follows immediately in memory. */
+typedef struct FS3ENetNewsReply {
+    ULONG fs3enw_Count;
+} FS3ENetNewsReply;
 
 #endif /* FS3ENET_H */

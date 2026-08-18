@@ -195,6 +195,32 @@ void FS3EApp_FetchTimeline(ULONG viewMode)
         return;
     }
 
+    /* News (trending links, Mastodon's "Explore" tab) is a bare array of
+     * PreviewCard-shaped entries, not Status objects, and has no /api/v1/-
+     * relative timeline path either -- FS3ENETQ_NEWS instead, same
+     * "reuse the generic bookkeeping" reasoning as Notifs above. Public
+     * endpoint (like Local/Fed below), so no token required -- an
+     * anonymous connection can browse trending links same as it can browse
+     * the public timelines. */
+    if (viewMode == VIEWMODE_News) {
+        FS3ENetNewsReq *nwreq;
+
+        if (!app->accountApiBaseUrl) return;
+        if (app->channelPopulatedMask & bit) return;
+        if (app->timelineFetchedMask & bit) return;
+
+        nwreq = FS3ENetNewsReq_Alloc(app->accountApiBaseUrl,
+                    app->accountAccessToken ? app->accountAccessToken : "");
+        if (!nwreq) return;
+
+        if (FS3EApp_NetSend(FS3ENETQ_NEWS, nwreq, sizeof(*nwreq))) {
+            app->timelineFetchedMask |= bit;
+            app->timelineErrorMask   &= ~bit;
+            FS3EApp_CheckConnectionState();
+        }
+        return;
+    }
+
     /* Local/Federated are genuinely public Mastodon endpoints -- only
      * Home needs a real token (see the Notifs branch above for the same
      * distinction). An anonymous account's accountAccessToken is NULL
@@ -1249,6 +1275,40 @@ static void FS3EApp_MapStatusToPostSetup(TTLPostSetup *post, const FS3ENetStatus
     post->cardImageUrl     = st->fmas_CardImageUrl;
 }
 
+/* Triggers a link-preview card image's FETCH_IMAGE download, if it isn't
+ * already requested -- own cache subdir/pool (see
+ * FS3E_CACHE_SUBDIR_CARDIMAGES/AvatarImages_IsCardRequested), kept separate
+ * from real attachment thumbnails so a card's image URL can never collide
+ * with an actual attachment's cache entry. Shared by
+ * FS3EApp_TriggerMediaFetchesForStatus below (a toot's own embedded card)
+ * and the FS3ENETQ_NEWS reply handler (a trending-link card IS the whole
+ * item, not embedded in anything) -- same image, same cache pool, same
+ * dedup guard either way. */
+static void FS3EApp_TriggerCardImageFetch(const char *imageUrl)
+{
+    ULONG reqSize;
+    FS3ENetFetchImageReq *req;
+
+    if (!app->avatarImages || !imageUrl || !imageUrl[0]) return;
+    if (AvatarImages_IsCardRequested(app->avatarImages, imageUrl)) return;
+
+    reqSize = sizeof(FS3ENetFetchImageReq)
+            + strlen(imageUrl) + 1
+            + strlen(imageUrl) + 1
+            + strlen(FS3E_CACHE_SUBDIR_CARDIMAGES) + 1;
+    req = FS3ENetFetchImageReq_Alloc(imageUrl, imageUrl,
+                                     FS3E_CACHE_SUBDIR_CARDIMAGES,
+                                     (BOOL)(!app->settings.minifyThumbnails ||
+                                            app->settings.keepBigThumbnails),
+                                     FALSE);
+    if (req) {
+        if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
+            AvatarImages_MarkCardRequested(app->avatarImages, imageUrl);
+        else
+            FreeVec(req);
+    }
+}
+
 /* Triggers the avatar/thumbnail FETCH_IMAGE downloads for one status, same
  * dedup guards (AvatarImages_IsRequested/IsMediaRequested) as the normal
  * per-status loop -- shared with FS3ENETQ_TIMELINE's SINGLE_REFRESH branch
@@ -1327,33 +1387,9 @@ static void FS3EApp_TriggerMediaFetchesForStatus(const FS3ENetStatus *st)
         }
     }
 
-    /* Trigger the link preview card's image download, if it has one and
-     * it isn't already requested -- own cache subdir/pool (see
-     * FS3E_CACHE_SUBDIR_CARDIMAGES/AvatarImages_IsCardRequested), kept
-     * separate from real attachment thumbnails above so a card's image URL
-     * can never collide with an actual attachment's cache entry. */
-    if (app->avatarImages &&
-        st->fmas_HasCard &&
-        st->fmas_CardImageUrl && st->fmas_CardImageUrl[0] &&
-        !AvatarImages_IsCardRequested(app->avatarImages, st->fmas_CardImageUrl))
-    {
-        ULONG reqSize = sizeof(FS3ENetFetchImageReq)
-                      + strlen(st->fmas_CardImageUrl) + 1
-                      + strlen(st->fmas_CardImageUrl) + 1
-                      + strlen(FS3E_CACHE_SUBDIR_CARDIMAGES) + 1;
-        FS3ENetFetchImageReq *req =
-            FS3ENetFetchImageReq_Alloc(st->fmas_CardImageUrl, st->fmas_CardImageUrl,
-                                       FS3E_CACHE_SUBDIR_CARDIMAGES,
-                                       (BOOL)(!app->settings.minifyThumbnails ||
-                                              app->settings.keepBigThumbnails),
-                                       FALSE);
-        if (req) {
-            if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
-                AvatarImages_MarkCardRequested(app->avatarImages, st->fmas_CardImageUrl);
-            else
-                FreeVec(req);
-        }
-    }
+    /* Trigger the link preview card's image download, if it has one. */
+    if (st->fmas_HasCard)
+        FS3EApp_TriggerCardImageFetch(st->fmas_CardImageUrl);
 
     /* Trigger the embedded quote's author avatar download, same pipeline
      * and cache pool as the main avatar above (keyed by the quote
@@ -2014,6 +2050,56 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 app->timelineFetchedMask &= ~bit;
                 app->lastTimelineResult   = msg->fs3em_Result;
             }
+        }
+        break;
+
+    case FS3ENETQ_NEWS:
+        /* Single-page fetch only -- see FS3ENetNewsReq's own doc comment
+         * in fs3enet.h -- so unlike FS3ENETQ_TIMELINE/NOTIFICATIONS there's
+         * no older/newer direction to switch on, just success/failure. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetNewsReply *reply = (FS3ENetNewsReply *)msg->fs3em_Data;
+            FS3ENetNewsItem  *items = (FS3ENetNewsItem *)(reply + 1);
+            ULONG bit = (1UL << VIEWMODE_News);
+            ULONG i;
+
+            app->timelineFetchedMask  &= ~bit;
+            app->channelPopulatedMask |=  bit;
+            if (reply->fs3enw_Count == 0) app->channelEmptyMask |=  bit;
+            else                          app->channelEmptyMask &= ~bit;
+
+            /* Same walk-order reasoning as FS3ENETQ_TIMELINE's own INITIAL
+             * page -- reverse iterate + AddPost so the server's own order
+             * (item 0 = most trending) ends up top-to-bottom on screen. */
+            for (i = 0; i < reply->fs3enw_Count; i++) {
+                FS3ENetNewsItem *it = &items[reply->fs3enw_Count - 1 - i];
+                TTLPostSetup post;
+                memset(&post, 0, sizeof(post));
+
+                post.isNewsCard      = TRUE;
+                post.cardUrl         = it->fnn_Url;
+                post.cardTitle       = it->fnn_Title;
+                post.cardDescription = it->fnn_Description;
+                post.cardProviderName= it->fnn_ProviderName;
+                post.cardImageUrl    = it->fnn_ImageUrl;
+                post.timestamp       = it->fnn_PublishedAt;
+                post.viewModeBits    = bit;
+
+                FS3EApp_TriggerCardImageFetch(it->fnn_ImageUrl);
+
+                SetAttrs(app->tootTimeline, TTIMELINE_AddPost, (ULONG)&post, TAG_DONE);
+            }
+
+            SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
+
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+        } else if (msg->fs3em_Result != FS3ENETR_OK) {
+            ULONG bit = (1UL << VIEWMODE_News);
+            app->timelineErrorMask   |= bit;
+            app->timelineFetchedMask &= ~bit; /* allow retry on next view switch */
+            app->lastTimelineResult   = msg->fs3em_Result;
         }
         break;
 

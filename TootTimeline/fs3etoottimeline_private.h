@@ -999,6 +999,11 @@ TTLPost *ttl_notif_follow_alloc(const TTLPostSetup *setup); /* fs3etoottimeline_
 extern const TTLItemClass TTLAccountRow_Class;
 TTLPost *ttl_account_row_alloc(const TTLPostSetup *setup); /* fs3etoottimeline_accountrow.c */
 
+/* Full-width trending-link "news" card (see TTLPostSetup.isNewsCard,
+ * VIEWMODE_News). Defined in the new fs3etoottimeline_news.c. */
+extern const TTLItemClass TTLNewsCard_Class;
+TTLPost *ttl_news_card_alloc(const TTLPostSetup *setup); /* fs3etoottimeline_news.c */
+
 /* Pinned "Followers for @user" / "Followed by @user" title row -- see
  * TTLPostSetup.isListTitle. IS an ordinary member of channel->posts (same
  * as TTLNotifFollow_Class above), unlike TTLProfileHeader_Class's

@@ -562,6 +562,22 @@ FS3ENetTranslateStatusReq *FS3ENetTranslateStatusReq_Alloc(
     return req;
 }
 
+FS3ENetNewsReq *FS3ENetNewsReq_Alloc(const char *apiBaseUrl, const char *accessToken)
+{
+    ULONG total = sizeof(FS3ENetNewsReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken);
+    FS3ENetNewsReq *req =
+        (FS3ENetNewsReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3enw_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3enw_AccessToken, &p, accessToken);
+    return req;
+}
+
 FS3ENetFetchImageReq *FS3ENetFetchImageReq_Alloc(const char *url, const char *key,
                                                    const char *subdir, BOOL keepOriginal,
                                                    BOOL wantProgress)
@@ -3660,6 +3676,125 @@ static void FS3ENet_HandleTranslateStatus(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 
+/* Max trending-link entries kept -- matches the "?limit=20" this request
+ * already asks the server for; a defensive client-side cap, same
+ * reasoning as MAX_STATUSES_TIMELINE above. */
+#define FS3ENET_MAX_NEWS_ITEMS 20
+
+/* FS3ENETQ_NEWS — GET /api/v1/trends/links, see this request's own doc
+ * comment in fs3enet.h. Reuses FS3EMastodon_GetTimeline() for the HTTP
+ * fetch + bare-array validation (this endpoint's response shape is
+ * already a plain JSON array, exactly FS3ENET_TLSHAPE_ARRAY's assumption --
+ * no reblog/wrapper normalization needed) -- but each array entry is a
+ * PreviewCard, not a Status, so this does its own size/fill pass instead
+ * of FS3ENet_SizeStatusFields/FillStatusFields, reading the same field
+ * names FS3ENet_FillStatusFields already reads from a toot's nested
+ * "card" object, just directly off each top-level item here. */
+static void FS3ENet_HandleNews(FS3ENetMessage *fs3em)
+{
+    FS3ENetNewsReq   *req = (FS3ENetNewsReq *)fs3em->fs3em_Data;
+    FS3ENetNewsReply *reply;
+    cJSON *json = NULL;
+    cJSON *item;
+    ULONG count = 0, total;
+    char *p;
+    char stripped[2048];
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    if (!FS3EMastodon_GetTimeline(req->fs3enw_ApiBaseUrl, req->fs3enw_AccessToken,
+            "trends/links?limit=20", FS3ENET_TLSHAPE_ARRAY, &json, NULL))
+    {
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    /* Pass 1: size. */
+    total = sizeof(FS3ENetNewsReply);
+    cJSON_ArrayForEach(item, json) {
+        const cJSON *v;
+        if (count >= FS3ENET_MAX_NEWS_ITEMS) break;
+
+        total += sizeof(FS3ENetNewsItem);
+
+        v = cJSON_GetObjectItemCaseSensitive(item, "title");
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+        v = cJSON_GetObjectItemCaseSensitive(item, "description");
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+        v = cJSON_GetObjectItemCaseSensitive(item, "url");
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+        v = cJSON_GetObjectItemCaseSensitive(item, "provider_name");
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+        v = cJSON_GetObjectItemCaseSensitive(item, "image");
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+        v = cJSON_GetObjectItemCaseSensitive(item, "published_at");
+        total += (v && cJSON_IsString(v) && v->valuestring) ? strlen(v->valuestring) + 1 : 1;
+
+        count++;
+    }
+
+    reply = (FS3ENetNewsReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) {
+        cJSON_Delete(json);
+        fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+        return;
+    }
+    reply->fs3enw_Count = count;
+
+    /* Pass 2: fill. */
+    {
+        FS3ENetNewsItem *items = (FS3ENetNewsItem *)(reply + 1);
+        ULONG i = 0;
+        p = (char *)(items + count);
+
+        cJSON_ArrayForEach(item, json) {
+            const cJSON *v;
+            const char *str;
+            if (i >= count) break;
+
+            v = cJSON_GetObjectItemCaseSensitive(item, "title");
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            FS3ENet_PackStrClean(&items[i].fnn_Title, &p, str);
+
+            /* Description is meta-summary prose, not real multi-paragraph
+             * content -- HTML-stripped defensively (some servers embed a
+             * few tags here) same as toot content, via the shared
+             * `stripped` scratch buffer. */
+            v = cJSON_GetObjectItemCaseSensitive(item, "description");
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            StripHTML(str, stripped, sizeof(stripped));
+            FS3ENet_PackStr(&items[i].fnn_Description, &p, stripped);
+
+            v = cJSON_GetObjectItemCaseSensitive(item, "url");
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            FS3ENet_PackStr(&items[i].fnn_Url, &p, str);
+
+            v = cJSON_GetObjectItemCaseSensitive(item, "provider_name");
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            FS3ENet_PackStrClean(&items[i].fnn_ProviderName, &p, str);
+
+            v = cJSON_GetObjectItemCaseSensitive(item, "image");
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            FS3ENet_PackStr(&items[i].fnn_ImageUrl, &p, str);
+
+            v = cJSON_GetObjectItemCaseSensitive(item, "published_at");
+            str = (v && cJSON_IsString(v)) ? v->valuestring : "";
+            FS3ENet_PackStr(&items[i].fnn_PublishedAt, &p, str);
+
+            i++;
+        }
+    }
+
+    cJSON_Delete(json);
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
 /* FS3ENETQ_FLUSH_CACHE — delete every file in the disk cache directory. */
 static void FS3ENet_HandleFlushCache(FS3ENetMessage *fs3em)
 {
@@ -3787,6 +3922,10 @@ static BOOL FS3ENet_Dispatch(FS3ENetMessage *fs3em)
 
         case FS3ENETQ_TRANSLATE_STATUS:
             FS3ENet_HandleTranslateStatus(fs3em);
+            break;
+
+        case FS3ENETQ_NEWS:
+            FS3ENet_HandleNews(fs3em);
             break;
 
         case FS3ENETQ_INSTANCE_INFO:
