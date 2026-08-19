@@ -329,6 +329,25 @@ BOOL FS3EMastodon_Reblog(const char *apiBaseUrl, const char *accessToken,
                          BOOL *outReblogged);
 
 /*
+ * POST /api/v1/statuses/:id/bookmark or .../unbookmark. On success fills
+ * outBookmarked from the server's response and returns TRUE. Same "only
+ * the confirmed boolean" reasoning as FS3EMastodon_Favourite above --
+ * moot here anyway, since bookmarks carry no public count to protect.
+ *
+ * outRawStatusJson, if non-NULL, receives the AllocVec'd raw JSON response
+ * body (ownership transferred to the caller, must FreeVec it) on success --
+ * both bookmark and unbookmark return the full Status object, same as
+ * favourite/reblog do, and FS3ENet_HandleBookmark's own caller wants the
+ * bookmark=TRUE case verbatim to seed the local offline bookmarks cache
+ * (see fs3enet.h's own FS3ENETQ_BOOKMARK doc comment) without a second
+ * request. Set to NULL if the caller passes outRawStatusJson but this
+ * returns FALSE, or the caller passes NULL for it outright.
+ */
+BOOL FS3EMastodon_Bookmark(const char *apiBaseUrl, const char *accessToken,
+                           const char *statusId, BOOL bookmark,
+                           BOOL *outBookmarked, char **outRawStatusJson);
+
+/*
  * GET /api/v1/accounts/lookup?acct=<acct> -- resolves an acct string
  * ("user" or "user@instance", no leading '@') to a full account. The entry
  * point for opening a profile view: nothing else carries an account id,

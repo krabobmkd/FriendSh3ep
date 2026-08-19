@@ -323,6 +323,13 @@
  * TTIMELINE_LastHotSpotFavourited. */
 #define TTIMELINE_LastHotSpotReblogged  (TTIMELINE_Base + 39)
 /* [G] BOOL: same OM_NOTIFY tag list as TTIMELINE_HotSpotNotify -- TRUE if
+ * the post the just-activated hot-spot belongs to is currently bookmarked
+ * by the connected user. Meaningless (FALSE) for hot-spot types with no
+ * owning post -- lets a TTL_HOT_BOOKMARK handler decide POST
+ * .../bookmark vs .../unbookmark without a separate lookup, same
+ * reasoning as TTIMELINE_LastHotSpotFavourited. */
+#define TTIMELINE_LastHotSpotBookmarked (TTIMELINE_Base + 46)
+/* [G] BOOL: same OM_NOTIFY tag list as TTIMELINE_HotSpotNotify -- TRUE if
  * the connected user is currently allowed to Quote the post the
  * just-activated hot-spot belongs to (see TTLPost.quotable/
  * FS3ENetStatus.fmas_Quotable). Meaningless (FALSE) for hot-spot types
@@ -555,6 +562,12 @@ typedef struct TTLPostSetup {
     BOOL        favourited;
     BOOL        reblogged;
 
+    /* Bookmark state -- action bar's 3rd button (see TTL_HOT_BOOKMARK).
+     * No bookmarksCount: unlike favourited/reblogged, Mastodon never
+     * exposes a public count for this (bookmarks are private to the
+     * bookmarker), so the button is a plain on/off glyph toggle. */
+    BOOL        bookmarked;
+
     /* TRUE if this post is marked sensitive (Mastodon's `sensitive` flag,
      * see FS3ENetStatus.fmas_Sensitive's doc comment) -- body text and
      * every attachment are blurred/hidden behind a "Show sensitive
@@ -695,6 +708,10 @@ typedef struct TTLPostSetup {
                                             * an account-row list item once a batch
                                             * FS3ENETQ_RELATIONSHIPS reply lands; doesn't affect
                                             * row height, only a redraw. */
+#define TTL_POSTUPD_BOOKMARKED (1UL << 4) /* apply bookmarked -- plain overwrite, not a delta
+                                            * like FAVOURITED/REBLOGGED: there's no public
+                                            * bookmarksCount to keep in sync (see
+                                            * TTLPostSetup.bookmarked's own doc comment). */
 
 typedef struct TTLPostUpdate {
     const char *postId;      /* which post (every channel's copy is updated) */
@@ -703,6 +720,7 @@ typedef struct TTLPostUpdate {
     BOOL        reblogged;   /* new state; used iff flags & TTL_POSTUPD_REBLOGGED */
     BOOL        following;   /* new state; used iff flags & TTL_POSTUPD_RELATIONSHIP */
     BOOL        followedBy;  /* new state; used iff flags & TTL_POSTUPD_RELATIONSHIP */
+    BOOL        bookmarked;  /* new state; used iff flags & TTL_POSTUPD_BOOKMARKED */
 } TTLPostUpdate;
 
 /* ------------------------------------------------------------------ */
@@ -957,6 +975,15 @@ typedef struct TTLInstanceHeaderSetup {
                                  * FAVORITE/MODIFY/DELETE/THREAD. The toggle itself (once
                                  * cached) is purely local -- see TTIMELINE_ApplyTranslation's
                                  * own doc comment. */
+#define TTL_HOT_BOOKMARK     27 /* action bar's 3rd button (Reply, Boost, Bookmark, Fave) --
+                                 * postId/data same convention as TTL_HOT_FAVORITE (no data
+                                 * needed, targetId travels via the generic ttl_notify_hotspot()
+                                 * postId param); see TTIMELINE_LastHotSpotBookmarked for the
+                                 * pre-click state a handler needs to pick bookmark vs
+                                 * unbookmark. Unlike Fave/Boost there's no public
+                                 * bookmarksCount (Mastodon never exposes one -- bookmarks are
+                                 * private to the bookmarker), so the button is glyph-only,
+                                 * no digit -- see ttl_build_action_labels(). */
 
 /* Opaque handle; cast to TTLHotSpot* from private header if needed */
 typedef struct TTLHotSpot TTLHotSpot;

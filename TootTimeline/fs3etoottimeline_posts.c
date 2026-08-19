@@ -317,6 +317,7 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
         post->favouritesCount = setup->favouritesCount;
         post->favourited      = setup->favourited;
         post->reblogged       = setup->reblogged;
+        post->bookmarked      = setup->bookmarked;
         post->quotable        = setup->quotable;
     post->isReply         = setup->isReply;
         post->isOwn           = setup->isOwn;
@@ -482,6 +483,7 @@ void ttl_post_refresh_fields(TTLPost *post, const TTLPostSetup *setup)
     post->favouritesCount = setup->favouritesCount;
     post->favourited      = setup->favourited;
     post->reblogged       = setup->reblogged;
+    post->bookmarked      = setup->bookmarked;
     post->quotable        = setup->quotable;
     post->isReply         = setup->isReply;
     post->sensitive       = setup->sensitive;
@@ -1022,7 +1024,7 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
 /* See the TTLHotSpot comment in fs3etoottimeline_private.h.            */
 /* ------------------------------------------------------------------ */
 
-extern const UBYTE        ttl_actionTypes[3];
+extern const UBYTE        ttl_actionTypes[4];
 extern const UBYTE        ttl_ownActionTypes[2];
 extern const char *const  ttl_ownActionLabels[2];
 
@@ -1313,12 +1315,12 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
         WORD barH   = inst->lineHeight;
         WORD y      = post->actionBarY;
         WORD xRight = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT);
-        char labels[3][TTL_ACTION_LABEL_MAX];
+        char labels[4][TTL_ACTION_LABEL_MAX];
         int  a;
 
         ttl_build_action_labels(post, labels);
 
-        for (a = 2; a >= 0; a--) {
+        for (a = 3; a >= 0; a--) {
             WORD w = 40;
             if (dcA) {
                 struct URPTextMetric m;

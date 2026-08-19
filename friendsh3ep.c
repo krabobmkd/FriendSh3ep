@@ -413,19 +413,20 @@ void FS3EApp_CheckConnectionState(void)
              * logged in to begin with. Shown regardless of app->viewMode,
              * same as "No account." above -- Local/Federated/a profile's
              * own statuses still work (Mastodon falls back to anonymous
-             * access for a rejected token), but Home/Notifications/Search
-             * will keep failing until the user logs back in. */
+             * access for a rejected token), but Home/Notifications/Search/
+             * Bookmarks will keep failing until the user logs back in. */
             text = "Your token has expired.\n"
                    "You must restart the URL login.";
         } else if (!app->accountAccessToken &&
                    (app->viewMode == VIEWMODE_Home  || app->viewMode == VIEWMODE_Notifs ||
-                    app->viewMode == VIEWMODE_Search || app->viewMode == VIEWMODE_User))
+                    app->viewMode == VIEWMODE_Search || app->viewMode == VIEWMODE_User ||
+                    app->viewMode == VIEWMODE_Bookmarks))
         {
             /* Deliberately anonymous (see FS3EACCOUNT_ANON_ACCT's doc
              * comment in fs3eaccounts.h) -- not an error, just a reduced-
              * capability connection: Local/Federated work anonymously (see
              * FS3EApp_FetchTimeline's Local/Fed carve-out) and fall through
-             * to the ordinary per-channel logic below; these four channels
+             * to the ordinary per-channel logic below; these five channels
              * don't, and are never even fetched for an anonymous account,
              * so there is no timelineErrorMask/timelineFetchedMask bit to
              * key off here -- just say why nothing is happening. */
@@ -1031,8 +1032,17 @@ void fs3e_setViewMode(ULONG viewMode)
     if (app->tootTimeline)
         SetGdAttrs(app->tootTimeline, TTIMELINE_ViewMode, viewMode, TAG_END);
 
-    /* If logged in and this channel hasn't been fetched yet, start a fetch. */
-    FS3EApp_FetchTimeline(viewMode);
+    /* Bookmarks: re-entering the tab always reloads it from scratch, unlike
+     * every other channel's "fetch once per session" below -- see
+     * FS3EApp_ReloadBookmarks's own doc comment for why (bookmarking is a
+     * purely local action FS3EApp_FetchTimeline's own populated-once guard
+     * would otherwise hide until the next app restart). */
+    if (viewMode == VIEWMODE_Bookmarks) {
+        FS3EApp_ReloadBookmarks();
+    } else {
+        /* If logged in and this channel hasn't been fetched yet, start a fetch. */
+        FS3EApp_FetchTimeline(viewMode);
+    }
 
     /* VIEWMODE_User's own toots are fetched as part of its profile header
      * flow (self FS3ENETQ_ACCOUNT_LOOKUP -> TTIMELINE_ShowProfile ->
@@ -2600,6 +2610,7 @@ int main(int argc, char **argv)
                                     BOOL hotSpotFavourited = FALSE;
                                     BOOL hotSpotFollowing = FALSE;
                                     BOOL hotSpotReblogged = FALSE;
+                                    BOOL hotSpotBookmarked = FALSE;
                                     BOOL hotSpotQuotable = FALSE;
 
                                     ptag = FindTagItem(TTIMELINE_LastHotSpotString, msg);
@@ -2625,6 +2636,9 @@ int main(int argc, char **argv)
 
                                     ptag = FindTagItem(TTIMELINE_LastHotSpotReblogged, msg);
                                     if(ptag) hotSpotReblogged = (BOOL)ptag->ti_Data;
+
+                                    ptag = FindTagItem(TTIMELINE_LastHotSpotBookmarked, msg);
+                                    if(ptag) hotSpotBookmarked = (BOOL)ptag->ti_Data;
 
                                     ptag = FindTagItem(TTIMELINE_LastHotSpotQuotable, msg);
                                     if(ptag) hotSpotQuotable = (BOOL)ptag->ti_Data;
@@ -2976,6 +2990,15 @@ int main(int argc, char **argv)
                                              * menu entry -- see
                                              * fs3eaction.c. */
                                             Action_ToggleFavorite(app, hotSpotId, hotSpotFavourited);
+                                            break;
+
+                                        case TTL_HOT_BOOKMARK:
+                                            /* Same one-liner as TTL_HOT_FAVORITE
+                                             * -- state update happens once the
+                                             * server confirms, via the
+                                             * FS3ENETQ_BOOKMARK reply handler's
+                                             * TTIMELINE_UpdatePost. */
+                                            Action_ToggleBookmark(app, hotSpotId, hotSpotBookmarked);
                                             break;
 
                                         case TTL_HOT_BOOST:

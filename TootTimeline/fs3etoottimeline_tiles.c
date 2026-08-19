@@ -238,8 +238,8 @@ void ttl_tile_evict_out_of_range(TTLData *inst, LONG keepTopY, LONG keepBotY)
 /* by post->favourited), so they can no longer be one static array.     */
 /* ------------------------------------------------------------------ */
 
-const UBYTE ttl_actionTypes[3] = {
-    TTL_HOT_REPLY, TTL_HOT_BOOST, TTL_HOT_FAVORITE
+const UBYTE ttl_actionTypes[4] = {
+    TTL_HOT_REPLY, TTL_HOT_BOOST, TTL_HOT_BOOKMARK, TTL_HOT_FAVORITE
 };
 
 /* Left-aligned, own-toot-only action buttons (post->isOwn) -- plain text,
@@ -286,16 +286,25 @@ static void ttl_append_count(char *buf, ULONG bufsz, const char *prefix, ULONG c
  * star), shown once the connected user has favourited the post.
  * \xF0\x9F\x94\x81 = 🔁 (plain repeat, not-yet-boosted); \xE2\x99\xBB = ♻
  * (same glyph notifVerbFormat's TTL_NOTIF_REBLOG line already uses for
- * "boosted"), shown once the connected user has reblogged the post. */
+ * "boosted"), shown once the connected user has reblogged the post.
+ * \xF0\x9F\x93\x91 = 📑 (bookmark tabs, not-yet-bookmarked, same "different
+ * but related glyph, no true outline exists" choice as Boost's 🔁/♻ pair
+ * above); \xF0\x9F\x94\x96 = 🔖 (bookmark ribbon), shown once the connected
+ * user has bookmarked the post -- no count digit (unlike Reply/Boost/Fave,
+ * see TTLPostSetup.bookmarked's own doc comment for why), but still carries
+ * the "Bookmark" word same as Reply/Boost do, unlike Fave's glyph-only
+ * label -- glyph alone read as ambiguous in testing. */
 void ttl_build_action_labels(const TTLPost *post,
-                              char labels[3][TTL_ACTION_LABEL_MAX])
+                              char labels[4][TTL_ACTION_LABEL_MAX])
 {
     ttl_append_count(labels[0], TTL_ACTION_LABEL_MAX,
                       "\xe2\x86\xa9 Reply", post->repliesCount);
     ttl_append_count(labels[1], TTL_ACTION_LABEL_MAX,
                       post->reblogged ? "\xE2\x99\xBB Boost" : "\xF0\x9F\x94\x81 Boost",
                       post->reblogsCount);
-    ttl_append_count(labels[2], TTL_ACTION_LABEL_MAX,
+    snprintf(labels[2], TTL_ACTION_LABEL_MAX, "%s Bookmark",
+             post->bookmarked ? "\xF0\x9F\x94\x96" : "\xF0\x9F\x93\x91");
+    ttl_append_count(labels[3], TTL_ACTION_LABEL_MAX,
                       post->favourited ? "\xE2\xAD\x90" : "\xF0\x9F\x92\xAB",
                       post->favouritesCount);
 }
@@ -1137,7 +1146,7 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                                    dcMini);
                 }
 
-                /* Action bar: ↩ Reply N  🔁 Boost N  ⭐/💫 N — right-aligned,
+                /* Action bar: ↩ Reply N  🔁 Boost N  📑/🔖  ⭐/💫 N — right-aligned,
                  * normal font. Same row Y formula, and the same labels/
                  * ttl_actionTypes[], that the hot-spot rects in
                  * ttl_post_build_hotspots are measured from (both build
@@ -1153,11 +1162,11 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                     WORD barTopY = (WORD)(drawY + post->actionBarY);
                     WORD barBaselineY = (WORD)(barTopY + inst->lineAscent);
                     WORD xRight = (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT);
-                    char labels[3][TTL_ACTION_LABEL_MAX];
+                    char labels[4][TTL_ACTION_LABEL_MAX];
                     int  a;
                     ttl_build_action_labels(post, labels);
                     URPDC_SetDrawColorFromPen(dcBody, inst->screen, actionPen, bgPen);
-                    for (a = 2; a >= 0; a--) {
+                    for (a = 3; a >= 0; a--) {
                         struct URPTextMetric m;
                         struct URPTextPos pos;
                         WORD itemX;
@@ -1440,12 +1449,12 @@ void ttl_notify(Class *cl, Object *o, struct GadgetInfo *gi,
 void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                          UBYTE type, const char *data, ULONG dataLen,
                          const char *postId, BOOL favourited, BOOL following,
-                         BOOL reblogged, BOOL quotable,
+                         BOOL reblogged, BOOL bookmarked, BOOL quotable,
                          const char *mediaIds, const char *acct,
                          const char *audioUrl)
 {
     TTLData         *inst = TTL_DATA(cl, o);
-    struct TagItem  tags[12];
+    struct TagItem  tags[13];
     struct opUpdate nmsg;
 
     /* Copy into the gadget-owned buffers first -- see the TTLData comment
@@ -1536,7 +1545,9 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
     tags[9].ti_Data = (ULONG)quotable;
     tags[10].ti_Tag  = TTIMELINE_LastHotSpotAudioUrl;
     tags[10].ti_Data = inst->lastHotSpotAudioUrl ? (ULONG)inst->lastHotSpotAudioUrl : 0;
-    tags[11].ti_Tag = TAG_DONE;
+    tags[11].ti_Tag  = TTIMELINE_LastHotSpotBookmarked;
+    tags[11].ti_Data = (ULONG)bookmarked;
+    tags[12].ti_Tag = TAG_DONE;
 
     nmsg.MethodID     = OM_UPDATE;
     nmsg.opu_AttrList = (struct TagItem *)tags;

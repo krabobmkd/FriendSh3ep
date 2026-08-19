@@ -143,6 +143,13 @@ static ULONG delayedAttribs[] = {
      * this is why an audio+cover toot always played the cover as if it
      * were the audio. */
     TTIMELINE_LastHotSpotAudioUrl,
+    /* Same silent-drop trap yet again -- friendsh3ep.c's TTL_HOT_BOOKMARK
+     * case reads this tag to know bookmark vs unbookmark, but without
+     * allowlisting it here it never arrived, so hotSpotBookmarked was
+     * always FALSE and every click sent a bookmark request, never an
+     * unbookmark one -- see this file's own comment at the top for why
+     * every new TTIMELINE_LastHotSpotXxx tag must be added here too. */
+    TTIMELINE_LastHotSpotBookmarked,
     TTIMELINE_ScrollStarted,
 
     TDECK_Mode,

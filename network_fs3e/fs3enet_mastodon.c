@@ -1219,6 +1219,57 @@ BOOL FS3EMastodon_Reblog(const char *apiBaseUrl, const char *accessToken,
     return ok;
 }
 
+BOOL FS3EMastodon_Bookmark(const char *apiBaseUrl, const char *accessToken,
+                           const char *statusId, BOOL bookmark,
+                           BOOL *outBookmarked, char **outRawStatusJson)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    *outBookmarked = FALSE;
+    if (outRawStatusJson) *outRawStatusJson = NULL;
+
+    snprintf(url, sizeof(url), "%s/api/v1/statuses/%s/%s", apiBaseUrl, statusId,
+             bookmark ? "bookmark" : "unbookmark");
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    /* Empty body -- Mastodon's bookmark/unbookmark endpoints take none,
+     * only the auth header and the :id in the URL. */
+    if (FS3EHttp_Post(url, headers, "application/json", "", 0, &resp))
+    {
+        json = cJSON_Parse((char *)resp.fhr_Body);
+        if (json)
+        {
+            const cJSON *v = cJSON_GetObjectItemCaseSensitive(json, "bookmarked");
+            *outBookmarked = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
+
+            ok = TRUE;
+            cJSON_Delete(json);
+        }
+
+        /* Steal fhr_Body rather than copy it -- FS3EHttp_FreeResponse()
+         * tolerates an already-NULL fhr_Body (see its own body), so this
+         * is a clean ownership handoff, not a use-after-free risk. */
+        if (ok && outRawStatusJson) {
+            *outRawStatusJson = (char *)resp.fhr_Body;
+            resp.fhr_Body = NULL;
+        }
+
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    return ok;
+}
+
 BOOL FS3EMastodon_LookupAccount(const char *apiBaseUrl, const char *accessToken,
                                 const char *acct, FS3EMastodonAccount *outAccount)
 {

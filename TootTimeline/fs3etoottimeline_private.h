@@ -367,6 +367,7 @@ typedef struct TTLPost {
     ULONG  favouritesCount;
     BOOL   favourited;
     BOOL   reblogged;
+    BOOL   bookmarked; /* see TTLPostSetup.bookmarked */
     BOOL   quotable;   /* see TTLPostSetup.quotable */
     BOOL   isReply;    /* see TTLPostSetup.isReply */
     BOOL   isOwn;      /* see TTLPostSetup.isOwn */
@@ -951,14 +952,15 @@ void     ttl_toot_activate(TTLData *inst, Class *cl, Object *o,
                            struct GadgetInfo *gi, TTLPost *item,
                            TTLHotSpot *hs);                         /* fs3etoottimeline_input.c */
 
-/* Builds this post's 3 action-bar label strings (Reply/Boost/Fave, each
- * with its count; Fave's glyph toggles empty/full star by post->favourited)
- * into caller-owned buffers -- the single shared source both
- * ttl_post_build_hotspots (fs3etoottimeline_posts.c, sizes the hot-spot
- * rects) and ttl_toot_render above (draws them) read from, so a click
- * always lines up with what's on screen. */
+/* Builds this post's 4 action-bar label strings (Reply/Boost/Bookmark/
+ * Fave, each with its count except Bookmark -- see TTLPostSetup.bookmarked;
+ * Fave's glyph toggles empty/full star, Bookmark's toggles tabs/ribbon, by
+ * post->favourited/bookmarked) into caller-owned buffers -- the single
+ * shared source both ttl_post_build_hotspots (fs3etoottimeline_posts.c,
+ * sizes the hot-spot rects) and ttl_toot_render above (draws them) read
+ * from, so a click always lines up with what's on screen. */
 void     ttl_build_action_labels(const TTLPost *post,
-                                  char labels[3][TTL_ACTION_LABEL_MAX]); /* fs3etoottimeline_tiles.c */
+                                  char labels[4][TTL_ACTION_LABEL_MAX]); /* fs3etoottimeline_tiles.c */
 
 /* Pinned boundary-row classes (see ttl_channel_add_boundaries). Both share
  * ttl_toot_render's sibling ttl_boundary_render (fs3etoottimeline_tiles.c)
@@ -1037,7 +1039,9 @@ void     ttl_notify       (Class *cl, Object *o, struct GadgetInfo *gi,
  * TTIMELINE_LastHotSpotFollowing the same way, for TTL_HOT_FOLLOW clicks
  * on a profile header -- pass FALSE for every other item kind. reblogged is
  * carried as TTIMELINE_LastHotSpotReblogged the same way, for TTL_HOT_BOOST
- * clicks -- pass FALSE for every other item kind. quotable is carried as
+ * clicks -- pass FALSE for every other item kind. bookmarked is carried as
+ * TTIMELINE_LastHotSpotBookmarked the same way, for TTL_HOT_BOOKMARK clicks
+ * -- pass FALSE for every other item kind. quotable is carried as
  * TTIMELINE_LastHotSpotQuotable the same way, also for TTL_HOT_BOOST
  * clicks. mediaIds is
  * copied into lastHotSpotMediaIds and carried as
@@ -1056,7 +1060,7 @@ void     ttl_notify       (Class *cl, Object *o, struct GadgetInfo *gi,
 void     ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                              UBYTE type, const char *data, ULONG dataLen,
                              const char *postId, BOOL favourited, BOOL following,
-                             BOOL reblogged, BOOL quotable,
+                             BOOL reblogged, BOOL bookmarked, BOOL quotable,
                              const char *mediaIds, const char *acct,
                              const char *audioUrl);
 /* only process have right to send render, ask with notify ProcessREfresh

@@ -432,6 +432,23 @@ struct App {
     ULONG  olderPageInFlightMask;
     ULONG  newerPageInFlightMask;
 
+    /* VIEWMODE_News's own pagination cursor -- trends/links has no
+     * status-id concept to page by (see FS3ENetNewsReq's doc comment), so
+     * unlike every other channel's max_id/min_id-driven OldestPostId/
+     * NewestPostId, "how many items already loaded" is tracked here by
+     * hand and sent back as the next page's ?offset=. Reset to 0 wherever
+     * channelPopulatedMask/timelineFetchedMask are reset (account switch/
+     * login), so a fresh account starts News over from offset 0 too. */
+    ULONG  newsLoadedCount;
+
+    /* VIEWMODE_Bookmarks's own local-cache pagination cursor -- mirrors
+     * newsLoadedCount above, but counts entries already shown from the
+     * on-disk offline-bookmarks cache (see FS3ENETQ_BOOKMARKS_LOCAL's own
+     * doc comment in fs3enet.h), not a server page. Reset to 0 wherever
+     * newsLoadedCount is (account switch/login) and at the start of every
+     * fresh VIEWMODE_Bookmarks session (see FS3EApp_FetchTimeline). */
+    ULONG  bookmarksLoadedCount;
+
     /* Avatar bitmap cache — one scaled BmImage per @user@instance */
     struct AvatarImages *avatarImages;
 

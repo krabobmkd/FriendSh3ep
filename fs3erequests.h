@@ -39,6 +39,17 @@ void FS3EApp_OpenDiscussion(const char *statusId, BOOL includeAncestors);
  * data in place (see TTIMELINE_GetVisiblePosts/RefreshPost). */
 void FS3EApp_RefreshVisibleToots(void);
 
+/* Clears and re-fetches VIEWMODE_Bookmarks from scratch (local cache page 0
+ * + a fresh server backfill sync) -- unlike every other channel, Bookmarks
+ * doesn't just fetch once per session: bookmarking a toot is a purely local
+ * action (see FS3ENETQ_BOOKMARK's own cache write), so re-entering the tab
+ * or hitting F5 while on it should always pick up anything bookmarked since
+ * the channel was last loaded, not silently stay stale for the rest of the
+ * session. Called from fs3e_setViewMode (switching INTO Bookmarks) and
+ * FS3EApp_RefreshVisibleToots (F5 while already on it). Safe no-op if
+ * app->tootTimeline doesn't exist yet. */
+void FS3EApp_ReloadBookmarks(void);
+
 /* TTL_HOT_TRANSLATE click ("not cached yet" branch) -- fires
  * FS3ENETQ_TRANSLATE_STATUS for postId, targeting the OS's own preferred
  * language (FS3EOSLocale_LanguageCode()). See fs3erequests.c. */

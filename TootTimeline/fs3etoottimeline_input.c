@@ -255,8 +255,8 @@ static void ttl_activate_hotspot(TTLData *inst, Class *cl, Object *o,
 
     ttl_notify_hotspot(cl, o, gi, hs->type, hs->data, hs->dataLen, targetId,
                         post->favourited, post->following, post->reblogged,
-                        post->quotable, post->mediaIdsJoined, post->acct,
-                        audioUrl);
+                        post->bookmarked, post->quotable, post->mediaIdsJoined,
+                        post->acct, audioUrl);
 
     if (post->cls && post->cls->activate)
         post->cls->activate(inst, cl, o, gi, post, hs);

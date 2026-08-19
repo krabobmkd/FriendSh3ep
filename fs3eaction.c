@@ -147,7 +147,7 @@ BOOL Action_About(struct App *ctx)
         "FriendSh3ep\n"
         "A Mastodon client for AmigaOS\n"
         " by krb.\n"
-        " License GPL - sources at:\n"
+        " License LGPL - sources at:\n"
         "github.com/krabobmkd/FriendSh3ep"
         "Version " FRIENDSH3EP_VERSION "\n\n"
         "Built with utf8rastport.library\n"
@@ -721,6 +721,30 @@ BOOL Action_ToggleReblog(struct App *ctx, const char *postId, BOOL currentlyRebl
     if (!req) return FALSE;
 
     if (!FS3EApp_NetSend(FS3ENETQ_REBLOG, req, sizeof(*req))) {
+        FreeVec(req);
+        return FALSE;
+    }
+    return TRUE;
+}
+
+BOOL Action_ToggleBookmark(struct App *ctx, const char *postId, BOOL currentlyBookmarked)
+{
+    FS3ENetBookmarkReq *req;
+    char cacheDir[400];
+
+    if (!ctx || !postId || !postId[0]) return FALSE;
+    if (!ctx->accountAccessToken || !ctx->accountAccessToken[0]) return FALSE;
+
+    /* "" (caching disabled for this call) rather than failing the toggle
+     * outright if the cache dir can't be built -- see FS3ENetBookmarkReq's
+     * own doc comment on fs3ebk_CacheDir. */
+    if (!FS3EApp_BookmarksCacheDir(cacheDir, sizeof(cacheDir))) cacheDir[0] = '\0';
+
+    req = FS3ENetBookmarkReq_Alloc(ctx->accountApiBaseUrl, ctx->accountAccessToken,
+                                   postId, !currentlyBookmarked, cacheDir);
+    if (!req) return FALSE;
+
+    if (!FS3EApp_NetSend(FS3ENETQ_BOOKMARK, req, sizeof(*req))) {
         FreeVec(req);
         return FALSE;
     }

@@ -62,6 +62,13 @@ enum FS3ENetRequestType
                                * see FS3ENetTranslateStatusReq/Reply below */
     FS3ENETQ_NEWS,           /* fetch trending links (VIEWMODE_News) -- see
                                * FS3ENetNewsReq/Reply below */
+    FS3ENETQ_BOOKMARK,       /* toggle bookmark/unbookmark on a status -- same shape
+                               * as FS3ENETQ_FAVORITE, see FS3ENetBookmarkReq/Reply below */
+    FS3ENETQ_BOOKMARKS_LOCAL, /* list a page of the on-disk bookmarks cache (offline,
+                               * no server round trip) -- see FS3ENetBookmarksLocalReq/
+                               * Reply below */
+    FS3ENETQ_BOOKMARKS_SYNC, /* backfill the on-disk bookmarks cache from the server's
+                               * own first page -- see FS3ENetBookmarksSyncReq/Reply below */
     FS3ENETQ_FETCH_PROGRESS /* net-process-originated ONLY -- never sent by the GUI.
                               * A one-way PutMsg() of an FS3ENetFetchProgress block to
                               * app->netReplyPort while a chunked FS3ENETQ_FETCH_IMAGE
@@ -700,6 +707,10 @@ typedef struct FS3ENetStatus {
     ULONG  fmas_FavouritesCount;
     BOOL   fmas_Favourited;   /* connected user already favourited this status */
     BOOL   fmas_Reblogged;    /* connected user already boosted this status */
+    BOOL   fmas_Bookmarked;   /* connected user already bookmarked this status --
+                               * no fmas_BookmarksCount: Mastodon never exposes a
+                               * public bookmark count, private-to-the-bookmarker
+                               * same as the button itself. */
 
     /* Mastodon's `sensitive` flag -- applies to the whole status incl.
      * every attachment, not per-attachment (see FS3ENetPostStatusReq.
@@ -1080,6 +1091,119 @@ typedef struct FS3ENetFavouriteReply {
 } FS3ENetFavouriteReply;
 
 /*
+ * FS3ENETQ_BOOKMARK — POST /api/v1/statuses/:id/bookmark or .../unbookmark.
+ *
+ * Same shape as FS3ENETQ_FAVORITE -- fs3ebk_Bookmark selects which: TRUE =
+ * bookmark, FALSE = unbookmark. On FS3ENETR_OK, fs3em_Data is replaced with
+ * an FS3ENetBookmarkReply carrying just the server-confirmed bookmarked
+ * boolean. Unlike Favorite/Reblog there's no count to derive a delta for --
+ * Mastodon never exposes a public bookmarksCount -- so the GUI just
+ * overwrites TTLPost.bookmarked, see TTL_POSTUPD_BOOKMARKED.
+ *
+ * fs3ebk_CacheDir, if non-"", is this account's local offline-bookmarks
+ * directory (see FS3EApp_BookmarksCacheDir in fs3eaccounts.h) -- on a
+ * confirmed bookmark, the raw status JSON the server just returned is
+ * written there as <statusId>.json (see FS3EMastodon_Bookmark's
+ * outRawStatusJson); on a confirmed unbookmark, that file is deleted if
+ * present. "" disables caching for this call (e.g. the account has no id
+ * yet, see FS3EApp_BookmarksCacheDir's own FALSE case) without failing the
+ * toggle itself -- caching is a bonus, not a precondition for bookmarking.
+ */
+typedef struct FS3ENetBookmarkReq {
+    char *fs3ebk_ApiBaseUrl;
+    char *fs3ebk_AccessToken;
+    char *fs3ebk_StatusId;
+    BOOL  fs3ebk_Bookmark;   /* TRUE=bookmark, FALSE=unbookmark */
+    char *fs3ebk_CacheDir;
+} FS3ENetBookmarkReq;
+
+FS3ENetBookmarkReq *FS3ENetBookmarkReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *statusId, BOOL bookmark, const char *cacheDir);
+
+typedef struct FS3ENetBookmarkReply {
+    char  *fs3ebk_StatusId;
+    BOOL   fs3ebk_Bookmarked;
+} FS3ENetBookmarkReply;
+
+/*
+ * FS3ENETQ_BOOKMARKS_LOCAL — list a page of the on-disk offline-bookmarks
+ * cache (see FS3ENETQ_BOOKMARK's own doc comment on fs3ebk_CacheDir), no
+ * server round trip at all. Real Mastodon pagination for GET /api/v1/
+ * bookmarks needs an RFC5988 Link: response header this codebase's HTTP
+ * layer doesn't parse (same limitation FS3ENETQ_ACCOUNTS_LIST's own doc
+ * comment already flags for followers/following/search) -- reading our OWN
+ * local directory sidesteps that entirely: we control the ordering (by
+ * fib_Date, newest-bookmarked-first) and the cursor (a plain skip count),
+ * so paging never needs the server's cooperation once a toot is cached.
+ *
+ * fs3ebl_Offset/fs3ebl_Limit: skip the first Offset entries (by that same
+ * newest-first order), then return up to Limit of what's left.
+ * fs3ebl_PageDirection: FS3ENETPAGE_INITIAL/OLDER only, same "no NEWER"
+ * reasoning as FS3ENETQ_NEWS (there's no live-updating concept here either
+ * -- new bookmarks are added at the *front* by FS3ENETQ_BOOKMARK's own
+ * cache write, not discovered via a page fetch). Echoed in the reply so the
+ * GUI's generic AddPost/AppendPost dispatch can tell initial from paginated
+ * without tracking it separately.
+ *
+ * On FS3ENETR_OK, fs3em_Data is replaced with a flat FS3ENetBookmarksLocalReply
+ * block, FS3ENetStatus[fs3ebl_Count] following immediately -- same shape
+ * FS3ENETQ_TIMELINE's own reply uses, reusing FS3EApp_MapStatusToPostSetup
+ * verbatim on the GUI side.
+ */
+typedef struct FS3ENetBookmarksLocalReq {
+    ULONG fs3ebl_PageDirection;
+    ULONG fs3ebl_AccountGeneration;
+    ULONG fs3ebl_Offset;
+    ULONG fs3ebl_Limit;
+    char *fs3ebl_CacheDir;
+} FS3ENetBookmarksLocalReq;
+
+FS3ENetBookmarksLocalReq *FS3ENetBookmarksLocalReq_Alloc(ULONG pageDirection,
+    ULONG accountGeneration, ULONG offset, ULONG limit, const char *cacheDir);
+
+typedef struct FS3ENetBookmarksLocalReply {
+    ULONG fs3ebl_PageDirection;
+    ULONG fs3ebl_AccountGeneration;
+    ULONG fs3ebl_Count;
+    /* FS3ENetStatus[fs3ebl_Count] follows immediately in memory */
+} FS3ENetBookmarksLocalReply;
+
+/*
+ * FS3ENETQ_BOOKMARKS_SYNC — one-shot backfill of the on-disk offline-
+ * bookmarks cache from the server's own first page (GET /api/v1/
+ * bookmarks?limit=40, the endpoint's own max) -- fired once per session
+ * right before the first FS3ENETQ_BOOKMARKS_LOCAL fetch (see
+ * FS3EApp_FetchTimeline's VIEWMODE_Bookmarks branch), so bookmarks made on
+ * another client (or before this cache existed) show up locally too, not
+ * just ones made through this app's own TTL_HOT_BOOKMARK. Anything already
+ * cached (by statusId, checked via a plain Lock() probe) is left alone --
+ * this only ever ADDS files, never overwrites/removes. Deliberately not a
+ * general resync: bookmarks beyond that first ~40 that were never touched
+ * through this app won't backfill -- see this request's own doc comment in
+ * fs3erequests.c for the accepted trade-off (avoiding the same Link-header
+ * pagination this whole cache was built to route around).
+ *
+ * On FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetBookmarksSyncReply
+ * carrying how many NEW files this call wrote (0 is a normal, common
+ * result, not an error). Failure (offline, etc.) is silently tolerated by
+ * the GUI -- see its own reply handler -- since the local cache may still
+ * have plenty to show even with no network at all.
+ */
+typedef struct FS3ENetBookmarksSyncReq {
+    char *fs3ebs_ApiBaseUrl;
+    char *fs3ebs_AccessToken;
+    char *fs3ebs_CacheDir;
+} FS3ENetBookmarksSyncReq;
+
+FS3ENetBookmarksSyncReq *FS3ENetBookmarksSyncReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *cacheDir);
+
+typedef struct FS3ENetBookmarksSyncReply {
+    ULONG fs3ebs_NewCount;
+} FS3ENetBookmarksSyncReply;
+
+/*
  * FS3ENETQ_REBLOG — POST /api/v1/statuses/:id/reblog or .../unreblog.
  *
  * Same shape and same "don't trust echoed counts" reasoning as
@@ -1255,20 +1379,34 @@ typedef struct FS3ENetTranslateStatusReply {
 /*
  * FS3ENETQ_NEWS — GET /api/v1/trends/links (Mastodon's "Explore/News"
  * trending-links list, VIEWMODE_News). fs3enw_AccessToken may be "" --
- * this endpoint is public, same as timelines/public. Deliberately a
- * single-page, non-paginated fetch (like FS3ENETQ_ACCOUNTS_LIST) -- the
- * endpoint's own max_id/min_id-style pagination isn't wired up here, same
- * "no pagination yet" scope accepted elsewhere for a first cut.
+ * this endpoint is public, same as timelines/public.
+ *
+ * Paginated via the endpoint's own ?offset= (not a status-id, trending
+ * links have no stable id to page by) -- same small ?limit= per page every
+ * other channel already uses (see ViewModeTimeline's own "?limit=4"),
+ * instead of the old one-shot "?limit=20" that fetched -- and fired every
+ * one of its up to 20 card-image downloads -- all at once on open.
+ * fs3enw_PageDirection is FS3ENETPAGE_INITIAL/OLDER only: trending links
+ * aren't chronological, so there's no NEWER equivalent (mirrors
+ * FS3ENetAccountsListReq's own followers/following pages, which are also
+ * OLDER-only... except unlike those, News DOES keep paginating past its
+ * first page, via fs3enw_Offset). fs3enw_AccountGeneration: same stale-
+ * reply-after-account-switch guard as FS3ENetTimelineReq/
+ * FS3ENetNotificationsReq.
  *
  * On FS3ENETR_OK, fs3em_Data is replaced with a flat FS3ENetNewsReply
  * block; fs3em_Data on error still points at the original request block.
  */
 typedef struct FS3ENetNewsReq {
+    ULONG fs3enw_PageDirection;     /* FS3ENetPageDirection; echoed in reply */
+    ULONG fs3enw_AccountGeneration; /* opaque caller token; echoed in reply */
+    ULONG fs3enw_Offset;            /* trends/links's own ?offset= paging cursor */
     char *fs3enw_ApiBaseUrl;
     char *fs3enw_AccessToken;
 } FS3ENetNewsReq;
 
-FS3ENetNewsReq *FS3ENetNewsReq_Alloc(const char *apiBaseUrl, const char *accessToken);
+FS3ENetNewsReq *FS3ENetNewsReq_Alloc(ULONG pageDirection, ULONG accountGeneration,
+    ULONG offset, const char *apiBaseUrl, const char *accessToken);
 
 /* One trending-link entry. All char * fields point into the enclosing
  * FS3ENetNewsReply's own flat block -- one FreeVec() frees everything,
@@ -1289,6 +1427,8 @@ typedef struct FS3ENetNewsItem {
 /* Header of the flat news reply block.
  * FS3ENetNewsItem[fs3enw_Count] follows immediately in memory. */
 typedef struct FS3ENetNewsReply {
+    ULONG fs3enw_PageDirection;
+    ULONG fs3enw_AccountGeneration;
     ULONG fs3enw_Count;
 } FS3ENetNewsReply;
 

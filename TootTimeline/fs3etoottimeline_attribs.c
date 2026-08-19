@@ -178,14 +178,19 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                             /* Pin the "look for something new" / "load
                              * more…" rows around real content -- but NOT
                              * for a search-list row (account row or its
-                             * title) or a news card: all are single-page,
-                             * non-paginated fetches (see
-                             * FS3ENetAccountsListReq's/FS3ENetNewsReq's own
-                             * doc comments), so "check for newer"/"load
-                             * older" don't apply and would be misleading
+                             * title): those are single-page, non-paginated
+                             * fetches (see FS3ENetAccountsListReq's own doc
+                             * comment), so both rows would be misleading
                              * pinned above/below a flat search/followers/
-                             * following/news list. */
-                            if (!setup->isAccountRow && !setup->isListTitle && !setup->isNewsCard)
+                             * following list. News DOES paginate (see
+                             * FS3ENetNewsReq's own doc comment) and gets
+                             * both rows too, same as a normal timeline --
+                             * "load more" (TTL_HOT_LOAD_OLDER) drives its
+                             * ?offset= pagination; "look for something new"
+                             * has no real OLDER/NEWER-style effect for News
+                             * (see FS3EApp_FetchTimelinePage's own News
+                             * branch) but is otherwise harmless to show. */
+                            if (!setup->isAccountRow && !setup->isListTitle)
                                 ttl_channel_add_boundaries(inst, channel);
                         } else {
                             /* Prepend: new post goes above the current top
@@ -250,9 +255,9 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                             AddHead((struct List *)&channel->posts, (struct Node *)&post->node);
                             channel->postCount++;
                             /* See the matching comment in TTIMELINE_AddPost
-                             * above -- search-list rows and news cards never
-                             * get the newer/older boundaries. */
-                            if (!setup->isAccountRow && !setup->isListTitle && !setup->isNewsCard)
+                             * above -- search-list rows never get the
+                             * newer/older boundaries; News does. */
+                            if (!setup->isAccountRow && !setup->isListTitle)
                                 ttl_channel_add_boundaries(inst, channel);
                         } else {
                             /* Append: new post goes below the current
@@ -369,6 +374,12 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                                  * ttl_layout_all_posts, which also rebuilds
                                  * Y positions for every channel). */
                                 forceRelayout = TRUE;
+                            }
+                            if (upd->flags & TTL_POSTUPD_BOOKMARKED) {
+                                /* Overwrite, not delta -- no public count to
+                                 * keep in sync, see TTL_POSTUPD_BOOKMARKED's
+                                 * own doc comment. */
+                                post->bookmarked = upd->bookmarked;
                             }
                             if (upd->flags & TTL_POSTUPD_RELATIONSHIP) {
                                 /* Overwrite, not delta -- unlike favourited/

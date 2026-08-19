@@ -197,6 +197,14 @@ BOOL Action_ToggleFavorite(struct App *ctx, const char *postId, BOOL currentlyFa
  * fs3erequests.c by updating TootTimeline via TTIMELINE_UpdatePost. */
 BOOL Action_ToggleReblog(struct App *ctx, const char *postId, BOOL currentlyReblogged);
 
+/* Same shape as Action_ToggleFavorite: toggles bookmark state on postId
+ * (POSTs .../bookmark if !currentlyBookmarked, else .../unbookmark) and
+ * sends the request to the network process. Returns FALSE immediately on a
+ * local problem (no account, alloc failure, send failure); the actual
+ * server-side result arrives later as an FS3ENETQ_BOOKMARK reply, handled
+ * in fs3erequests.c by updating TootTimeline via TTIMELINE_UpdatePost. */
+BOOL Action_ToggleBookmark(struct App *ctx, const char *postId, BOOL currentlyBookmarked);
+
 /* Same shape as Action_ToggleFavorite, one specific account instead of one
  * specific toot: toggles follow state on accountId (POSTs .../follow if
  * !currentlyFollowing, else .../unfollow). The server-side result arrives

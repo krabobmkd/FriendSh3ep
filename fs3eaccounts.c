@@ -295,6 +295,48 @@ static BOOL FS3EApp_AccountDatPath(char *buf, ULONG bufSize)
     return TRUE;
 }
 
+/* FNV-1a 32-bit hash of apiBaseUrl -> 8-hex-digit string -- same algorithm
+ * fs3enet_cache.c's own FS3ECache_Hash() uses for media cache filenames
+ * (kept as its own copy here rather than shared: that one is network-
+ * process-only, this runs in the GUI process). accountId alone is only
+ * unique WITHIN one server -- two different Mastodon instances can and do
+ * hand out the same small numeric id (id "1", "2", ... exist on nearly
+ * every instance) -- so the server itself must be part of the cache key
+ * too, same "apiBaseUrl+acct" uniqueness convention app->accounts[] itself
+ * already keys on (see FS3EAccount's own doc comment in friendsh3ep.h).
+ * Hashed rather than embedded verbatim because a raw URL contains ':' and
+ * '/', both meaningful to AmigaDOS path parsing (':' marks a volume/assign
+ * root) -- putting "https://mastodon.social" directly into a path
+ * component would misparse as a device reference partway through. */
+static void FS3EApp_HashServerUrl(const char *url, char *out8hex)
+{
+    ULONG hash = 2166136261UL;
+    const unsigned char *s = (const unsigned char *)url;
+
+    while (s && *s) {
+        hash ^= (ULONG)*s++;
+        hash *= 16777619UL;
+    }
+    snprintf(out8hex, 9, "%08lx", (unsigned long)hash);
+}
+
+BOOL FS3EApp_BookmarksCacheDir(char *buf, ULONG bufSize)
+{
+    const char *dir = (app->settings.userDataPath && app->settings.userDataPath[0])
+                     ? app->settings.userDataPath : "PROGDIR:.user";
+    char root[400];
+    char serverHash[9];
+
+    if (!app->accountId || !app->accountId[0]) return FALSE;
+    if (!app->accountApiBaseUrl || !app->accountApiBaseUrl[0]) return FALSE;
+
+    FS3EApp_HashServerUrl(app->accountApiBaseUrl, serverHash);
+    snprintf(root, sizeof(root), "%s/bookmarks/%s-%s", dir, serverHash, app->accountId);
+    if (!FS3EApp_MakeDirRecursive(root)) return FALSE;
+    snprintf(buf, bufSize, "%s", root);
+    return TRUE;
+}
+
 /* -------------------------------------------------------------------------
  * Multi-account list -- every account the user has ever logged into, all
  * kept in the single account.dat (see FS3EAPP_ACCOUNTS_MAGIC below), so
@@ -865,6 +907,8 @@ void FS3EApp_ResetPerAccountState(void)
     app->channelEmptyMask      = 0;
     app->olderPageInFlightMask = 0;
     app->newerPageInFlightMask = 0;
+    app->newsLoadedCount       = 0;
+    app->bookmarksLoadedCount  = 0;
     FS3EApp_FetchTimeline(app->viewMode);
 
     /* VIEWMODE_User is excluded from FS3EApp_FetchTimeline's generic

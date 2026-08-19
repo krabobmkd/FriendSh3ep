@@ -131,9 +131,77 @@ static BOOL ViewModeTimeline(ULONG viewMode, char *buf, ULONG bufSize)
              * exactly the case that prompted making this explicit. */
             snprintf(buf, bufSize, "accounts/%s/statuses?limit=4&exclude_reblogs=false", app->searchProfileAccountId);
             return TRUE;
+        /* VIEWMODE_Notifs/News/Bookmarks have no case here -- none of the
+         * three are a plain /api/v1/-relative Status-array GET this
+         * function's own "?limit=4" shape fits. Notifs/News each have
+         * their own FS3ENETQ_ request type (see FS3EApp_FetchTimeline).
+         * Bookmarks is the odd one out: GET /api/v1/bookmarks DOES return
+         * plain Status objects, but real pagination for it needs an
+         * RFC5988 Link: header this codebase's HTTP layer doesn't parse
+         * (same limitation already documented on FS3ENETQ_ACCOUNTS_LIST in
+         * fs3enet.h) -- using the last shown status's own id as the next
+         * page's max_id silently returns the same first page forever,
+         * since bookmark order isn't status-id order. So it's served from
+         * a local on-disk cache instead (FS3ENETQ_BOOKMARKS_LOCAL/SYNC),
+         * which sidesteps that entirely -- see FS3EApp_FetchTimeline's own
+         * VIEWMODE_Bookmarks branch. */
         default:
             return FALSE;
     }
+}
+
+/* Fires one FS3ENETQ_BOOKMARKS_LOCAL page fetch for VIEWMODE_Bookmarks,
+ * reading app->bookmarksLoadedCount as the offset -- shared by the
+ * FS3ENETQ_BOOKMARKS_SYNC reply handler (which calls this once,
+ * unconditionally, right after the once-per-session backfill attempt --
+ * see FS3EApp_HandleNetReply) and FS3EApp_FetchTimelinePage's own
+ * VIEWMODE_Bookmarks branch (subsequent "Load more" pages, direction-gated
+ * to OLDER only there). initial selects TTIMELINE_AddPost vs AppendPost on
+ * the GUI side via the echoed fs3ebl_PageDirection -- see
+ * FS3ENETQ_BOOKMARKS_LOCAL's own reply handler. */
+static void FS3EApp_FetchBookmarksLocalPage(BOOL initial)
+{
+    FS3ENetBookmarksLocalReq *lreq;
+    char  cacheDir[400];
+    ULONG bit = (1UL << VIEWMODE_Bookmarks);
+
+    if (!FS3EApp_BookmarksCacheDir(cacheDir, sizeof(cacheDir))) return;
+    if (!initial && (app->olderPageInFlightMask & bit)) return;
+
+    lreq = FS3ENetBookmarksLocalReq_Alloc(
+               initial ? FS3ENETPAGE_INITIAL : FS3ENETPAGE_OLDER,
+               app->accountGeneration, app->bookmarksLoadedCount, 4, cacheDir);
+    if (!lreq) return;
+
+    if (FS3EApp_NetSend(FS3ENETQ_BOOKMARKS_LOCAL, lreq, sizeof(*lreq))) {
+        if (!initial) app->olderPageInFlightMask |= bit;
+    }
+}
+
+void FS3EApp_ReloadBookmarks(void)
+{
+    ULONG bit = (1UL << VIEWMODE_Bookmarks);
+
+    if (!app->tootTimeline) return;
+
+    /* Reset every bit of "already loaded" bookkeeping so
+     * FS3EApp_FetchTimeline's own VIEWMODE_Bookmarks branch treats this
+     * exactly like a brand-new session -- fresh sync, fresh local page 0. */
+    app->timelineFetchedMask   &= ~bit;
+    app->channelPopulatedMask  &= ~bit;
+    app->channelEmptyMask      &= ~bit;
+    app->olderPageInFlightMask &= ~bit;
+    app->bookmarksLoadedCount   = 0;
+
+    /* Drop whatever's currently shown first -- both call sites only ever
+     * invoke this while Bookmarks IS the active channel, so this always
+     * targets it; re-fetching without clearing first would just prepend
+     * duplicates of everything already there (AddPost never deduplicates
+     * against existing content). */
+    if (app->viewMode == VIEWMODE_Bookmarks)
+        SetAttrs(app->tootTimeline, TTIMELINE_ClearPosts, TRUE, TAG_DONE);
+
+    FS3EApp_FetchTimeline(VIEWMODE_Bookmarks);
 }
 
 /* Send an async TIMELINE request for viewMode if credentials are available
@@ -209,11 +277,44 @@ void FS3EApp_FetchTimeline(ULONG viewMode)
         if (app->channelPopulatedMask & bit) return;
         if (app->timelineFetchedMask & bit) return;
 
-        nwreq = FS3ENetNewsReq_Alloc(app->accountApiBaseUrl,
+        app->newsLoadedCount = 0; /* fresh INITIAL page -- see FS3EApp_FetchTimelinePage's own offset use */
+        nwreq = FS3ENetNewsReq_Alloc(FS3ENETPAGE_INITIAL, app->accountGeneration, 0,
+                    app->accountApiBaseUrl,
                     app->accountAccessToken ? app->accountAccessToken : "");
         if (!nwreq) return;
 
         if (FS3EApp_NetSend(FS3ENETQ_NEWS, nwreq, sizeof(*nwreq))) {
+            app->timelineFetchedMask |= bit;
+            app->timelineErrorMask   &= ~bit;
+            FS3EApp_CheckConnectionState();
+        }
+        return;
+    }
+
+    /* Bookmarks: served entirely from the local offline-bookmarks cache
+     * (FS3ENETQ_BOOKMARKS_LOCAL), not a live server timeline fetch -- see
+     * ViewModeTimeline's own doc comment on why (Link-header pagination
+     * this codebase can't do). A one-shot FS3ENETQ_BOOKMARKS_SYNC fires
+     * first to backfill anything bookmarked elsewhere that isn't cached
+     * yet; its reply handler then fires the first
+     * FS3EApp_FetchBookmarksLocalPage(TRUE) regardless of whether the sync
+     * itself succeeded -- offline browsing should still show whatever's
+     * already on disk even with no network at all. Always requires a real
+     * token -- bookmarks are inherently private, never anonymous. */
+    if (viewMode == VIEWMODE_Bookmarks) {
+        FS3ENetBookmarksSyncReq *sreq;
+        char cacheDir[400];
+
+        if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
+        if (app->channelPopulatedMask & bit) return;
+        if (app->timelineFetchedMask & bit) return;
+        if (!FS3EApp_BookmarksCacheDir(cacheDir, sizeof(cacheDir))) return;
+
+        app->bookmarksLoadedCount = 0; /* fresh INITIAL page -- see FS3EApp_FetchBookmarksLocalPage's own offset use */
+        sreq = FS3ENetBookmarksSyncReq_Alloc(app->accountApiBaseUrl, app->accountAccessToken, cacheDir);
+        if (!sreq) return;
+
+        if (FS3EApp_NetSend(FS3ENETQ_BOOKMARKS_SYNC, sreq, sizeof(*sreq))) {
             app->timelineFetchedMask |= bit;
             app->timelineErrorMask   &= ~bit;
             FS3EApp_CheckConnectionState();
@@ -301,6 +402,40 @@ void FS3EApp_FetchTimelinePage(ULONG viewMode, ULONG direction)
 
         if (FS3EApp_NetSend(FS3ENETQ_NOTIFICATIONS, nreq, sizeof(*nreq)))
             *inFlightMask |= bit;
+        return;
+    }
+
+    /* News: trending links aren't chronological and carry no status id to
+     * page by (see FS3ENetNewsReq's doc comment) -- OLDER-only, driven by
+     * newsLoadedCount (how many items already loaded) as the server's own
+     * ?offset= instead of a max_id/min_id. No NEWER equivalent -- the
+     * pinned "look for something new" row still exists above News content
+     * (ttl_channel_add_boundaries adds both unconditionally, same as every
+     * other paginated channel), but clicking it is a harmless no-op here. */
+    if (viewMode == VIEWMODE_News) {
+        FS3ENetNewsReq *nwreq;
+
+        if (direction != FS3ENETPAGE_OLDER) return;
+        if (!app->accountApiBaseUrl) return;
+
+        nwreq = FS3ENetNewsReq_Alloc(FS3ENETPAGE_OLDER, app->accountGeneration,
+                    app->newsLoadedCount, app->accountApiBaseUrl,
+                    app->accountAccessToken ? app->accountAccessToken : "");
+        if (!nwreq) return;
+
+        if (FS3EApp_NetSend(FS3ENETQ_NEWS, nwreq, sizeof(*nwreq)))
+            *inFlightMask |= bit;
+        return;
+    }
+
+    /* Bookmarks: OLDER only, same "no NEWER" reasoning as News above (see
+     * FS3ENetBookmarksLocalReq's own doc comment) -- served entirely from
+     * the local cache, so no fromId/TTIMELINE_OldestPostId lookup at all,
+     * unlike every id-paginated channel below; bookmarksLoadedCount is its
+     * own cursor (see FS3EApp_FetchBookmarksLocalPage). */
+    if (viewMode == VIEWMODE_Bookmarks) {
+        if (direction != FS3ENETPAGE_OLDER) return;
+        FS3EApp_FetchBookmarksLocalPage(FALSE);
         return;
     }
 
@@ -711,6 +846,16 @@ void FS3EApp_RefreshVisibleToots(void)
     ULONG i;
 
     if (!app->tootTimeline || !app->accountApiBaseUrl) return;
+
+    /* Bookmarks has nothing the loop below can do for it: a newly
+     * bookmarked toot was never "visible" in this channel to begin with
+     * (see FS3EApp_ReloadBookmarks's own doc comment), so there's no
+     * SINGLE_REFRESH request that could ever surface it -- reload the
+     * whole channel from scratch instead, same as re-entering the tab. */
+    if (app->viewMode == VIEWMODE_Bookmarks) {
+        FS3EApp_ReloadBookmarks();
+        return;
+    }
 
     memset(&vis, 0, sizeof(vis));
     SetAttrs(app->tootTimeline, TTIMELINE_GetVisiblePosts, (ULONG)&vis, TAG_DONE);
@@ -1214,6 +1359,7 @@ static void FS3EApp_MapStatusToPostSetup(TTLPostSetup *post, const FS3ENetStatus
     post->favouritesCount = st->fmas_FavouritesCount;
     post->favourited      = st->fmas_Favourited;
     post->reblogged       = st->fmas_Reblogged;
+    post->bookmarked      = st->fmas_Bookmarked;
     post->quotable        = st->fmas_Quotable;
     post->isReply         = st->fmas_IsReply;
     post->sensitive       = st->fmas_Sensitive;
@@ -1475,6 +1621,8 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             app->timelineFetchedMask  = 0; /* reset so new account fetches fresh */
             app->channelPopulatedMask = 0;
             app->channelEmptyMask     = 0;
+            app->newsLoadedCount      = 0;
+            app->bookmarksLoadedCount = 0;
             FS3EApp_FetchTimeline(app->viewMode);
             /* Credentials just confirmed -- empty the fields so there's
              * nothing to accidentally resubmit later (see the matching
@@ -1895,6 +2043,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     post.favouritesCount = st->fmas_FavouritesCount;
                     post.favourited      = st->fmas_Favourited;
                     post.reblogged       = st->fmas_Reblogged;
+                    post.bookmarked      = st->fmas_Bookmarked;
                     post.quotable        = st->fmas_Quotable;
                     post.isReply         = st->fmas_IsReply;
                     post.targetId        = st->fmas_TargetId;
@@ -2054,25 +2203,42 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
         break;
 
     case FS3ENETQ_NEWS:
-        /* Single-page fetch only -- see FS3ENetNewsReq's own doc comment
-         * in fs3enet.h -- so unlike FS3ENETQ_TIMELINE/NOTIFICATIONS there's
-         * no older/newer direction to switch on, just success/failure. */
+        /* Paginated via ?offset= (see FS3ENetNewsReq's own doc comment in
+         * fs3enet.h) -- OLDER only, no NEWER, so this mirrors
+         * FS3ENETQ_TIMELINE's own PageDirection handling minus the NEWER
+         * branch. */
         if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
             FS3ENetNewsReply *reply = (FS3ENetNewsReply *)msg->fs3em_Data;
             FS3ENetNewsItem  *items = (FS3ENetNewsItem *)(reply + 1);
+            BOOL  older = (reply->fs3enw_PageDirection == FS3ENETPAGE_OLDER);
+            ULONG addAttr = older ? TTIMELINE_AppendPost : TTIMELINE_AddPost;
             ULONG bit = (1UL << VIEWMODE_News);
             ULONG i;
 
-            app->timelineFetchedMask  &= ~bit;
-            app->channelPopulatedMask |=  bit;
-            if (reply->fs3enw_Count == 0) app->channelEmptyMask |=  bit;
-            else                          app->channelEmptyMask &= ~bit;
+            /* Same stale-generation guard as FS3ENETQ_TIMELINE -- an
+             * account switch mid-flight must not splice a stale account's
+             * trending links into the new account's News channel. */
+            if (reply->fs3enw_AccountGeneration != app->accountGeneration) {
+                break;
+            }
 
-            /* Same walk-order reasoning as FS3ENETQ_TIMELINE's own INITIAL
-             * page -- reverse iterate + AddPost so the server's own order
-             * (item 0 = most trending) ends up top-to-bottom on screen. */
+            if (older) {
+                app->olderPageInFlightMask &= ~bit;
+            } else {
+                app->timelineFetchedMask  &= ~bit;
+                app->channelPopulatedMask |=  bit;
+                if (reply->fs3enw_Count == 0) app->channelEmptyMask |=  bit;
+                else                          app->channelEmptyMask &= ~bit;
+            }
+            app->newsLoadedCount += reply->fs3enw_Count;
+
+            /* Same walk-order reasoning as FS3ENETQ_TIMELINE: an OLDER page
+             * appends below existing content, so it walks forward; an
+             * INITIAL page prepends, so it walks in reverse (server's own
+             * order -- item 0 = most trending -- ends up top-to-bottom). */
             for (i = 0; i < reply->fs3enw_Count; i++) {
-                FS3ENetNewsItem *it = &items[reply->fs3enw_Count - 1 - i];
+                ULONG idx = older ? i : (reply->fs3enw_Count - 1 - i);
+                FS3ENetNewsItem *it = &items[idx];
                 TTLPostSetup post;
                 memset(&post, 0, sizeof(post));
 
@@ -2087,19 +2253,32 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
 
                 FS3EApp_TriggerCardImageFetch(it->fnn_ImageUrl);
 
-                SetAttrs(app->tootTimeline, TTIMELINE_AddPost, (ULONG)&post, TAG_DONE);
+                SetAttrs(app->tootTimeline, addAttr, (ULONG)&post, TAG_DONE);
             }
 
-            SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
+            /* Only the very first page should jump the scroll position --
+             * pagination must never move it, same as FS3ENETQ_TIMELINE. */
+            if (!older)
+                SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
 
             if (CurrentMainWindow)
                 RefreshGList((struct Gadget *)app->tootTimeline,
                              CurrentMainWindow, NULL, 1);
         } else if (msg->fs3em_Result != FS3ENETR_OK) {
+            FS3ENetNewsReq *req = (FS3ENetNewsReq *)msg->fs3em_Data;
             ULONG bit = (1UL << VIEWMODE_News);
-            app->timelineErrorMask   |= bit;
-            app->timelineFetchedMask &= ~bit; /* allow retry on next view switch */
-            app->lastTimelineResult   = msg->fs3em_Result;
+
+            if (req && req->fs3enw_AccountGeneration != app->accountGeneration) {
+                break;
+            }
+
+            if (req && req->fs3enw_PageDirection == FS3ENETPAGE_OLDER) {
+                app->olderPageInFlightMask &= ~bit; /* allow retry next time the user hits bottom */
+            } else {
+                app->timelineErrorMask   |= bit;
+                app->timelineFetchedMask &= ~bit; /* allow retry on next view switch */
+                app->lastTimelineResult   = msg->fs3em_Result;
+            }
         }
         break;
 
@@ -2627,6 +2806,96 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             if (CurrentMainWindow)
                 RefreshGList((struct Gadget *)app->tootTimeline,
                              CurrentMainWindow, NULL, 1);
+        }
+        break;
+
+    case FS3ENETQ_BOOKMARK:
+        /* Same reasoning as FS3ENETQ_FAVORITE above. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetBookmarkReply *reply = (FS3ENetBookmarkReply *)msg->fs3em_Data;
+            TTLPostUpdate upd;
+            memset(&upd, 0, sizeof(upd));
+            upd.postId     = reply->fs3ebk_StatusId;
+            upd.flags      = TTL_POSTUPD_BOOKMARKED;
+            upd.bookmarked = reply->fs3ebk_Bookmarked;
+            SetAttrs(app->tootTimeline, TTIMELINE_UpdatePost, (ULONG)&upd, TAG_DONE);
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+        }
+        break;
+
+    case FS3ENETQ_BOOKMARKS_SYNC:
+        /* Fire-and-forget backfill (see FS3ENetBookmarksSyncReq's own doc
+         * comment) -- whatever it found (or didn't, including a network
+         * failure: offline browsing should still show whatever's already
+         * on disk), now fetch the first local page for real display. Not
+         * gated on msg->fs3em_Result at all, deliberately. */
+        FS3EApp_FetchBookmarksLocalPage(TRUE);
+        break;
+
+    case FS3ENETQ_BOOKMARKS_LOCAL:
+        /* Local-cache equivalent of FS3ENETQ_NEWS's own reply handler --
+         * same PageDirection-driven AddPost/AppendPost dispatch and walk-
+         * order reasoning (see that case's comments), but entries are real
+         * Status objects (FS3ENetStatus, not FS3ENetNewsItem), so this
+         * reuses FS3EApp_MapStatusToPostSetup/TriggerMediaFetchesForStatus
+         * verbatim, same as FS3ENETQ_TIMELINE. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetBookmarksLocalReply *reply = (FS3ENetBookmarksLocalReply *)msg->fs3em_Data;
+            FS3ENetStatus *statuses = (FS3ENetStatus *)(reply + 1);
+            BOOL  older = (reply->fs3ebl_PageDirection == FS3ENETPAGE_OLDER);
+            ULONG addAttr = older ? TTIMELINE_AppendPost : TTIMELINE_AddPost;
+            ULONG bit = (1UL << VIEWMODE_Bookmarks);
+            ULONG i;
+
+            if (reply->fs3ebl_AccountGeneration != app->accountGeneration) {
+                break;
+            }
+
+            if (older) {
+                app->olderPageInFlightMask &= ~bit;
+            } else {
+                app->timelineFetchedMask  &= ~bit;
+                app->channelPopulatedMask |=  bit;
+                if (reply->fs3ebl_Count == 0) app->channelEmptyMask |=  bit;
+                else                          app->channelEmptyMask &= ~bit;
+            }
+            app->bookmarksLoadedCount += reply->fs3ebl_Count;
+
+            for (i = 0; i < reply->fs3ebl_Count; i++) {
+                ULONG idx = older ? i : (reply->fs3ebl_Count - 1 - i);
+                TTLPostSetup post;
+                memset(&post, 0, sizeof(post));
+                FS3EApp_MapStatusToPostSetup(&post, &statuses[idx]);
+                post.viewModeBits = bit;
+
+                FS3EApp_TriggerMediaFetchesForStatus(&statuses[idx]);
+
+                SetAttrs(app->tootTimeline, addAttr, (ULONG)&post, TAG_DONE);
+            }
+
+            if (!older)
+                SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
+
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+        } else if (msg->fs3em_Result != FS3ENETR_OK) {
+            FS3ENetBookmarksLocalReq *req = (FS3ENetBookmarksLocalReq *)msg->fs3em_Data;
+            ULONG bit = (1UL << VIEWMODE_Bookmarks);
+
+            if (req && req->fs3ebl_AccountGeneration != app->accountGeneration) {
+                break;
+            }
+
+            if (req && req->fs3ebl_PageDirection == FS3ENETPAGE_OLDER) {
+                app->olderPageInFlightMask &= ~bit;
+            } else {
+                app->timelineErrorMask   |= bit;
+                app->timelineFetchedMask &= ~bit;
+                app->lastTimelineResult   = msg->fs3em_Result;
+            }
         }
         break;
 
