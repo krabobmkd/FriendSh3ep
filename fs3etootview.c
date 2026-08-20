@@ -272,6 +272,16 @@ static const struct { const char *code; const char *name; } fs3eTootLanguages[FS
     { "kk", "Kazakh" },
 };
 
+/* pollExpirationChooser's entries -- plain ASCII, not run through LOC(),
+ * same "many-item technical value list, no translation needed" reasoning as
+ * fs3eTootLanguages above. Index FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX
+ * ("3 days") is what FS3ETootView_SetComposeContext resets the chooser to
+ * every time it configures poll mode. */
+static const char *fs3eTootPollExpirations[FS3ETOOT_NUM_POLL_EXPIRATIONS] = {
+    "30 minutes", "1 hour", "3 hours", "5 hours", "1 day",
+    "2 days", "3 days", "5 days", "7 days", "14 days"
+};
+
 /* Defined below FS3ETootKindConfig/tootKindConfig (needs both); forward-
  * declared here since it's called from FS3ETootView_HandleInput, which
  * comes first in the file. */
@@ -393,6 +403,15 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         TAG_END);
     if (!tv->attachMediaClearBtn) return FALSE;
 
+    /* attachMediaLabel is NOT added as a child of attachMediaRow itself --
+     * label.image (LABEL_GetClass()) is an IMAGECLASS object, not a
+     * gadgetclass one, so LAYOUT_AddChild (which expects a real BOOPSI
+     * gadget) can't render it. It's attached instead via CHILD_Label where
+     * attachMediaRow itself is added to tootExtrasLayout below -- the
+     * documented, correct way to pair a label with a gadget (or, as here,
+     * a whole sub-layout standing in for one), which also aligns every
+     * row's label into one column automatically since tootExtrasLayout is
+     * a vertical group. */
     attachMediaLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_TOOT_ATTACH_MEDIA), TAG_END);
 
@@ -431,6 +450,7 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         TAG_END);
     if (!tv->attachMedia2ClearBtn) return FALSE;
 
+    /* Same CHILD_Label-at-the-parent reasoning as attachMediaLabel above. */
     attachMediaLabel2 = (Object *)NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_TOOT_ATTACH_MEDIA), TAG_END);
 
@@ -446,6 +466,156 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         CHILD_WeightedHeight, 0,
         TAG_END);
     if (!attachMediaRow2) return FALSE;
+
+    /* ------------------------------------------------------------------ */
+    /* Poll-answer editors, one per possible answer -- each is added        */
+    /* directly to tv->pollExtrasLayout below with CHILD_Label attached      */
+    /* (same reasoning as attachMediaLabel above: label.image isn't a       */
+    /* gadget, so it can't be a LAYOUT_AddChild sibling). No per-row wrapper */
+    /* layout needed here, unlike the attach-media rows above -- a poll     */
+    /* answer is just the one editor gadget, nothing else to pack beside it.*/
+    /* Layout-only for now (see fs3etootview.h's pollOptionEditor comment). */
+    /* ------------------------------------------------------------------ */
+    {
+        static const ULONG pollOptionGadId[FS3ETOOT_NUM_POLL_OPTIONS] = {
+            GID_TOOT_POLL_OPTION1, GID_TOOT_POLL_OPTION2,
+            GID_TOOT_POLL_OPTION3, GID_TOOT_POLL_OPTION4
+        };
+        int p;
+
+        for (p = 0; p < FS3ETOOT_NUM_POLL_OPTIONS; p++) {
+            snprintf(tv->pollOptionLabelText[p], sizeof(tv->pollOptionLabelText[p]),
+                     LOC(MSG_TOOT_POLL_OPTION_FORMAT), p + 1);
+
+            tv->pollOptionLabel[p] = (Object *)NewObject(LABEL_GetClass(), NULL,
+                LABEL_Text, (ULONG)tv->pollOptionLabelText[p], TAG_END);
+            if (!tv->pollOptionLabel[p]) return FALSE;
+
+            tv->pollOptionEditor[p] = (Object *)NewObject(UNITEXTEDITOR_GetClass(), NULL,
+                GA_ID,                  (ULONG)pollOptionGadId[p],
+                ICA_TARGET,             (ULONG)TargetInstance,
+                UTED_InternalRawKey_SendBack,TRUE,
+                UTED_KeyMessageMode,    UKM_Internal,
+                UTED_BevelStyle,        BVS_FIELD,
+                UTED_URPDrawContext,    (ULONG)textDC,
+                UTED_TextPen,           1UL,
+                UTED_BgPen,             0UL,
+                UTED_MaxDisplayLines,   1UL,
+                UTED_NoLineFeed,        TRUE,
+                UTED_WordWrap,          FALSE,
+                UTED_LeftMargin,        2,
+                UTED_TopMargin,         3,
+                UTED_BottomMargin,      1,
+                UTED_LineSpacing,       0,
+                TAG_END);
+            if (!tv->pollOptionEditor[p]) return FALSE;
+        }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Poll expiration chooser -- last pollExtrasLayout row, options in     */
+    /* fs3eTootPollExpirations, added with CHILD_Label below same as the    */
+    /* poll-answer editors above. Default reset to                         */
+    /* FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX ("3 days") every time           */
+    /* FS3ETootView_SetComposeContext configures poll mode (see below).     */
+    /* ------------------------------------------------------------------ */
+    NewList(&tv->pollExpirationList);
+    for (i = 0; i < FS3ETOOT_NUM_POLL_EXPIRATIONS; i++) {
+        struct Node *node = NULL;
+        if (ChooserBase)
+            node = AllocChooserNode(CNA_Text, (ULONG)fs3eTootPollExpirations[i], TAG_END);
+        tv->pollExpirationNodes[i] = node;
+        if (node) AddTail(&tv->pollExpirationList, node);
+    }
+
+    tv->pollExpirationLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_TOOT_POLL_EXPIRATION), TAG_END);
+
+    tv->pollExpirationChooser = (Object *)NewObject(CHOOSER_GetClass(), NULL,
+        GA_ID,          (ULONG)GID_TOOT_POLL_EXPIRATION,
+        GA_RelVerify,   TRUE,
+        ICA_TARGET,     (ULONG)TargetInstance,
+        CHOOSER_PopUp,  TRUE,
+        CHOOSER_Labels, (ULONG)&tv->pollExpirationList,
+        CHOOSER_Active, (ULONG)FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX,
+        TAG_END);
+    if (!tv->pollExpirationChooser) return FALSE;
+
+    /* ------------------------------------------------------------------ */
+    /* tootExtrasLayout/pollExtrasLayout: two independent, ordinary vertical */
+    /* layout.gadget sub-groups -- one holds the two attach-media rows, the */
+    /* other the four poll-answer editors plus the expiration chooser, each */
+    /* paired with its label via CHILD_Label -- the documented way to      */
+    /* attach a label.image to a gadget, and what aligns every row's label  */
+    /* into one column since these are vertical groups. Only one of the two */
+    /* groups is ever attached to tv->extrasLayout (the "slot", see below)  */
+    /* at a time; the other sits detached, kept alive solely by tv's own    */
+    /* pointer to it. Both are built with CHILD_NoDispose (see below where  */
+    /* each is added to the slot) so layout.gadget never auto-disposes      */
+    /* either one on removal or on the window's own teardown --             */
+    /* FS3ETootView_Dispose explicitly DisposeObject()s both.               */
+    /* ------------------------------------------------------------------ */
+    tv->tootExtrasLayout = (Object *)NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation, LAYOUT_ORIENT_VERT,
+        LAYOUT_BevelStyle,  BVS_NONE,
+        LAYOUT_SpaceOuter,  FALSE,
+        LAYOUT_SpaceInner,  FALSE,
+        LAYOUT_AddChild,    (ULONG)attachMediaRow,
+            CHILD_Label,          (ULONG)attachMediaLabel,
+            CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,    (ULONG)attachMediaRow2,
+            CHILD_Label,          (ULONG)attachMediaLabel2,
+            CHILD_WeightedHeight, 0,
+        TAG_END);
+    if (!tv->tootExtrasLayout) return FALSE;
+
+    tv->pollExtrasLayout = (Object *)NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation, LAYOUT_ORIENT_VERT,
+        LAYOUT_BevelStyle,  BVS_NONE,
+        LAYOUT_SpaceOuter,  FALSE,
+        LAYOUT_SpaceInner,  FALSE,
+        LAYOUT_AddChild,    (ULONG)tv->pollOptionEditor[0],
+            CHILD_Label,          (ULONG)tv->pollOptionLabel[0],
+            CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,    (ULONG)tv->pollOptionEditor[1],
+            CHILD_Label,          (ULONG)tv->pollOptionLabel[1],
+            CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,    (ULONG)tv->pollOptionEditor[2],
+            CHILD_Label,          (ULONG)tv->pollOptionLabel[2],
+            CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,    (ULONG)tv->pollOptionEditor[3],
+            CHILD_Label,          (ULONG)tv->pollOptionLabel[3],
+            CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,    (ULONG)tv->pollExpirationChooser,
+            CHILD_Label,          (ULONG)tv->pollExpirationLabel,
+            CHILD_WeightedHeight, 0,
+        TAG_END);
+    if (!tv->pollExtrasLayout) return FALSE;
+
+    /* tv->extrasLayout: the fixed "slot" sitting between bodyEditor and    */
+    /* bottomBar in the outer layout below -- an ordinary layout.gadget     */
+    /* that holds exactly one child at a time (tootExtrasLayout or          */
+    /* pollExtrasLayout), swapped via LAYOUT_RemoveChild/LAYOUT_AddChild in */
+    /* FS3ETootView_SetComposeContext. Keeping this slot itself as a        */
+    /* permanent, never-swapped child of the outer layout is what keeps the */
+    /* outer layout's own child order (contextMessage/bodyEditor/slot/      */
+    /* bottomBar/visibilityMeaning) stable -- LAYOUT_AddChild only ever     */
+    /* appends, so swapping directly at the outer layout's level would push */
+    /* whichever group got re-added after bottomBar/visibilityMeaning.      */
+    /* tootExtrasLayout starts attached (toot mode is the default compose   */
+    /* kind); the CHILD_NoDispose here is what FS3ETootView_Dispose relies  */
+    /* on to be allowed to free both groups itself, see above. */
+    tv->extrasLayout = (Object *)NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation, LAYOUT_ORIENT_VERT,
+        LAYOUT_BevelStyle,  BVS_NONE,
+        LAYOUT_SpaceOuter,  FALSE,
+        LAYOUT_SpaceInner,  FALSE,
+        LAYOUT_AddChild,    (ULONG)tv->tootExtrasLayout,
+            CHILD_WeightedHeight, 0,
+            CHILD_NoDispose,      TRUE,
+        TAG_END);
+    if (!tv->extrasLayout) return FALSE;
+    tv->currentExtras = tv->tootExtrasLayout;
 
     /* ------------------------------------------------------------------ */
     /* Bottom bar: visibility chooser, char count, emoji buttons, Toot     */
@@ -614,12 +784,8 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
             CHILD_WeightedHeight, 0,
         LAYOUT_AddChild,    (ULONG)tv->bodyEditor,
             CHILD_WeightedHeight, 1,
-        LAYOUT_AddChild,    (ULONG)attachMediaRow,
+        LAYOUT_AddChild,    (ULONG)tv->extrasLayout,
             CHILD_WeightedHeight, 0,
-            CHILD_Label,          (ULONG)attachMediaLabel,
-        LAYOUT_AddChild,    (ULONG)attachMediaRow2,
-            CHILD_WeightedHeight, 0,
-            CHILD_Label,          (ULONG)attachMediaLabel2,
         LAYOUT_AddChild,    (ULONG)bottomBar,
             CHILD_WeightedHeight, 0,
         LAYOUT_AddChild,    (ULONG)tv->visibilityMeaning,
@@ -672,6 +838,21 @@ void FS3ETootView_Dispose(FS3ETootView *tv)
         FS3ETootView_Close(tv);
         DisposeObject(tv->windowObj);
         tv->windowObj = NULL;
+
+        /* Both were added to tv->extrasLayout (now gone, cascaded from
+         * windowObj above) with CHILD_NoDispose TRUE -- see the "slot"
+         * design comment in FS3ETootView_Create -- so neither was destroyed
+         * by that cascade, whether or not it was the one still attached.
+         * They're entirely tv's own responsibility to free. */
+        if (tv->tootExtrasLayout) {
+            DisposeObject(tv->tootExtrasLayout);
+            tv->tootExtrasLayout = NULL;
+        }
+        if (tv->pollExtrasLayout) {
+            DisposeObject(tv->pollExtrasLayout);
+            tv->pollExtrasLayout = NULL;
+        }
+        tv->currentExtras = NULL;
     }
 
     if (ChooserBase) {
@@ -691,6 +872,12 @@ void FS3ETootView_Dispose(FS3ETootView *tv)
             if (tv->languageNodes[i]) {
                 FreeChooserNode(tv->languageNodes[i]);
                 tv->languageNodes[i] = NULL;
+            }
+        }
+        for (i = 0; i < FS3ETOOT_NUM_POLL_EXPIRATIONS; i++) {
+            if (tv->pollExpirationNodes[i]) {
+                FreeChooserNode(tv->pollExpirationNodes[i]);
+                tv->pollExpirationNodes[i] = NULL;
             }
         }
     }
@@ -757,6 +944,15 @@ void FS3ETootView_Open(FS3ETootView *tv)
     /* Same reasoning again: don't carry over a previous toot's flag. */
     if (tv->sensitiveCheck) {
         SetAttrs(tv->sensitiveCheck, GA_Selected, FALSE, TAG_END);
+    }
+    /* Same reasoning again: a leftover poll answer from a previous, unrelated
+     * poll shouldn't silently carry over into this one. */
+    {
+        int p;
+        for (p = 0; p < FS3ETOOT_NUM_POLL_OPTIONS; p++) {
+            if (tv->pollOptionEditor[p])
+                SetAttrs(tv->pollOptionEditor[p], UTED_Text, (ULONG)"", TAG_END);
+        }
     }
 
     if (CurrentMainScreen) {
@@ -863,6 +1059,17 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                  * fs3eloginview.c's urlInstructLabel, same reasoning). */
                 if (tv->bodyEditor)
                     RefreshGList((struct Gadget *)tv->bodyEditor, tv->window, NULL, 1);
+                {
+                    int i;
+                    for( i=0 ; i<FS3ETOOT_NUM_POLL_OPTIONS ;i++)
+                    {
+                        if( tv->pollOptionEditor[i] )
+                        {
+                            RefreshGList((struct Gadget *)tv->pollOptionEditor[i], tv->window, NULL, 1);
+                        }
+                    }
+                }
+
                 break;
 
             case WMHI_GADGETUP:
@@ -1149,16 +1356,20 @@ typedef struct FS3ETootKindConfig {
     BOOL  visibilityEditable; /* FALSE disables visibilityChooser -- Mastodon's
                                 * edit endpoint silently ignores visibility
                                 * changes, so MODIFY shouldn't imply it works */
+    BOOL  pollMode;           /* TRUE swaps tv->extrasLayout's child to pollExtrasLayout
+                                * (four poll-answer rows + expiration row) instead of
+                                * tootExtrasLayout (the two attach-media rows) -- see
+                                * FS3ETootView_SetComposeContext */
 } FS3ETootKindConfig;
 
 static const FS3ETootKindConfig tootKindConfig[] = {
-    /* FS3ETOOT_KIND_NEW     */ { MSG_TOOT_CONTEXT_NEW,    MSG_TOOT_SEND,       FALSE, TRUE  },
-    /* FS3ETOOT_KIND_MODIFY  */ { MSG_TOOT_CONTEXT_MODIFY, MSG_TOOT_SEND_MODIFY, TRUE, FALSE },
-    /* FS3ETOOT_KIND_POLL    */ { MSG_TOOT_CONTEXT_POLL,   MSG_TOOT_SEND,       FALSE, TRUE  },
-    /* FS3ETOOT_KIND_REPLY   */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_REPLY, TRUE, TRUE },
-    /* FS3ETOOT_KIND_QUOTE   */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_QUOTE, FALSE, TRUE },
-    /* FS3ETOOT_KIND_MESSAGE */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND,       TRUE, TRUE },
-    /* FS3ETOOT_KIND_MODIFY_BIO */ { MSG_TOOT_CONTEXT_MODIFY_BIO, MSG_TOOT_SEND_MODIFY, TRUE, FALSE },
+    /* FS3ETOOT_KIND_NEW     */ { MSG_TOOT_CONTEXT_NEW,    MSG_TOOT_SEND,       FALSE, TRUE,  FALSE },
+    /* FS3ETOOT_KIND_MODIFY  */ { MSG_TOOT_CONTEXT_MODIFY, MSG_TOOT_SEND_MODIFY, TRUE, FALSE, FALSE },
+    /* FS3ETOOT_KIND_POLL    */ { MSG_TOOT_CONTEXT_POLL,   MSG_TOOT_SEND,       FALSE, TRUE,  TRUE  },
+    /* FS3ETOOT_KIND_REPLY   */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_REPLY, TRUE, TRUE, FALSE },
+    /* FS3ETOOT_KIND_QUOTE   */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_QUOTE, FALSE, TRUE, FALSE },
+    /* FS3ETOOT_KIND_MESSAGE */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND,       TRUE, TRUE, FALSE },
+    /* FS3ETOOT_KIND_MODIFY_BIO */ { MSG_TOOT_CONTEXT_MODIFY_BIO, MSG_TOOT_SEND_MODIFY, TRUE, FALSE, FALSE },
 };
 
 /* Updates tv->visibilityMeaning's text -- blank for kinds whose
@@ -1298,6 +1509,62 @@ void FS3ETootView_SetComposeContext(FS3ETootView *tv, FS3ETootKind kind,
                            GA_Disabled, (ULONG)!cfg->visibilityEditable, TAG_DONE);
         else
             SetAttrs(tv->visibilityChooser, GA_Disabled, (ULONG)!cfg->visibilityEditable, TAG_END);
+    }
+
+    /* Swap tv->extrasLayout's (the slot's) one child between
+     * tootExtrasLayout (the two attach-media rows) and pollExtrasLayout
+     * (the four poll-answer rows + expiration row) -- see the "slot" design
+     * comment above tv->extrasLayout's construction in FS3ETootView_Create.
+     * Both groups were added there with CHILD_NoDispose TRUE, so removing
+     * one here only detaches it (it stays alive, owned by tv->tootExtras/
+     * pollExtrasLayout) rather than destroying it.
+     *
+     * A plain RethinkLayout on the slot isn't enough here: bodyEditor (the
+     * slot's sibling, weighted height 1) needs to grow/shrink to absorb
+     * whatever height the swap frees up or consumes, and that
+     * redistribution only happens if the *outer* layout (tv->layout, the
+     * slot's parent) is what gets relayouted, not the slot itself.
+     * WM_RETHINK on the whole window is the simplest way to guarantee that,
+     * same as every other structural change in this window
+     * (FS3ETootView_Open already ends on one). */
+    if (tv->extrasLayout && tv->tootExtrasLayout && tv->pollExtrasLayout) {
+        Object *want = cfg->pollMode ? tv->pollExtrasLayout : tv->tootExtrasLayout;
+
+        if (tv->currentExtras != want) {
+            if (tv->window) {
+                SetGadgetAttrs((struct Gadget *)tv->extrasLayout, tv->window, NULL,
+                               LAYOUT_RemoveChild, (ULONG)tv->currentExtras, TAG_DONE);
+                SetGadgetAttrs((struct Gadget *)tv->extrasLayout, tv->window, NULL,
+                               LAYOUT_AddChild,    (ULONG)want,
+                               CHILD_WeightedHeight, 0,
+                               CHILD_NoDispose,      TRUE,
+                               TAG_DONE);
+                DoMethod(tv->windowObj, WM_RETHINK, NULL);
+            } else {
+                SetAttrs(tv->extrasLayout, LAYOUT_RemoveChild, (ULONG)tv->currentExtras, TAG_END);
+                SetAttrs(tv->extrasLayout,
+                         LAYOUT_AddChild,      (ULONG)want,
+                         CHILD_WeightedHeight, 0,
+                         CHILD_NoDispose,      TRUE,
+                         TAG_END);
+            }
+            tv->currentExtras = want;
+        }
+    }
+
+    /* Every time poll mode is (re)configured, the expiration chooser goes
+     * back to its default ("3 days") -- same "don't carry over a leftover
+     * pick from whatever was open before" reasoning as
+     * FS3ETootView_Open's visibility/quote-policy chooser resets, just
+     * triggered from SetComposeContext instead since that's the point
+     * poll mode is actually (re)entered. */
+    if (tv->pollExpirationChooser && cfg->pollMode) {
+        if (tv->window)
+            SetGadgetAttrs((struct Gadget *)tv->pollExpirationChooser, tv->window, NULL,
+                           CHOOSER_Active, (ULONG)FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX, TAG_DONE);
+        else
+            SetAttrs(tv->pollExpirationChooser,
+                     CHOOSER_Active, (ULONG)FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX, TAG_END);
     }
 
     FS3ETootView_UpdateVisibilityMeaning(tv);

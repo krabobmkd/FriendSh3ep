@@ -84,6 +84,19 @@ typedef enum FS3ETootKind {
  * module). */
 #define FS3ETOOT_MAX_MEDIA 4
 
+/* Poll-answer rows -- how many pollOptionEditor/pollOptionLabel gadgets
+ * pollExtrasLayout holds (see below). Poll UI is layout-only for now --
+ * see pollOptionEditor's comment below. */
+#define FS3ETOOT_NUM_POLL_OPTIONS 4
+
+/* Poll expiration chooser, fifth poll row ("Expiration time" + combobox) --
+ * see fs3etootview.c's fs3eTootPollExpirations table for the option labels.
+ * Index FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX ("3 days") is what
+ * FS3ETootView_SetComposeContext resets the chooser to every time it
+ * configures poll mode. */
+#define FS3ETOOT_NUM_POLL_EXPIRATIONS 10
+#define FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX 6
+
 /* Extra data for FS3ETootView_SetComposeContext; which fields matter
  * depends on kind (see FS3ETootKind). Pass params NULL for
  * FS3ETOOT_KIND_NEW/FS3ETOOT_KIND_POLL. */
@@ -177,6 +190,51 @@ typedef struct FS3ETootView {
      * as attachMediaGF above applies here too. */
     Object *attachMedia2GF;
     Object *attachMedia2ClearBtn;
+
+    /* extrasLayout is a plain layout.gadget "slot" sitting between
+     * bodyEditor and bottomBar in tv->layout below -- it holds exactly one
+     * child at a time, either tootExtrasLayout (the two attach-media rows)
+     * or pollExtrasLayout (the four poll-answer rows + expiration row),
+     * swapped via LAYOUT_RemoveChild/LAYOUT_AddChild in
+     * FS3ETootView_SetComposeContext depending on composeKind. Both groups
+     * are added to the slot with CHILD_NoDispose TRUE, so removing one only
+     * detaches it -- it stays alive, owned by tv->tootExtrasLayout/
+     * pollExtrasLayout, until FS3ETootView_Dispose explicitly
+     * DisposeObject()s both (see there and FS3ETootView_Create's "slot"
+     * design comment for why: layout.gadget's own AddChild always appends,
+     * so swapping groups directly at tv->layout's level -- instead of
+     * inside this always-present, never-swapped slot -- would push
+     * whichever group got re-added after bottomBar/visibilityMeaning).
+     * attachMediaRow/attachMediaRow2 and the poll rows themselves are
+     * locals inside FS3ETootView_Create, not kept here (nothing outside
+     * that function touches a row directly, only the gadgets inside each
+     * row, e.g. attachMediaGF/attachMediaClearBtn above). */
+    Object *extrasLayout;
+    Object *tootExtrasLayout;
+    Object *pollExtrasLayout;
+    Object *currentExtras; /* whichever of the two above is presently extrasLayout's child */
+
+    /* Poll-answer rows, one one-line
+     * UniTextEditor per possible answer, "Option N" label to its left.
+     * Layout-only for now: nothing reads these yet (actually submitting a
+     * poll is future work), but the gadgets exist and mode-switch correctly
+     * with composeKind already. */
+    Object *pollOptionEditor[FS3ETOOT_NUM_POLL_OPTIONS];
+    Object *pollOptionLabel[FS3ETOOT_NUM_POLL_OPTIONS];
+    /* "Option 1".."Option 4", formatted once at creation from
+     * MSG_TOOT_POLL_OPTION_FORMAT -- LABEL_Text keeps a pointer, not a
+     * copy, so this must outlive the label object (same convention as
+     * charCountText below for charCountLabel). */
+    char    pollOptionLabelText[FS3ETOOT_NUM_POLL_OPTIONS][16];
+
+    /* Poll expiration row, pollExtrasLayout's last row -- "Expiration
+     * time" label + popup chooser (fs3etootview.c's fs3eTootPollExpirations
+     * table). Read directly via CHOOSER_Active, same convention as
+     * visibilityChooser/quotePolicyChooser -- no separate copy kept here. */
+    Object       *pollExpirationLabel;
+    struct List   pollExpirationList;
+    struct Node  *pollExpirationNodes[FS3ETOOT_NUM_POLL_EXPIRATIONS];
+    Object       *pollExpirationChooser;
 
     /* "Sensitive content" checkbox, bottomBar, right before tootBtn --
      * Mastodon's `sensitive` flag applies to the whole status (and every

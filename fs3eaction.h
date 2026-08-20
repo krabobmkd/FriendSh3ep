@@ -32,6 +32,7 @@ typedef enum {
     /* FriendSh3ep menu */
     FS3EACTION_ACCOUNTS = 0,
     FS3EACTION_NEW_TOOT,
+    FS3EACTION_NEW_POLL,
     FS3EACTION_ABOUT,
     FS3EACTION_QUIT,
 
@@ -92,6 +93,10 @@ BOOL        FS3EAction_Execute(ULONG actionID, struct App *ctx);
 /* Individual action function declarations */
 BOOL Action_Accounts(struct App *ctx);
 BOOL Action_NewToot(struct App *ctx);
+/* Opens the toot window pre-configured in poll mode (FS3ETOOT_KIND_POLL --
+ * see FS3ETootView_SetComposeContext), same "reconfigure then open" shape
+ * as Action_NewToot. */
+BOOL Action_NewPoll(struct App *ctx);
 BOOL Action_About(struct App *ctx);
 BOOL Action_Quit(struct App *ctx);
 

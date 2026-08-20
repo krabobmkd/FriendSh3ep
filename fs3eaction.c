@@ -46,6 +46,7 @@ extern BOOL FS3EApp_NetSend(ULONG type, APTR data, ULONG dataLen);
 static FS3EAction s_actions[FS3EACTION_COUNT] = {
     /* FS3EACTION_ACCOUNTS         */ { Action_Accounts,       MSG_MENU_ACCOUNTS,         NULL },
     /* FS3EACTION_NEW_TOOT         */ { Action_NewToot,        MSG_MENU_NEW_TOOT,         NULL },
+    /* FS3EACTION_NEW_POLL         */ { Action_NewPoll,        MSG_MENU_NEW_POLL,         NULL },
     /* FS3EACTION_ABOUT            */ { Action_About,          MSG_MENU_ABOUT,            NULL },
     /* FS3EACTION_QUIT             */ { Action_Quit,           MSG_MENU_QUIT,             NULL },
 
@@ -135,6 +136,19 @@ BOOL Action_NewToot(struct App *ctx)
      * in-progress draft still survives a close/reopen the way it always
      * has. Mirrors GID_TITLEBAR_NEWTOOT's handling in friendsh3ep.c. */
     FS3ETootView_SetComposeContext(&ctx->tootView, FS3ETOOT_KIND_NEW, NULL);
+    FS3ETootView_Open(&ctx->tootView);
+    return TRUE;
+}
+
+BOOL Action_NewPoll(struct App *ctx)
+{
+    if (!ctx) return FALSE;
+    if (!FS3EApp_RequireRealAccount()) return TRUE; /* error shown, nothing else to do */
+    /* Same reconfigure-then-open shape as Action_NewToot, just with
+     * FS3ETOOT_KIND_POLL -- swaps tv->extrasLayout's child to the four
+     * poll-answer rows + expiration row instead of the two attach-media
+     * rows (see FS3ETootView_SetComposeContext). */
+    FS3ETootView_SetComposeContext(&ctx->tootView, FS3ETOOT_KIND_POLL, NULL);
     FS3ETootView_Open(&ctx->tootView);
     return TRUE;
 }

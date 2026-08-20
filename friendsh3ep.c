@@ -2550,6 +2550,44 @@ int main(int argc, char **argv)
                             FS3ETootView_UpdateCharCount(&app->tootView);
                          }
                             break;
+                        case GID_TOOT_POLL_OPTION1:
+                        case GID_TOOT_POLL_OPTION2:
+                        case GID_TOOT_POLL_OPTION3:
+                        case GID_TOOT_POLL_OPTION4:
+                        {
+                            int ipoll = sender_ID - GID_TOOT_POLL_OPTION1;
+                        /* we asked unitexteditor, in UKM_Internal mode,
+                         * to notify us back rawkey codes and qualifiers */
+                         if((ptag = FindTagItem(UTED_InternalRawKey_Code, msg))!=NULL)
+                         {
+                            ULONG qulkey = ptag->ti_Data;
+                            int isUp = 0x0080 & qulkey;
+                            UWORD key = (UWORD)(0x007f & qulkey);
+                            UWORD qualifiers = (UWORD)(qulkey>>16);
+
+                            if(!isUp && key>=0x50 && key<=0x59 && app->tootView.window)
+                            {
+                                FS3EEmojiBox_HandleFKey(
+                                    &app->emojiBoxWindow,
+                                    app->tootView.pollOptionEditor[ipoll],
+                                    key,
+                                    qualifiers,
+                                    app->tootView.window
+                                    );
+                            }
+                            /* if edidtor has focus (activation), escape key to close the window is here */
+                            if(isUp && key == 0x45)
+                            {
+                                FS3ETootView_Close(&app->tootView);
+                            }
+                         }
+                         if((ptag = FindTagItem(UTEDN_CursorMoved, msg))!=NULL && app->tootView.window)
+                         {
+                            RefreshGList(app->tootView.pollOptionEditor[ipoll],app->tootView.window,NULL,1);
+                         }
+                        }
+                        break;
+
 
                         case GID_TOOT_EMOJI_BUTTON:
                             ptag = FindTagItem(GA_Selected, msg);

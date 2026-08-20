@@ -51,6 +51,10 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Messaging %s",
     /* MSG_TOOT_ATTACH_MEDIA */
     "Attach Media",
+    /* MSG_TOOT_POLL_OPTION_FORMAT */
+    "Option %d",
+    /* MSG_TOOT_POLL_EXPIRATION */
+    "Expiration time",
     /* MSG_TOOT_SENSITIVE */
     "Sensitive content",
     /* MSG_TOOT_LANGUAGE */
@@ -118,6 +122,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Accounts...",
     /* MSG_MENU_NEW_TOOT */
     "New Toot...",
+    /* MSG_MENU_NEW_POLL */
+    "New poll...",
     /* MSG_MENU_ABOUT */
     "About...",
     /* MSG_MENU_QUIT */

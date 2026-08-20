@@ -42,6 +42,10 @@ enum {
     MSG_TOOT_CONTEXT_MESSAGE_FORMAT, /* FS3ETOOT_KIND_MESSAGE contextMessage format: "Messaging %s" */
     MSG_TOOT_ATTACH_MEDIA, /* "Attach Media" -- label above the attachMediaGF/attachMediaClearBtn row,
                              * reused as-is for the attachMedia2GF/attachMedia2ClearBtn row below it */
+    MSG_TOOT_POLL_OPTION_FORMAT, /* format: "Option %d" -- label beside each of the four
+                                   * poll-answer rows in fs3etootview.c's pollExtrasLayout */
+    MSG_TOOT_POLL_EXPIRATION, /* "Expiration time" -- label beside pollExpirationChooser,
+                                * pollExtrasLayout's last row */
     MSG_TOOT_SENSITIVE,    /* "Sensitive content" -- label next to sensitiveCheck in bottomBar */
     MSG_TOOT_LANGUAGE,     /* "Language" -- label next to languageChooser, same column as sensitiveCheck */
     MSG_TOOT_VISIBILITY_PUBLIC,
@@ -91,6 +95,8 @@ enum {
     MSG_MENU_FRIENDSH3EP,
     MSG_MENU_ACCOUNTS,
     MSG_MENU_NEW_TOOT,
+    MSG_MENU_NEW_POLL, /* opens the toot window pre-configured in poll mode
+                         * (FS3ETOOT_KIND_POLL) -- see Action_NewPoll */
     MSG_MENU_ABOUT,
     MSG_MENU_QUIT,
 
