@@ -177,10 +177,14 @@ showing. Each one is its own independent, remembered scroll position.
     Favourites, boosts, replies, follows and mentions concerning you.
 
   @{b}Bookmarks@{ub}
-    Coming soon.
+    You'll find back the toots you bookmarked here. Note bookmarked
+    toots data are kept in a specual cache under the user directory,
+    per account, not in the volatile cache, and you can check them offline.
 
   @{b}News@{ub}
-    Coming soon.
+    Servers recollect the most shared news web pages from news sites,
+    from the last couple of days and sort them for you. This list 
+    changes on a daily basis.
 
 A @{b}Refresh@{ub} button next to the view buttons reloads the current view.
 
