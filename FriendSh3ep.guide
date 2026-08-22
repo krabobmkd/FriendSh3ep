@@ -1,11 +1,11 @@
 @DATABASE FriendSh3ep.guide
-@$VER: FriendSh3ep.guide 0.8 (07.08.2026)
+@$VER: FriendSh3ep.guide 1.0 (22.08.2026)
 @AUTHOR krabobmkd
 @(C) 2026 krabobmkd
 @MASTER PROGDIR:FriendSh3ep.guide
 @NODE MAIN "FriendSh3ep - Mastodon client for AmigaOS3"
 
-@{b}FriendSh3ep v0.8@{ub}
+@{b}FriendSh3ep v1.0@{ub}
 A Mastodon / Fediverse client for AmigaOS 3.2.x (68k)
 
 @{i}Toots, timelines, images and emoji -- the Fediverse, Amiga style.@{ui}
