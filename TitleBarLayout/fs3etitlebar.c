@@ -595,23 +595,16 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
     }
 
     /* Title bar title/logo image (titlebar.title in style.txt), masked on
-     * color 0 -- drawn once here, before children, so it never overlaps a
-     * child's own render. See FS3EStyle_LoadThemeImages. */
+     * color 0 -- NOT drawn here anymore. It's conceptually part of the
+     * title bar's own background (like tbBg/titlebarLeft/titlebarRight),
+     * so it's blitted by FS3EStyle_TitleBarBackFillFunc (fs3estyle.c)
+     * instead, same "backdrop, painted under EraseRect() before this
+     * GM_RENDER even runs" reasoning as those. See that function and the
+     * tbTitleBitmap/tbTitleMask/tbTitleWidth/tbTitleHeight/tbTitleOffX/
+     * tbTitleOffY mirrors it reads. This condition still decides whether
+     * the plain-text fallback below is needed (no title image loaded). */
     if (rp && inst->style && BmImage_IsLoaded(&inst->style->titlebarTitle)) {
-        BmImage *timg = &inst->style->titlebarTitle;
-        WORD     dstX = left + inst->style->titlebarTitleX;
-        WORD     dstY = top  + inst->style->titlebarTitleY;
-        WORD blitheight = timg->height;
-        if((dstY+blitheight)>(top+h)) blitheight =(top+h)-(dstY);
-
-        if (timg->mask) {
-            BltMaskBitMapRastPort(timg->bitmap, 0, 0, rp, dstX, dstY,
-                                  (LONG)timg->width, (LONG)blitheight,
-                                  PATCH9_MASK_MINTERM, timg->mask);
-        } else {
-            BltBitMapRastPort(timg->bitmap, 0, 0, rp, dstX, dstY,
-                              (LONG)timg->width, (LONG)blitheight, 0xC0);
-        }
+        /* Image already painted by the backfill hook -- nothing to do. */
     } else
     {
         if(/*inst->style && inst->style->dcUsername*/

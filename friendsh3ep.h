@@ -71,13 +71,38 @@ typedef enum {
     FS3ESEARCH_FOLLOWERS,  /* see FS3EApp_ShowFollowers(); searchProfileAccountId's
                              * followers, same flat account-row list */
     FS3ESEARCH_FOLLOWING,  /* see FS3EApp_ShowFollowing(); same, but following */
-    FS3ESEARCH_INSTANCE    /* see FS3EApp_SearchInstance(); "tell me about this
+    FS3ESEARCH_INSTANCE,   /* see FS3EApp_SearchInstance(); "tell me about this
                              * server" lookup -- a pinned TTLInstanceHeaderSetup
                              * header (TTIMELINE_ShowInstanceInfo), no post list
                              * below it, same "no toots to page" reasoning as
                              * FS3ESEARCH_DISCUSSION has none either (that one
                              * DOES have a post list though; this one has none
                              * at all) */
+    FS3ESEARCH_BLOCKED_USERS,   /* see FS3EApp_ShowBlockedUsers() -- the connected
+                             * account's own GET /api/v1/blocks, same flat
+                             * account-row list as FOLLOWERS/FOLLOWING above,
+                             * no profile header (there's no single "whose
+                             * list" to name -- it's always your own), pinned
+                             * "Blocked users" title row instead of "Followers
+                             * for @user". Menu-triggered (FriendSh3ep menu),
+                             * not a profile-header button. */
+    FS3ESEARCH_BLOCKED_SERVERS, /* see FS3EApp_ShowBlockedServers() -- the connected
+                             * account's own GET /api/v1/domain_blocks, a flat
+                             * list of TTLDomainRow_Class rows (plain domain
+                             * strings, not accounts) instead. Same menu-
+                             * triggered, no-profile-header shape as
+                             * FS3ESEARCH_BLOCKED_USERS above. */
+    FS3ESEARCH_FAVOURITED_BY, /* see FS3EApp_ShowFavouritedBy() -- who
+                             * favourited the "selected" toot (Timeline menu's
+                             * "Who Faved that Toot", see
+                             * TTIMELINE_SelectedPostId), same flat account-row
+                             * list as FOLLOWERS/FOLLOWING/BLOCKED_USERS, no
+                             * profile header, pinned "Favourited by" title
+                             * (there's no single @user to name -- this is
+                             * about a TOOT, not a profile). */
+    FS3ESEARCH_REBLOGGED_BY   /* see FS3EApp_ShowRebloggedBy() -- same, but who
+                             * boosted it ("Who Boosted that Toot"), pinned
+                             * "Boosted by" title. */
 } FS3ESearchMode;
 
 /* searchWordTypeChooser's three entries (CHOOSER_Active), read by
@@ -458,6 +483,22 @@ struct App {
     /* enum fs3eViewMode */
     ULONG     viewMode;
 
+    /* enum fs3eViewMode -- whichever channel was active the moment Search
+     * was last entered FROM a non-Search channel (Home/Local/Fed/Notifs/
+     * Bookmarks/News/User), captured once, centrally, in fs3e_setViewMode
+     * itself (the "unique entry to manage changing viewmode" per its own
+     * comment) rather than at each of the many FS3EApp_OpenProfile/
+     * OpenDiscussion/SearchWord/Account/Instance/ShowAccountsList/
+     * ShowBlockedServers call sites that switch into VIEWMODE_Search --
+     * see FS3EApp_SearchGoBack's own comment for why this exists: the
+     * search-history stack (searchStack/searchStackDepth) only remembers
+     * navigation WITHIN Search, so once it's exhausted, Back needs
+     * somewhere else to go rather than just going inert. Naturally
+     * refreshed every time Search is genuinely re-entered from elsewhere;
+     * never explicitly reset otherwise (harmless if stale -- it's only
+     * ever read while still inside Search, right before leaving it). */
+    ULONG     searchOriginViewMode;
+
     /* Search channel (VIEWMODE_Search) profile-view state -- see
      * FS3ESearchMode and FS3EApp_OpenProfile(). searchProfileAcct is set
      * the moment a profile is requested (before the account id is even
@@ -489,6 +530,23 @@ struct App {
      * FS3EApp_OpenDiscussion(). Set the moment a discussion is requested,
      * same "before either reply lands" timing as searchProfileAcct above. */
     char  *searchDiscussionStatusId;
+
+    /* Search channel (VIEWMODE_Search) "about this server" state -- see
+     * FS3EApp_SearchInstance()/TTIMELINE_ShowInstanceInfo. searchInstanceDomain
+     * is set once the FS3ENETQ_INSTANCE_DETAILS reply resolves the real
+     * domain (unlike searchProfileAcct above, there's nothing meaningful to
+     * set before that reply lands -- what the user typed may be a full URL,
+     * not the bare domain the block/unblock endpoints need), so an
+     * FS3ENETQ_DOMAIN_BLOCK_STATE/TOGGLE reply can be checked against it and
+     * discarded if stale, same reasoning as searchProfileAccountId.
+     * searchInstanceBlocked mirrors it: unknown/FALSE until the
+     * FS3ENETQ_DOMAIN_BLOCK_STATE reply lands, kept in sync afterwards by
+     * FS3ENETQ_DOMAIN_BLOCK_TOGGLE's own reply -- read by TTL_HOT_BLOCK_SERVER's
+     * click handler to decide which direction to toggle, same "app-side
+     * state instead of a hot-spot notify tag" convention TTL_HOT_UNBLOCK
+     * already uses for the profile header's Unblock button. */
+    char  *searchInstanceDomain;
+    BOOL   searchInstanceBlocked;
 
     /* Back-navigation history for the Search channel -- see
      * FS3EApp_SearchGoBack()/searchStackPush() in fs3erequests.c. A plain

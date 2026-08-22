@@ -33,6 +33,8 @@ typedef enum {
     FS3EACTION_ACCOUNTS = 0,
     FS3EACTION_NEW_TOOT,
     FS3EACTION_NEW_POLL,
+    FS3EACTION_SHOW_BLOCKED_USERS,
+    FS3EACTION_SHOW_BLOCKED_SERVERS,
     FS3EACTION_ABOUT,
     FS3EACTION_QUIT,
 
@@ -57,14 +59,14 @@ typedef enum {
     FS3EACTION_TIMELINE_AUTOSCROLL_PLAY,
     FS3EACTION_TIMELINE_AUTOSCROLL_STOP,
     FS3EACTION_TIMELINE_COPY_TEXT,
+    FS3EACTION_TIMELINE_WHO_FAVED,
+    FS3EACTION_TIMELINE_WHO_BOOSTED,
 
     /* User menu -- acts on whichever profile is open in the Search
      * view's FS3ESEARCH_USER_PROFILE sub-mode. */
     FS3EACTION_USER_COPY_URL,
     FS3EACTION_USER_FOLLOW,
     FS3EACTION_USER_UNFOLLOW,
-    FS3EACTION_USER_MASK,
-    FS3EACTION_USER_UNMASK,
     FS3EACTION_USER_BLOCK,
     FS3EACTION_USER_UNBLOCK,
     FS3EACTION_USER_BLOCK_SERVER,
@@ -97,6 +99,11 @@ BOOL Action_NewToot(struct App *ctx);
  * see FS3ETootView_SetComposeContext), same "reconfigure then open" shape
  * as Action_NewToot. */
 BOOL Action_NewPoll(struct App *ctx);
+/* Opens the connected account's own GET /api/v1/blocks list (blocked
+ * users) / GET /api/v1/domain_blocks list (blocked servers) in the Search
+ * channel -- see FS3EApp_ShowBlockedUsers/ShowBlockedServers. */
+BOOL Action_ShowBlockedUsers(struct App *ctx);
+BOOL Action_ShowBlockedServers(struct App *ctx);
 BOOL Action_About(struct App *ctx);
 BOOL Action_Quit(struct App *ctx);
 
@@ -142,6 +149,15 @@ BOOL Action_TimelineAutoscrollPlay(struct App *ctx, int updateBt);
 BOOL Action_TimelineAutoscrollStop(struct App *ctx, int updateBt);
 BOOL Action_TimelineCopyText(struct App *ctx);
 
+/* "Who Faved/Boosted that Toot" -- same "selected" toot COPY_TEXT above
+ * uses, read via TTIMELINE_SelectedPostId (the status id) instead of
+ * TTIMELINE_CopySelectedText (the body text). Opens the Search channel
+ * with a flat account-row list (GET /api/v1/statuses/:id/favourited_by or
+ * .../reblogged_by), same shape as the User menu's Followers/Following --
+ * see FS3EApp_ShowFavouritedBy/RebloggedBy in fs3erequests.h. */
+BOOL Action_TimelineWhoFaved(struct App *ctx);
+BOOL Action_TimelineWhoBoosted(struct App *ctx);
+
 /* Stops whichever FS3ETimer-driven scroll animation is currently running
  * (today: just "Next toot"'s, see s_nextTootAnim in fs3eaction.c; meant
  * to also cover the future continuous autoscroll timer once
@@ -155,17 +171,21 @@ BOOL Action_TimelineCopyText(struct App *ctx);
  * scroll). Not itself an FS3EActionFunc/menu entry. */
 void Action_TimelineStopScrollAnimation(void);
 
-/* User menu -- see FS3EACTION_USER_* in the enum above. Follow/Unfollow/
- * CopyProfileURL are fully implemented (existing Action_ToggleFollow /
- * Clipboard_WriteText plumbing, nothing new needed). Mask/Unmask/Block/
- * Unblock (user and server) are stubs: Mastodon's mute/block/domain-block
- * endpoints have no request/reply plumbing in network_fs3e/ yet -- that's
- * the "following dev" work these entries are scaffolding for. */
+/* User menu -- see FS3EACTION_USER_* in the enum above, all acting on
+ * whichever account is open as ctx->searchProfileAcct/AccountId (the User
+ * menu is only enabled while that's true, see friendsh3ep.c's
+ * userMenuEnabled). Follow/Unfollow/Block/Unblock (user and server) are
+ * "force" entries, not toggles -- each just asserts its own direction
+ * outright via Action_ToggleFollow/Action_ToggleBlock, same reasoning
+ * Action_UserFollow's own comment documents (re-asserting an already-
+ * current state is a harmless server-side no-op). Block/Unblock server act
+ * on the open profile's OWN home server (derived from its acct's "@domain"
+ * suffix), not the connected account's -- a no-op for a local profile (no
+ * '@'), since that domain IS the connected account's own home server and
+ * blocking it makes no sense. */
 BOOL Action_UserCopyProfileURL(struct App *ctx);
 BOOL Action_UserFollow(struct App *ctx);
 BOOL Action_UserUnfollow(struct App *ctx);
-BOOL Action_UserMask(struct App *ctx);
-BOOL Action_UserUnmask(struct App *ctx);
 BOOL Action_UserBlock(struct App *ctx);
 BOOL Action_UserUnblock(struct App *ctx);
 BOOL Action_UserBlockServer(struct App *ctx);
@@ -218,5 +238,15 @@ BOOL Action_ToggleBookmark(struct App *ctx, const char *postId, BOOL currentlyBo
  * from TootTimeline's TTL_HOT_FOLLOW click today; a future "User" context
  * menu (see todo.txt) would call the same function for its Follow entry. */
 BOOL Action_ToggleFollow(struct App *ctx, const char *accountId, BOOL currentlyFollowing);
+
+/* Same shape as Action_ToggleFollow: toggles block state on accountId
+ * (POSTs .../block if !currentlyBlocked, else .../unblock). The server-side
+ * result arrives later as an FS3ENETQ_BLOCK/UNBLOCK reply, handled in
+ * fs3erequests.c by updating TootTimeline's profile header via
+ * TTIMELINE_UpdateProfileBlocked (and, for a block, also
+ * TTIMELINE_UpdateProfileFollow -- see FS3EMastodon_Block's own comment on
+ * why). Called from TootTimeline's TTL_HOT_UNBLOCK click and the User
+ * menu's Block/Unblock entries alike. */
+BOOL Action_ToggleBlock(struct App *ctx, const char *accountId, BOOL currentlyBlocked);
 
 #endif /* FS3EACTION_H */

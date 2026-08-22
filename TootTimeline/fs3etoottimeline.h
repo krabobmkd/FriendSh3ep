@@ -141,6 +141,14 @@
  * actual audio file to play). Same buffer/pointer as the accompanying
  * TTIMELINE_HotSpotNotify notification's tag of the same name. */
 #define TTIMELINE_LastHotSpotAudioUrl (TTIMELINE_Base + 42)
+/* [G] STRPTR: the poll's own id (see TTLPostSetup.pollId), or NULL/"" if
+ * the post the most recently activated hot-spot belongs to has no poll --
+ * distinct from postId/TTIMELINE_LastHotSpotPostId, which for a
+ * TTL_HOT_POLL_VOTE click is still the STATUS id (needed to POST
+ * /api/v1/polls/:id/votes, which addresses the poll object, not the
+ * status). Same buffer/pointer as the accompanying TTIMELINE_HotSpotNotify
+ * notification's tag of the same name. */
+#define TTIMELINE_LastHotSpotPollId   (TTIMELINE_Base + 47)
 /* [G] STRPTR: Mastodon status id (see TTLPostSetup.postId) of the active
  * channel's newest real post -- skips any non-toot pinned boundary row
  * (e.g. a "look for something new" item, which has no postId; see
@@ -211,6 +219,25 @@
  * for a different account id than accountId (a stale reply racing a new
  * profile being opened). */
 #define TTIMELINE_UpdateProfileBio    (TTIMELINE_Base + 43)
+/* [S] TTLProfileBlockedUpdate*: upd->channel's current profile header's
+ * blocked state (connected user blocks this account) just changed --
+ * either the initial state from a Relationship fetch, or a successful
+ * TTL_HOT_UNBLOCK reply (always blocked=FALSE in that case, Mastodon has
+ * no "block again from here" affordance in this button row). Unlike
+ * TTIMELINE_UpdateProfileFollow there is no follower-count delta to
+ * apply (blocking/unblocking never touches follower counts) -- just a
+ * dirty/hotSpotsDirty mark so the "Unblock" button appears/disappears,
+ * same "silent no-op if the header's gone or is a different account"
+ * rule as TTIMELINE_UpdateProfileFollow/Bio. */
+#define TTIMELINE_UpdateProfileBlocked (TTIMELINE_Base + 48)
+/* [S] TTLInstanceBlockedUpdate*: upd->channel's current instance/server
+ * header's blocked state (connected user blocks upd->domain) just changed --
+ * either the initial state from an FS3ENETQ_DOMAIN_BLOCK_STATE check, or a
+ * successful FS3ENETQ_DOMAIN_BLOCK_TOGGLE reply. Same "dirty/hotSpotsDirty
+ * mark only, no relayout, silent no-op if the header's gone or is for a
+ * different domain" shape as TTIMELINE_UpdateProfileBlocked -- see that
+ * tag's comment. */
+#define TTIMELINE_UpdateInstanceBlocked (TTIMELINE_Base + 49)
 /* [S] TTLInstanceHeaderSetup*: show a "tell me about this server" info
  * block in setup->channel -- clears that channel and seeds it with a
  * pinned header (domain/title, optional version subtitle, and one
@@ -376,6 +403,25 @@
  * timeline). See Action_TimelineCopyText in fs3eaction.c. */
 #define TTIMELINE_CopySelectedText      (TTIMELINE_Base + 38)
 
+/* [G] const char*: the Mastodon status id of the currently "selected" toot
+ * -- same "selected" concept TTIMELINE_CopySelectedText documents above
+ * (whichever post the last mouse-down landed on, or the topmost visible
+ * post/header before any click has happened), just the id instead of the
+ * body text. For a reblog-wrapper post this is the ORIGINAL status' id
+ * (see TTLPost.targetId's own comment in fs3etoottimeline_private.h), same
+ * as every actual hot-spot action already targets, not the wrapper row's
+ * own id. NULL/0 if there is nothing selected (an empty timeline) or the
+ * selection is a pseudo row with no real status (a profile/instance
+ * header, "Look for something new", "Load more…") -- those have no
+ * favourited_by/reblogged_by to fetch. Used by
+ * Action_TimelineWhoFaved/WhoBoosted (fs3eaction.c) to fetch
+ * GET /api/v1/statuses/:id/favourited_by or .../reblogged_by (see
+ * FS3EApp_ShowFavouritedBy/RebloggedBy, fs3erequests.c). Owned by the
+ * gadget (a persistent buffer, same lifetime convention as
+ * TTIMELINE_LastHotSpotPostId) -- read via GetAttr right before firing the
+ * request, not cached by the caller. */
+#define TTIMELINE_SelectedPostId        (TTIMELINE_Base + 50)
+
 /* [G,S] BOOL: TRUE = a hot-spot's action (link click, avatar, image,
  * Reply/Boost/Fave button, etc. -- see ttl_activate_hotspot in
  * fs3etoottimeline_input.c) only fires on the SECOND click landing on the
@@ -423,10 +469,32 @@
  * means the post has no poll. Mastodon disallows a status having both
  * a poll and media_attachments, so mediaCount/pollOptionCount are
  * mutually exclusive in practice -- the layout treats them as
- * alternatives, never both. Only CLOSED/result rendering is
- * implemented for now (bars + percentages); voting on an open poll
- * is a later session's work, no TTL_HOT_ type exists for it yet. */
+ * alternatives, never both.
+ *
+ * Two render modes, picked per-post at layout/render/build_hotspots time
+ * (see ttl_toot_layout/ttl_toot_render/ttl_toot_build_hotspots):
+ *   - pollExpired || pollVoted: result rendering (bars + percentages),
+ *     same as always -- no vote hot-spots, summary line reads "N votes"
+ *     plus "Poll closed" (expired) or "X left · Already voted" (open,
+ *     already voted).
+ *   - otherwise (open, not yet voted): a radio-button glyph + plain title
+ *     per option (no bars/percentages -- Mastodon's own apps hide results
+ *     from an un-voted open poll too, so a vote isn't biased by seeing
+ *     tallies first), each row a TTL_HOT_POLL_VOTE hot-spot (see that
+ *     type's own comment) up to TTL_POST_MAX_POLL_VOTE_HOTSPOTS options;
+ *     summary line reads "X left" (no vote count shown yet either).
+ * Submitting the actual vote (POST /api/v1/polls/:id/votes) is still
+ * future work -- see TTL_HOT_POLL_VOTE's own comment. */
 #define TTL_POST_MAX_POLL_OPTIONS 8
+
+/* How many of a poll's options get their own clickable TTL_HOT_POLL_VOTE
+ * row -- matches this app's own compose-side cap (FS3ETootView's four
+ * pollOptionEditor rows, fs3etootview.h), not TTL_POST_MAX_POLL_OPTIONS
+ * above (which exists to hold whatever a foreign poll from another client/
+ * instance carries, display-only past this many). A poll with more than
+ * this many options (not creatable from this app, but readable from one
+ * that allows it) simply shows its extra options without a vote hot-spot. */
+#define TTL_POST_MAX_POLL_VOTE_HOTSPOTS 4
 
 /* Parallels network_fs3e/fs3enet.h's enum FS3ENetNotifType. Kept as its
  * own small set of defines rather than a shared header, same reasoning as
@@ -541,6 +609,15 @@ typedef struct TTLPostSetup {
      * an account row -- see TTLListTitle_Class in fs3etoottimeline_posts.c. */
     BOOL        isListTitle;
 
+    /* TRUE: this is one row of a blocked-servers list (VIEWMODE_Search,
+     * FS3ESEARCH_BLOCKED_SERVERS) -- a plain domain string, not an account
+     * or a toot. Checked alongside isListTitle/isAccountRow, dispatches to
+     * ttl_domain_row_alloc() instead. Only `body` is read (the domain
+     * text itself); every other TTLPostSetup field is ignored, same
+     * "wholly different kind of row" treatment isAccountRow/isListTitle
+     * get -- see TTLDomainRow_Class in fs3etoottimeline_posts.c. */
+    BOOL        isDomainRow;
+
     /* TRUE: this is a trending-link "news" card (VIEWMODE_News), not a
      * toot -- checked alongside isListTitle/isAccountRow, dispatches to
      * ttl_news_card_alloc() instead. Reuses the existing card fields below
@@ -652,14 +729,19 @@ typedef struct TTLPostSetup {
     const char *notifActorAcct;
     const char *notifStatusId;
 
-    /* Poll ("survey"), closed/result rendering only -- see
-     * TTL_POST_MAX_POLL_OPTIONS above. pollOptionCount==0 = no poll. */
+    /* Poll ("survey") -- see TTL_POST_MAX_POLL_OPTIONS above for the two
+     * render modes. pollOptionCount==0 = no poll. */
     const char *pollOptionTitles[TTL_POST_MAX_POLL_OPTIONS];
     ULONG       pollOptionVotes[TTL_POST_MAX_POLL_OPTIONS];
     ULONG       pollOptionCount;
     ULONG       pollVotesCount;
     BOOL        pollExpired;
     BOOL        pollMultiple;
+    const char *pollId;         /* poll's own id (FS3ENetStatus.fmas_PollId) --
+                                  * not yet read anywhere (vote submission is
+                                  * future work), carried for when it is */
+    const char *pollExpiresAt;  /* ISO8601 UTC, "" = none (see fmas_PollExpiresAt) */
+    BOOL        pollVoted;      /* connected user already voted (fmas_PollVoted) */
 
     /* Link preview card -- server-generated (see FS3ENetStatus.fmas_HasCard's
      * doc comment in fs3enet.h), independent of mediaCount/pollOptionCount
@@ -783,6 +865,13 @@ typedef struct TTLProfileHeaderSetup {
     ULONG       followersCount;
     ULONG       followingCount;
     BOOL        following;    /* connected user already follows this account */
+    BOOL        blocked;      /* connected user currently blocks this account --
+                                * unknown (FALSE) until the FS3ENETQ_RELATIONSHIP
+                                * reply lands, same convention as `following`.
+                                * Shows an "Unblock" button (TTL_HOT_UNBLOCK) right
+                                * of Follow/Unfollow when TRUE; never shown at all
+                                * on a self-profile (see showFollow/isSelf below --
+                                * you can't block yourself). */
     BOOL        showFollow;   /* FALSE hides the Follow/Unfollow hot-spot entirely --
                                 * for viewing your own profile, where following yourself
                                 * makes no sense */
@@ -811,6 +900,18 @@ typedef struct TTLProfileFollowUpdate {
     const char *accountId;   /* must match the current header's account, else no-op */
     BOOL        following;   /* new state */
 } TTLProfileFollowUpdate;
+
+/* ------------------------------------------------------------------ */
+/* Profile-header blocked-state update (passed via                     */
+/* TTIMELINE_UpdateProfileBlocked) -- see that tag's comment.           */
+/* ------------------------------------------------------------------ */
+
+typedef struct TTLProfileBlockedUpdate {
+    ULONG       channel;     /* which channel's header to patch -- see
+                               * TTLProfileHeaderSetup.channel's comment */
+    const char *accountId;   /* must match the current header's account, else no-op */
+    BOOL        blocked;     /* new state */
+} TTLProfileBlockedUpdate;
 
 /* ------------------------------------------------------------------ */
 /* Profile-header bio update (passed via TTIMELINE_UpdateProfileBio)   */
@@ -845,7 +946,34 @@ typedef struct TTLInstanceHeaderSetup {
                              * FS3EApp_SearchInstance, fs3erequests.c) -- TootTimeline
                              * itself doesn't know or care what any of it means, same
                              * as it doesn't parse a toot's own body */
+    BOOL        blocked;   /* connected user currently blocks this domain --
+                             * unknown (FALSE) until the FS3ENETQ_DOMAIN_BLOCK_STATE
+                             * reply lands, same convention as
+                             * TTLProfileHeaderSetup.blocked/following. Selects the
+                             * "Block server"/"Unblock server" button label (see
+                             * TTL_HOT_BLOCK_SERVER). */
+    BOOL        showBlock;  /* FALSE hides the Block/Unblock hot-spot entirely --
+                             * for a logged-out lookup (no access token, can't block
+                             * anonymously), same reasoning
+                             * TTLProfileHeaderSetup.showFollow documents. These are
+                             * the first (and currently only) buttons this header
+                             * kind ever shows. */
 } TTLInstanceHeaderSetup;
+
+/* ------------------------------------------------------------------ */
+/* Instance/server header blocked-state update (passed via             */
+/* TTIMELINE_UpdateInstanceBlocked) -- see that tag's comment.          */
+/* ------------------------------------------------------------------ */
+
+typedef struct TTLInstanceBlockedUpdate {
+    ULONG       channel;   /* which channel's header to patch -- see
+                             * TTLProfileHeaderSetup.channel's comment */
+    const char *domain;    /* must match the current header's domain, else no-op --
+                             * TTLInstanceHeaderSetup.domain's own value, not
+                             * necessarily what the user originally typed (may have
+                             * been a full URL) */
+    BOOL        blocked;   /* new state */
+} TTLInstanceBlockedUpdate;
 
 /* ------------------------------------------------------------------ */
 /* Hot-spot types  (forwarded in TTLHotSpotActivated notification)     */
@@ -877,13 +1005,17 @@ typedef struct TTLInstanceHeaderSetup {
                                  * thumbnail is ever fetched for these; data = the attachment URL */
 #define TTL_HOT_FOLLOW      13 /* profile header's Follow/Unfollow label; data/postId are NULL --
                                  * see TTIMELINE_LastHotSpotFollowing for the account's current state */
-#define TTL_HOT_MODIFY      14 /* action bar's "Modify" text button, own toots only (post->isOwn) --
-                                 * left-aligned, opposite the Reply/Boost/Fave group; postId is the
-                                 * status to edit, data/dataLen carry its raw body text (so the caller
-                                 * can prefill the compose window without a lookup -- see
-                                 * FS3ETootView_SetComposeContext's MODIFY kind). The accompanying
-                                 * TTIMELINE_LastHotSpotMediaIds notify tag carries the same status's
-                                 * attachment ids, needed to resend on a PUT edit. */
+#define TTL_HOT_MODIFY      14 /* action bar's "Modify" text button, own toots only (post->isOwn)
+                                 * AND post->pollOptionCount==0 -- Mastodon has no endpoint to edit
+                                 * a poll's options after posting, so this button is left off a
+                                 * poll's own action bar entirely (see ttl_toot_build_hotspots/
+                                 * ttl_toot_render's matching skip); left-aligned, opposite the
+                                 * Reply/Boost/Fave group; postId is the status to edit, data/dataLen
+                                 * carry its raw body text (so the caller can prefill the compose
+                                 * window without a lookup -- see FS3ETootView_SetComposeContext's
+                                 * MODIFY kind). The accompanying TTIMELINE_LastHotSpotMediaIds notify
+                                 * tag carries the same status's attachment ids, needed to resend on a
+                                 * PUT edit. */
 #define TTL_HOT_DELETE      15 /* action bar's "Delete" text button, own toots only (post->isOwn) --
                                  * left-aligned, next to TTL_HOT_MODIFY; data is NULL, postId is the
                                  * status to delete */
@@ -984,6 +1116,60 @@ typedef struct TTLInstanceHeaderSetup {
                                  * bookmarksCount (Mastodon never exposes one -- bookmarks are
                                  * private to the bookmarker), so the button is glyph-only,
                                  * no digit -- see ttl_build_action_labels(). */
+#define TTL_HOT_POLL_VOTE    28 /* one poll-answer row, open poll not yet voted on (see
+                                 * TTL_POST_MAX_POLL_OPTIONS's render-mode comment) -- the
+                                 * radio-button glyph + option title together, full row
+                                 * width same as TTL_HOT_THREAD. Up to
+                                 * TTL_POST_MAX_POLL_VOTE_HOTSPOTS of these per post, one per
+                                 * option. data is the 1-based option number as an ASCII
+                                 * digit string ("1".."4", dataLen 1) -- which option this
+                                 * row is, since postId/targetId only identifies the toot
+                                 * (one poll each, but four+ answers). postId is this post's
+                                 * targetId, same convention as every other action hot-spot.
+                                 * The click handler (friendsh3ep.c) shows a "Vote entry N?"
+                                 * OK/Cancel confirm; actually submitting the vote (POST
+                                 * /api/v1/polls/:id/votes) is still future work -- see
+                                 * FS3ENetStatus.fmas_PollId's own comment. */
+#define TTL_HOT_UNBLOCK      29 /* profile header's "Unblock" button -- shown only when
+                                 * post->blocked (see TTLProfileHeaderSetup.blocked), right
+                                 * of Follow/Unfollow on the same row (never shown together
+                                 * with Modify, i.e. never on a self-profile -- you can't
+                                 * block yourself). data/postId are NULL -- the handler reads
+                                 * app->searchProfileAccountId app-side, same convention as
+                                 * TTL_HOT_FOLLOW, confirms with a Yes/No requester, then
+                                 * POSTs /api/v1/accounts/:id/unblock (FS3ENETQ_UNBLOCK). On
+                                 * success the reply handler sends
+                                 * TTIMELINE_UpdateProfileBlocked(blocked=FALSE), which hides
+                                 * this button again -- no local optimistic update, same
+                                 * "wait for server confirmation" rule TTL_HOT_FOLLOW follows. */
+#define TTL_HOT_BLOCK_SERVER 30 /* instance header's "Block server"/"Unblock server"
+                                 * toggle button (see TTLInstanceHeaderSetup.blocked/
+                                 * showBlock) -- the first (and currently only) button
+                                 * this header kind shows, left-aligned, last row before
+                                 * the separator, same placement convention as a profile
+                                 * header's Follow/Unfollow. data/postId are NULL -- the
+                                 * handler reads app->searchInstanceDomain/
+                                 * searchInstanceBlocked app-side (same "app-side state,
+                                 * no notify tag" convention TTL_HOT_UNBLOCK uses),
+                                 * confirms with a Yes/No requester, then POSTs (block) or
+                                 * DELETEs (unblock) /api/v1/domain_blocks?domain=...
+                                 * (FS3ENETQ_DOMAIN_BLOCK_TOGGLE). On success the reply
+                                 * handler sends TTIMELINE_UpdateInstanceBlocked, which
+                                 * flips the button's label -- no local optimistic
+                                 * update, same "wait for server confirmation" rule
+                                 * TTL_HOT_FOLLOW/TTL_HOT_UNBLOCK follow. */
+#define TTL_HOT_DOMAIN       31 /* one blocked-servers list row (see
+                                 * TTLPostSetup.isDomainRow/TTLDomainRow_Class) -- the
+                                 * whole row is one hotspot, same "full-row click target"
+                                 * convention TTL_HOT_AVATAR gets on TTLAccountRow_Class.
+                                 * data is the domain text itself (post->body), postId is
+                                 * NULL -- there's no account/status id for a domain row.
+                                 * The click handler (friendsh3ep.c) calls
+                                 * FS3EApp_SearchInstance(hotSpotString), opening that
+                                 * domain's own "about this server" page (same flow as
+                                 * typing the domain into the Server search box), which
+                                 * shows its own Block/Unblock button (TTL_HOT_BLOCK_SERVER)
+                                 * reflecting its current (still blocked) state. */
 
 /* Opaque handle; cast to TTLHotSpot* from private header if needed */
 typedef struct TTLHotSpot TTLHotSpot;

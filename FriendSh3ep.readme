@@ -8,8 +8,50 @@ Requires:     68030, AmigaOS 3.2.x, Internet stack (Miami/AmiTCP/RoadShow),
               AmiSSL v5 (get it on Aminet), EmojiGear v5.1 (utf8rastport.library,
               unitexteditor.gadget, unibutton.gadget -- installed by EmojiGear5.1.lha)
 
+------------------------- Version 0.9.9  21/08/2026
 
+ Actually a pre-release version, as all features intended were completed:
+ last week with version 0.8.x we were around 80%, now it's 99%
+ And what great features !
 
+ So what's new compared to 0.8 version ?
+ 
+ - You can create polls with a special window, and vote for them !
+   Previously you could only see polls results.
+ - BookMarks: you can now set and unset bookmarks on toots,
+  and view them in the new Bookmark page. Note If that page is viewed,
+  its fill a special cache under user dir, and
+  then you will be able to watch your bookmarked toots offline.
+ - News page ! The list of "Most shared news from news website, on the
+   last day, on the visible federation." Which is the best rational way
+   to hierarchise information I have ever seen. 
+ - Translation engine: if a toot is written in another language than your 
+  locale settings, and your server allow translation, you'll have a button 
+  to translate it to your own language on the fly.
+  This is amazing and works even with japanese messages. 
+ - When writting a toot, you can specify the language in which you write,
+   it will allow translation for other users.
+ - You can block/ Unblock users and servers, and see the list of blocked ones.
+ - You can see the list of who faved or boosted your toot.
+ - Search page allow to get informations about a given mastodon server,
+   their limits, their rules, and if they allow translation.
+
+ About corrections:
+ 
+  - Some glitch between theme logo and buttons corrected.
+  - Some theme switch case could make a button crash, corrected.
+  - some glitch at resize was corrected in EmojiGear 5.2 's unitexteditor.gadget.
+  - back button behaviour in search mode get you back one page more.
+
+ Important licence change:
+ 
+  - The use of FreeType2 library licence changed from GPL to FTL, in package EmojiGear 5.2.
+  - The licence for EmojiGear v 5.2 is now LGPL, and FriendSh3ep 0.9.x also is LGPL.
+  
+  This allow developers to use the libraries from non opensource apps and package,
+  and to distribute EmojiGear and FriendSh3p in non opensource packages.
+  Yet you have to tell what you use and give the pointr to the original libs and apps.
+  
 ------------------------- Version 0.8.2  12/08/2026
 
  A quick release because a lot of efforts were done 

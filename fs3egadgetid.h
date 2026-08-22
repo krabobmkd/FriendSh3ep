@@ -102,6 +102,7 @@
 #define GID_TOOT_POLL_OPTION3         226
 #define GID_TOOT_POLL_OPTION4         227
 #define GID_TOOT_POLL_EXPIRATION      228 /* fifth poll row: expiration-time combobox chooser */
+#define GID_TOOT_POLL_TYPE            229 /* same row: single/multiple-choice combobox chooser */
 
 /* General settings window (fs3esettingsview.c) */
 #define GID_SETTINGSV_CACHE_PATH      300

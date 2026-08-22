@@ -413,6 +413,20 @@ static PLANEPTR       tbRightMask   = NULL;
 static LONG           tbRightWidth  = 0;
 static LONG           tbRightHeight = 0;
 
+/* Same mirroring, same reason, for the title bar title/logo image
+ * (titlebar.title in style.txt) -- used to be blitted directly by
+ * TitleBarLayout_OnRender (TitleBarLayout/fs3etitlebar.c), moved here for
+ * the same "conceptually part of the background" reasoning as
+ * titlebarLeft/titlebarRight above. tbTitleOffX/OffY mirror
+ * st->titlebarTitleX/Y (the configurable style.txt offset), unlike
+ * titlebarLeft/Right which always sit flush in their corner. */
+static struct BitMap *tbTitleBitmap = NULL;
+static PLANEPTR       tbTitleMask   = NULL;
+static LONG           tbTitleWidth  = 0;
+static LONG           tbTitleHeight = 0;
+static LONG           tbTitleOffX   = 0;
+static LONG           tbTitleOffY   = 0;
+
 /* Tile tbBgBitmap across bfm->bf_Bounds. Verified against the working
  * reference (amigapetmate's BackFillHook_Pattern): BltBitMap operates on
  * the raw RastPort BitMap directly and is unaffected by Layer clipping, so
@@ -522,6 +536,43 @@ static void ASM SAVEDS FS3EStyle_TitleBarBackFillFunc(
                                       PATCH9_MASK_MINTERM, tbRightMask);
             } else {
                 BltBitMap(tbRightBitmap, clipX0 - imgX, clipY0 - imgY,
+                          dst, clipX0, clipY0, (WORD)w, (WORD)h, 0xC0, 0xFF, NULL);
+            }
+        }
+    }
+
+    /* Title bar title/logo image (titlebar.title in style.txt), anchored
+     * to the layer's own top-left corner plus the configurable
+     * tbTitleOffX/OffY offset (st->titlebarTitleX/Y) -- same clip-against-
+     * bf_Bounds-by-hand treatment as titlebarLeft/Right above, for the
+     * same reason (BltBitMap/BltMaskBitMapRastPort have no clip region of
+     * their own). Used to be blitted directly by TitleBarLayout_OnRender
+     * (TitleBarLayout/fs3etitlebar.c) via BltBitMapRastPort/
+     * BltMaskBitMapRastPort straight onto that gadget's own (Layer-
+     * attached) RastPort; moved here since it's conceptually part of the
+     * background, same as titlebarLeft/Right -- and, like the mask blits
+     * above, must go through a Layer-less tmpRp (a Layer-attached
+     * RastPort's own clip region would double-clip against stale
+     * coordinates here, since bf_Bounds is already the authoritative
+     * damage rect for this call). */
+    if (tbTitleBitmap && tbTitleWidth > 0 && tbTitleHeight > 0) {
+        LONG imgX = rp->Layer->bounds.MinX + tbTitleOffX;
+        LONG imgY = rp->Layer->bounds.MinY + tbTitleOffY;
+        LONG clipX0 = imgX > dstX ? imgX : dstX;
+        LONG clipY0 = imgY > dstY ? imgY : dstY;
+        LONG clipX1 = (imgX + tbTitleWidth)  < (dstX + dstW) ? (imgX + tbTitleWidth)  : (dstX + dstW);
+        LONG clipY1 = (imgY + tbTitleHeight) < (dstY + dstH) ? (imgY + tbTitleHeight) : (dstY + dstH);
+        if (clipX1 > clipX0 && clipY1 > clipY0) {
+            LONG w = clipX1 - clipX0, h = clipY1 - clipY0;
+            if (tbTitleMask) {
+                struct RastPort tmpRp;
+                InitRastPort(&tmpRp);
+                tmpRp.BitMap = dst;
+                BltMaskBitMapRastPort(tbTitleBitmap, clipX0 - imgX, clipY0 - imgY,
+                                      &tmpRp, clipX0, clipY0, (LONG)w, (LONG)h,
+                                      PATCH9_MASK_MINTERM, tbTitleMask);
+            } else {
+                BltBitMap(tbTitleBitmap, clipX0 - imgX, clipY0 - imgY,
                           dst, clipX0, clipY0, (WORD)w, (WORD)h, 0xC0, 0xFF, NULL);
             }
         }
@@ -793,18 +844,27 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
     } else {
     }
 
-    /* Title bar title/logo image: titlebar.title in style.txt, blitted
-     * directly by TitleBarLayout_OnRender at (titlebarTitleX,
+    /* Title bar title/logo image: titlebar.title in style.txt, blitted by
+     * FS3EStyle_TitleBarBackFillFunc (below) at (titlebarTitleX,
      * titlebarTitleY) offset from the title bar's top-left, masked on
      * color 0 (see BmImage_Load's PDTA_MaskPlane). Optional -- a missing
-     * file just means no title image is drawn. */
+     * file just means no title image is drawn (TitleBarLayout_OnRender
+     * falls back to a plain text logo then). tbTitleBitmap/Mask/Width/
+     * Height/OffX/OffY mirror st->titlebarTitle(X/Y) for the hook the same
+     * way tbLeftBitmap etc. mirror titlebarLeft above. */
     snprintf(path, sizeof(path), "%s/%s", st->themePath,
              StyleFile_GetString(&sf, "titlebar.title", "title.iff"));
-    if (!BmImage_Init(&st->titlebarTitle, path) ||
-        !BmImage_Load(&st->titlebarTitle, scr)) {
+    if (BmImage_Init(&st->titlebarTitle, path) &&
+        BmImage_Load(&st->titlebarTitle, scr)) {
+        tbTitleBitmap = st->titlebarTitle.bitmap;
+        tbTitleMask   = st->titlebarTitle.mask;
+        tbTitleWidth  = st->titlebarTitle.width;
+        tbTitleHeight = st->titlebarTitle.height;
     }
     st->titlebarTitleX = (WORD)StyleFile_GetInt(&sf, "titlebar.title.x", 0);
     st->titlebarTitleY = (WORD)StyleFile_GetInt(&sf, "titlebar.title.y", 0);
+    tbTitleOffX = st->titlebarTitleX;
+    tbTitleOffY = st->titlebarTitleY;
 
     /* Title bar border images: titlebar.left/titlebar.right in style.txt,
      * blitted at the title bar's top-left/top-right corners by
@@ -901,6 +961,7 @@ void FS3EStyle_CreateDefaultButtonImages(FS3EStyle *st, struct Screen *scr)
 {
     if (!st) return;
     FS3ETBDefaultBtn_Create(st->tbDefaultImages, scr);
+    FS3ETBDefaultBtn_CreateDeck(st->btDeckDefaultImages, scr);
 }
 
 /* Always acts, whether or not st->tbImages[N] is currently loaded --
@@ -961,9 +1022,16 @@ void FS3EStyle_SyncTitleBarButtons(FS3EStyle *st,
 }
 
 /* Same "always act, never leave a dangling GA_Image" reasoning as
- * FS3EStyle_SyncTitleBarButtons above, but with no tbDefaultImages[]-style
- * fallback tier -- btDeckImages[N] unset always means the plain-bevel-no-
- * image branch directly (see FS3ESTYLE_BTDECK_* in fs3estyle.h). */
+ * FS3EStyle_SyncTitleBarButtons above, and the same tbDefaultImages[]-style
+ * fallback tier too: btDeckImages[N] unset falls back to
+ * btDeckDefaultImages[N] (see FS3ESTYLE_BTDECK_* in fs3estyle.h and
+ * fs3etbdefaultbtn.h for why a real fallback image is required here, not a
+ * literal NULL GA_Image, once one of these buttons has ever held a real
+ * theme image). Only when btDeckDefaultImages[N] itself hasn't been built
+ * yet (FS3EStyle_CreateDefaultButtonImages not called yet, or PenMapBase
+ * unavailable) does this fall all the way back to a plain BVS_BUTTON bevel
+ * with no image, matching how these buttons render before any image is
+ * ever attached (see their creation in friendsh3ep.c: no GA_Image). */
 void FS3EStyle_SyncTitleBarDeckButtons(FS3EStyle *st,
                                         Object *networkLedBtn,
                                         Object *scrollUpBtn,
@@ -974,7 +1042,9 @@ void FS3EStyle_SyncTitleBarDeckButtons(FS3EStyle *st,
     if (!st) return;
 
     if (networkLedBtn) {
-        img = st->btDeckImages[FS3ESTYLE_BTDECK_NETWORKLED];
+        img = st->btDeckImages[FS3ESTYLE_BTDECK_NETWORKLED]
+            ? st->btDeckImages[FS3ESTYLE_BTDECK_NETWORKLED]
+            : st->btDeckDefaultImages[FS3ESTYLE_BTDECK_NETWORKLED];
         SetGdAttrs(networkLedBtn,
             GA_Image, (ULONG)img,
             BUTTON_BevelStyle, (ULONG)(img ? BVS_NONE : BVS_BUTTON),
@@ -982,7 +1052,9 @@ void FS3EStyle_SyncTitleBarDeckButtons(FS3EStyle *st,
     }
 
     if (scrollUpBtn) {
-        img = st->btDeckImages[FS3ESTYLE_BTDECK_SCROLLUP];
+        img = st->btDeckImages[FS3ESTYLE_BTDECK_SCROLLUP]
+            ? st->btDeckImages[FS3ESTYLE_BTDECK_SCROLLUP]
+            : st->btDeckDefaultImages[FS3ESTYLE_BTDECK_SCROLLUP];
         SetGdAttrs(scrollUpBtn,
             GA_Image, (ULONG)img,
             BUTTON_BevelStyle, (ULONG)(img ? BVS_NONE : BVS_BUTTON),
@@ -990,7 +1062,9 @@ void FS3EStyle_SyncTitleBarDeckButtons(FS3EStyle *st,
     }
 
     if (playModeBtn) {
-        img = st->btDeckImages[FS3ESTYLE_BTDECK_PLAYMODE];
+        img = st->btDeckImages[FS3ESTYLE_BTDECK_PLAYMODE]
+            ? st->btDeckImages[FS3ESTYLE_BTDECK_PLAYMODE]
+            : st->btDeckDefaultImages[FS3ESTYLE_BTDECK_PLAYMODE];
         SetGdAttrs(playModeBtn,
             GA_Image, (ULONG)img,
             BUTTON_BevelStyle, (ULONG)(img ? BVS_NONE : BVS_BUTTON),
@@ -1069,6 +1143,12 @@ void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
     tbRightMask   = NULL;
     tbRightWidth  = 0;
     tbRightHeight = 0;
+    tbTitleBitmap = NULL;
+    tbTitleMask   = NULL;
+    tbTitleWidth  = 0;
+    tbTitleHeight = 0;
+    tbTitleOffX   = 0;
+    tbTitleOffY   = 0;
     /* No image loaded -- TitleBarLayout must fall back to dpiHeight sizing. */
     st->tbButtonWidth  = 0;
     st->tbButtonHeight = 0;
@@ -1081,11 +1161,12 @@ void FS3EStyle_FreeThemeImages(FS3EStyle *st)
     int i;
     if (!st) return;
     FS3EStyle_UnloadThemeImages(st);
-    /* tbDefaultImages[] (the built-in title bar glyphs from
-     * FS3EStyle_CreateDefaultButtonImages) are NOT touched by
+    /* tbDefaultImages[]/btDeckDefaultImages[] (the built-in title bar
+     * glyphs from FS3EStyle_CreateDefaultButtonImages) are NOT touched by
      * FS3EStyle_UnloadThemeImages() above -- they must survive every theme
      * switch and only go away here, at final app exit. */
     FS3ETBDefaultBtn_Dispose(st->tbDefaultImages);
+    FS3ETBDefaultBtn_DisposeDeck(st->btDeckDefaultImages);
     BmImage_Free(&st->tbButtons);
     BmImage_Free(&st->btDeck);
     BmImage_Free(&st->tbBg);

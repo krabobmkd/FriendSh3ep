@@ -5,16 +5,19 @@
  * server" lookup is open (see TTIMELINE_ShowInstanceInfo in
  * fs3etoottimeline.h) -- the search-driven counterpart to
  * TTIMELINE_ShowProfile's user profile header (fs3etoottimeline_profile.c),
- * reusing the exact same TTLChannel.headerPost slot/mechanism. Deliberately
- * much simpler than the profile header: no avatar, no Follow/Message
- * buttons, no Followers/Following boxes -- just a title line, an optional
- * subtitle line, and one big word-wrapped text block the caller
- * (FS3EApp_SearchInstance, fs3erequests.c) has already formatted with every
- * field worth showing (description, char/media/poll limits, translation
- * support, registrations, contact, rules, ...). TootTimeline itself stays
- * ignorant of what a Mastodon instance even is -- it just renders a title +
- * subtitle + wrapped body, same "dumb renderer, app owns the policy"
- * split TTIMELINE_ShowProfile already follows for a bio.
+ * reusing the exact same TTLChannel.headerPost slot/mechanism. Much simpler
+ * than the profile header: no avatar, no Followers/Following boxes -- just
+ * a title line, an optional subtitle line, one big word-wrapped text block
+ * the caller (FS3EApp_SearchInstance, fs3erequests.c) has already formatted
+ * with every field worth showing (description, char/media/poll limits,
+ * translation support, registrations, contact, rules, ...), and one button:
+ * "Block server"/"Unblock server" (TTL_HOT_BLOCK_SERVER), the first (and
+ * currently only) button this header kind has ever shown -- same reserved-
+ * last-row placement convention the profile header's own Follow/Unfollow
+ * button uses. TootTimeline itself stays ignorant of what a Mastodon
+ * instance even is -- it just renders a title + subtitle + wrapped body +
+ * one toggle button, same "dumb renderer, app owns the policy" split
+ * TTIMELINE_ShowProfile already follows for a bio.
  */
 
 #include <proto/exec.h>
@@ -24,6 +27,24 @@
 
 #include "fs3etoottimeline_private.h"
 #include "../fs3etextwrap.h"
+
+/* Button zone (Block/Unblock server today, the first this header kind has
+ * ever had) reserved at the very BOTTOM, right above the separator -- same
+ * convention/reasoning ttl_profile_header_row_height's own comment
+ * documents for the profile header's Follow/Unfollow row: .layout reserves
+ * this height once, .render/.buildHotspots both re-derive the same row's Y
+ * by counting back from post->height, so all three MUST agree on its
+ * height. Local copies of the profile header's own PADX/PADY constants
+ * (not shared via the private header) since they're pure visual tuning,
+ * not shared logic -- kept numerically identical for consistency. */
+#define TTL_INSTANCE_BUTTON_PADX 10
+#define TTL_INSTANCE_BUTTON_PADY 6
+#define TTL_INSTANCE_BUTTON_GAP  4
+
+static WORD ttl_instance_button_row_height(TTLData *inst)
+{
+    return (WORD)(inst->lineHeight + TTL_INSTANCE_BUTTON_PADY * 2);
+}
 
 static char *dup_str(const char *s)
 {
@@ -60,6 +81,17 @@ TTLPost *ttl_instance_header_alloc(const TTLInstanceHeaderSetup *setup)
         post->username = dup_str(setup->domain);
         post->acct     = (setup->subtitle && setup->subtitle[0]) ? dup_str(setup->subtitle) : NULL;
         post->body     = dup_str(setup->body);
+
+        /* Connected user blocks this domain -- see TTLPost.blocked's own
+         * comment for why this reuses the profile header's field. Drives
+         * the "Block server"/"Unblock server" button label. */
+        post->blocked = setup->blocked;
+
+        /* setup->showBlock isn't stored separately -- same "derive from an
+         * existing unused slot" trick ttl_profile_header_alloc's own
+         * comment documents for its Follow button (mediaCount, unused by
+         * this row kind, reused as a 0/1 flag). */
+        post->mediaCount = setup->showBlock ? 1 : 0;
     }
 
     return post;
@@ -135,6 +167,13 @@ static void ttl_instance_header_layout(TTLData *inst, TTLPost *post)
         }
     }
 
+    /* Block/Unblock server button zone -- reserved as the LAST row before
+     * the separator (see ttl_instance_button_row_height's comment for why
+     * this must stay last). post->mediaCount holds the showBlock flag --
+     * see ttl_instance_header_alloc. */
+    if (post->mediaCount != 0)
+        curRelY += TTL_INSTANCE_BUTTON_GAP + ttl_instance_button_row_height(inst);
+
     curRelY += TTL_POST_PAD_BOT;
     curRelY += 1; /* separator pixel, drawn generically by the tile-render caller */
     post->height = curRelY;
@@ -197,6 +236,40 @@ static void ttl_instance_header_render(TTLData *inst, struct RastPort *rp,
         pos.y = (WORD)(drawY + sp->postRelY + sp->ascent);
         URPDrawTextUTF8(rp, dc, &pos, sp->utf8, (ULONG)sp->charCount);
     }
+
+    /* ---- Block/Unblock server button -- left-aligned, reserved as the
+     * LAST row before the separator (see .layout and
+     * ttl_instance_button_row_height's comment); boxH/boxY MUST match that
+     * reservation exactly, same "three places must agree" rule the profile
+     * header's own Follow/Unfollow button follows. post->mediaCount holds
+     * the showBlock flag -- see ttl_instance_header_alloc. ---- */
+    if (post->mediaCount != 0 && inst->style && inst->style->dcNormal) {
+        struct URPDrawContext *dc = inst->style->dcNormal;
+        WORD  padLeft = (inst->style) ? inst->style->postPadLeft : 6;
+        WORD  boxH    = ttl_instance_button_row_height(inst);
+        WORD  boxY    = (WORD)(drawY + post->height - 1 - TTL_POST_PAD_BOT - boxH);
+        const char *label = post->blocked ? "Unblock server" : "Block server";
+        struct URPTextMetric m;
+        LONG  nc = utf8_codepoints_range(label, label + strlen(label));
+        WORD  boxW, boxX;
+        struct URPTextPos pos;
+
+        URPDC_TextSizeUTF8(dc, label, nc, &m);
+        boxW = (WORD)(m.width + TTL_INSTANCE_BUTTON_PADX * 2);
+        boxX = padLeft;
+
+        SetAPen(rp, (LONG)FS3E_PEN(inst->style,
+            post->blocked ? FS3E_COLOR_BUTTON_SELECTED_BG : FS3E_COLOR_BUTTON_BG));
+        RectFill(rp, boxX, boxY, (WORD)(boxX + boxW - 1), (WORD)(boxY + boxH - 1));
+
+        URPDC_SetDrawColorFromPen(dc, inst->screen,
+            (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT),
+            (LONG)FS3E_PEN(inst->style,
+                post->blocked ? FS3E_COLOR_BUTTON_SELECTED_BG : FS3E_COLOR_BUTTON_BG));
+        pos.x = (WORD)(boxX + TTL_INSTANCE_BUTTON_PADX);
+        pos.y = (WORD)(boxY + TTL_INSTANCE_BUTTON_PADY + inst->lineAscent);
+        URPDrawTextUTF8(rp, dc, &pos, label, (ULONG)nc);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -207,7 +280,6 @@ static void ttl_instance_header_build_hotspots(TTLData *inst, TTLPost *post)
 {
     TTLTextSpan *sp;
 
-    (void)inst;
     post->hotSpotCount = 0;
 
     /* Reuses the same @mention/#hashtag/URL scanner a toot body already
@@ -221,6 +293,26 @@ static void ttl_instance_header_build_hotspots(TTLData *inst, TTLPost *post)
         if (sp->spanType == TTL_SPAN_BODY)
             ttl_scan_span_tokens(post, sp);
     }
+
+    /* Block/Unblock server button hit rect -- geometry MUST match .render's
+     * exactly, same rule as the profile header's Follow/Unfollow button.
+     * post->mediaCount holds the showBlock flag -- see
+     * ttl_instance_header_alloc. */
+    if (post->mediaCount != 0 && inst->style && inst->style->dcNormal) {
+        WORD  padLeft = (inst->style) ? inst->style->postPadLeft : 6;
+        WORD  boxH    = ttl_instance_button_row_height(inst);
+        WORD  boxY    = (WORD)(post->height - 1 - TTL_POST_PAD_BOT - boxH);
+        const char *label = post->blocked ? "Unblock server" : "Block server";
+        struct URPTextMetric m;
+        LONG  nc = utf8_codepoints_range(label, label + strlen(label));
+        WORD  boxW, boxX;
+
+        URPDC_TextSizeUTF8(inst->style->dcNormal, label, nc, &m);
+        boxW = (WORD)(m.width + TTL_INSTANCE_BUTTON_PADX * 2);
+        boxX = padLeft;
+
+        ttl_hs_add(post, TTL_HOT_BLOCK_SERVER, boxX, boxY, boxW, boxH, NULL, 0);
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -229,8 +321,10 @@ const TTLItemClass TTLInstanceHeader_Class = {
     ttl_instance_header_layout,
     ttl_instance_header_render,
     ttl_instance_header_build_hotspots,
-    NULL, /* .activate: hot-spots here are only ever URL/hashtag/mention
-           * tokens inside the info block -- the generic ttl_notify_hotspot()
-           * already fires for those, nothing kind-specific to do locally. */
+    NULL, /* .activate: hot-spots here are URL/hashtag/mention tokens inside
+           * the info block, plus TTL_HOT_BLOCK_SERVER -- the generic
+           * ttl_notify_hotspot() already fires for all of them, nothing
+           * kind-specific to do locally (the actual confirm-and-POST/DELETE
+           * for Block/Unblock happens app-side, friendsh3ep.c). */
     ttl_instance_header_dispose
 };

@@ -47,6 +47,8 @@ static FS3EAction s_actions[FS3EACTION_COUNT] = {
     /* FS3EACTION_ACCOUNTS         */ { Action_Accounts,       MSG_MENU_ACCOUNTS,         NULL },
     /* FS3EACTION_NEW_TOOT         */ { Action_NewToot,        MSG_MENU_NEW_TOOT,         NULL },
     /* FS3EACTION_NEW_POLL         */ { Action_NewPoll,        MSG_MENU_NEW_POLL,         NULL },
+    /* FS3EACTION_SHOW_BLOCKED_USERS   */ { Action_ShowBlockedUsers,   MSG_MENU_BLOCKED_USERS,   NULL },
+    /* FS3EACTION_SHOW_BLOCKED_SERVERS */ { Action_ShowBlockedServers, MSG_MENU_BLOCKED_SERVERS, NULL },
     /* FS3EACTION_ABOUT            */ { Action_About,          MSG_MENU_ABOUT,            NULL },
     /* FS3EACTION_QUIT             */ { Action_Quit,           MSG_MENU_QUIT,             NULL },
 
@@ -67,12 +69,12 @@ static FS3EAction s_actions[FS3EACTION_COUNT] = {
     /* FS3EACTION_TIMELINE_AUTOSCROLL_PLAY */ { Action_TimelineAutoscrollPlay, MSG_TIMELINE_AUTOSCROLL_PLAY, NULL },
     /* FS3EACTION_TIMELINE_AUTOSCROLL_STOP */ { Action_TimelineAutoscrollStop, MSG_TIMELINE_AUTOSCROLL_STOP, NULL },
     /* FS3EACTION_TIMELINE_COPY_TEXT       */ { Action_TimelineCopyText,       MSG_TIMELINE_COPY_TEXT,       NULL },
+    /* FS3EACTION_TIMELINE_WHO_FAVED       */ { Action_TimelineWhoFaved,       MSG_TIMELINE_WHO_FAVED,       NULL },
+    /* FS3EACTION_TIMELINE_WHO_BOOSTED     */ { Action_TimelineWhoBoosted,     MSG_TIMELINE_WHO_BOOSTED,     NULL },
 
     /* FS3EACTION_USER_COPY_URL      */ { Action_UserCopyProfileURL, MSG_USER_COPY_URL,      NULL },
     /* FS3EACTION_USER_FOLLOW        */ { Action_UserFollow,         MSG_USER_FOLLOW,        NULL },
     /* FS3EACTION_USER_UNFOLLOW      */ { Action_UserUnfollow,       MSG_USER_UNFOLLOW,      NULL },
-    /* FS3EACTION_USER_MASK          */ { Action_UserMask,           MSG_USER_MASK,          NULL },
-    /* FS3EACTION_USER_UNMASK        */ { Action_UserUnmask,         MSG_USER_UNMASK,        NULL },
     /* FS3EACTION_USER_BLOCK         */ { Action_UserBlock,          MSG_USER_BLOCK,         NULL },
     /* FS3EACTION_USER_UNBLOCK       */ { Action_UserUnblock,        MSG_USER_UNBLOCK,       NULL },
     /* FS3EACTION_USER_BLOCK_SERVER  */ { Action_UserBlockServer,    MSG_USER_BLOCK_SERVER,  NULL },
@@ -150,6 +152,22 @@ BOOL Action_NewPoll(struct App *ctx)
      * rows (see FS3ETootView_SetComposeContext). */
     FS3ETootView_SetComposeContext(&ctx->tootView, FS3ETOOT_KIND_POLL, NULL);
     FS3ETootView_Open(&ctx->tootView);
+    return TRUE;
+}
+
+BOOL Action_ShowBlockedUsers(struct App *ctx)
+{
+    if (!ctx) return FALSE;
+    if (!FS3EApp_RequireRealAccount()) return TRUE; /* error shown, nothing else to do */
+    FS3EApp_ShowBlockedUsers();
+    return TRUE;
+}
+
+BOOL Action_ShowBlockedServers(struct App *ctx)
+{
+    if (!ctx) return FALSE;
+    if (!FS3EApp_RequireRealAccount()) return TRUE; /* error shown, nothing else to do */
+    FS3EApp_ShowBlockedServers();
     return TRUE;
 }
 
@@ -560,6 +578,40 @@ BOOL Action_TimelineCopyText(struct App *ctx)
     return TRUE;
 }
 
+/* "Who Faved/Boosted that Toot" -- same "selected" toot as
+ * Action_TimelineCopyText above, just read via TTIMELINE_SelectedPostId
+ * (the status id) instead of TTIMELINE_CopySelectedText (the body text).
+ * A no-op (FALSE) if nothing real is selected -- see that tag's own doc
+ * comment for when that happens (empty timeline, or the selection is a
+ * pseudo row with no real status). FS3EApp_ShowFavouritedBy/RebloggedBy
+ * (fs3erequests.c) do the actual list-fetch-and-display, same
+ * search-channel flow as the User menu's Followers/Following. */
+BOOL Action_TimelineWhoFaved(struct App *ctx)
+{
+    ULONG postId = 0;
+
+    if (!ctx || !ctx->tootTimeline) return FALSE;
+
+    GetAttr(TTIMELINE_SelectedPostId, ctx->tootTimeline, &postId);
+    if (!postId) return FALSE;
+
+    FS3EApp_ShowFavouritedBy((const char *)postId);
+    return TRUE;
+}
+
+BOOL Action_TimelineWhoBoosted(struct App *ctx)
+{
+    ULONG postId = 0;
+
+    if (!ctx || !ctx->tootTimeline) return FALSE;
+
+    GetAttr(TTIMELINE_SelectedPostId, ctx->tootTimeline, &postId);
+    if (!postId) return FALSE;
+
+    FS3EApp_ShowRebloggedBy((const char *)postId);
+    return TRUE;
+}
+
 /* -------------------------------------------------------------------------
  * User menu actions -- act on whichever profile is open in the Search
  * view's FS3ESEARCH_USER_PROFILE sub-mode (ctx->searchProfileAcct/
@@ -617,43 +669,76 @@ BOOL Action_UserUnfollow(struct App *ctx)
     return Action_ToggleFollow(ctx, ctx->searchProfileAccountId, TRUE);
 }
 
-/* Mastodon's mute (visibility mask)/block/domain-block endpoints have no
- * request/reply plumbing in network_fs3e/ yet (unlike follow, which
- * FS3ENETQ_FOLLOW already covers) -- stubs until that's added. */
-BOOL Action_UserMask(struct App *ctx)
-{
-    (void)ctx;
-    return TRUE;
-}
-
-BOOL Action_UserUnmask(struct App *ctx)
-{
-    (void)ctx;
-    return TRUE;
-}
-
 BOOL Action_UserBlock(struct App *ctx)
 {
-    (void)ctx;
-    return TRUE;
+    if (!ctx || !ctx->searchProfileAccountId || !ctx->searchProfileAccountId[0]) return FALSE;
+    return Action_ToggleBlock(ctx, ctx->searchProfileAccountId, FALSE);
 }
 
 BOOL Action_UserUnblock(struct App *ctx)
 {
-    (void)ctx;
+    if (!ctx || !ctx->searchProfileAccountId || !ctx->searchProfileAccountId[0]) return FALSE;
+    return Action_ToggleBlock(ctx, ctx->searchProfileAccountId, TRUE);
+}
+
+/* Derives the domain of ctx->searchProfileAcct's home server -- same
+ * local-vs-remote acct split Action_UserCopyProfileURL's own comment
+ * documents. Returns FALSE (nothing written to outDomain) for a local
+ * profile (acct has no '@') -- that domain IS the connected account's own
+ * home server, and blocking your own server makes no sense, so
+ * Action_UserBlockServer/UnblockServer treat this as "nothing to do"
+ * rather than actually acting on it. */
+static BOOL FS3EAction_ProfileServerDomain(struct App *ctx, char *outDomain, ULONG outSize)
+{
+    const char *acct;
+    const char *at;
+
+    if (!ctx || !ctx->searchProfileAcct || !ctx->searchProfileAcct[0]) return FALSE;
+    acct = ctx->searchProfileAcct;
+    at = strchr(acct, '@');
+    if (!at || !at[1]) return FALSE;
+
+    snprintf(outDomain, outSize, "%s", at + 1);
+    return TRUE;
+}
+
+/* Force-block/unblock the open profile's OWN home server -- same "two
+ * separate, explicit menu items, no current-state read" reasoning
+ * Action_UserFollow/Unfollow's own comment documents, just for
+ * FS3ENETQ_DOMAIN_BLOCK_TOGGLE (the same request TTL_HOT_BLOCK_SERVER on
+ * the instance header uses) instead of FS3ENETQ_FOLLOW. apiBaseUrl is
+ * always the CONNECTED account's own server (domain_blocks belongs to
+ * your account, not the target's), only the domain itself names the other
+ * server. */
+static BOOL Action_UserToggleBlockServer(struct App *ctx, BOOL block)
+{
+    char domain[256];
+    FS3ENetDomainBlockToggleReq *req;
+
+    if (!ctx) return FALSE;
+    if (!ctx->accountAccessToken || !ctx->accountAccessToken[0]) return FALSE;
+    if (!ctx->accountApiBaseUrl) return FALSE;
+    if (!FS3EAction_ProfileServerDomain(ctx, domain, sizeof(domain))) return FALSE;
+
+    req = FS3ENetDomainBlockToggleReq_Alloc(ctx->accountApiBaseUrl, ctx->accountAccessToken,
+                                            domain, block);
+    if (!req) return FALSE;
+
+    if (!FS3EApp_NetSend(FS3ENETQ_DOMAIN_BLOCK_TOGGLE, req, sizeof(*req))) {
+        FreeVec(req);
+        return FALSE;
+    }
     return TRUE;
 }
 
 BOOL Action_UserBlockServer(struct App *ctx)
 {
-    (void)ctx;
-    return TRUE;
+    return Action_UserToggleBlockServer(ctx, TRUE);
 }
 
 BOOL Action_UserUnblockServer(struct App *ctx)
 {
-    (void)ctx;
-    return TRUE;
+    return Action_UserToggleBlockServer(ctx, FALSE);
 }
 
 /* -------------------------------------------------------------------------
@@ -779,6 +864,31 @@ BOOL Action_ToggleFollow(struct App *ctx, const char *accountId, BOOL currentlyF
     if (!FS3EApp_NetSend(FS3ENETQ_FOLLOW, req, sizeof(*req))) {
         FreeVec(req);
         return FALSE;
+    }
+    return TRUE;
+}
+
+BOOL Action_ToggleBlock(struct App *ctx, const char *accountId, BOOL currentlyBlocked)
+{
+    if (!ctx || !accountId || !accountId[0]) return FALSE;
+    if (!ctx->accountAccessToken || !ctx->accountAccessToken[0]) return FALSE;
+
+    if (currentlyBlocked) {
+        FS3ENetUnblockReq *req = FS3ENetUnblockReq_Alloc(ctx->accountApiBaseUrl,
+                                                          ctx->accountAccessToken, accountId);
+        if (!req) return FALSE;
+        if (!FS3EApp_NetSend(FS3ENETQ_UNBLOCK, req, sizeof(*req))) {
+            FreeVec(req);
+            return FALSE;
+        }
+    } else {
+        FS3ENetBlockReq *req = FS3ENetBlockReq_Alloc(ctx->accountApiBaseUrl,
+                                                      ctx->accountAccessToken, accountId);
+        if (!req) return FALSE;
+        if (!FS3EApp_NetSend(FS3ENETQ_BLOCK, req, sizeof(*req))) {
+            FreeVec(req);
+            return FALSE;
+        }
     }
     return TRUE;
 }

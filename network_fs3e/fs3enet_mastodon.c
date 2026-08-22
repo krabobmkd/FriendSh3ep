@@ -743,6 +743,8 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *quotedStatusId,
                             const char *const *mediaIds, ULONG mediaCount,
                             const char *language,
+                            const char *const *pollOptions, ULONG pollOptionCount,
+                            ULONG pollExpiresIn, BOOL pollMultiple,
                             char *outStatusId, ULONG outStatusIdSize)
 {
     char url[256];
@@ -778,6 +780,29 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                 if (mediaIds[i] && mediaIds[i][0])
                     cJSON_AddItemToArray(arr, cJSON_CreateString(mediaIds[i]));
             cJSON_AddItemToObject(reqJson, "media_ids", arr);
+        }
+    }
+
+    /* Poll -- mutually exclusive with media_ids above (see this function's
+     * own doc comment); a nested object, not a flat "poll[options][]"-style
+     * key, since this whole request body is JSON, not form-encoded. */
+    if (pollOptions && pollOptionCount > 0)
+    {
+        cJSON *poll = cJSON_CreateObject();
+        if (poll)
+        {
+            cJSON *arr = cJSON_CreateArray();
+            if (arr)
+            {
+                ULONG i;
+                for (i = 0; i < pollOptionCount; i++)
+                    if (pollOptions[i] && pollOptions[i][0])
+                        cJSON_AddItemToArray(arr, cJSON_CreateString(pollOptions[i]));
+                cJSON_AddItemToObject(poll, "options", arr);
+            }
+            cJSON_AddNumberToObjectInt(poll, "expires_in", (int)pollExpiresIn);
+            cJSON_AddBoolToObject(poll, "multiple", pollMultiple);
+            cJSON_AddItemToObject(reqJson, "poll", poll);
         }
     }
 
@@ -1270,6 +1295,53 @@ BOOL FS3EMastodon_Bookmark(const char *apiBaseUrl, const char *accessToken,
     return ok;
 }
 
+BOOL FS3EMastodon_VotePoll(const char *apiBaseUrl, const char *accessToken,
+                           const char *pollId, ULONG choiceIndex)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *reqJson, *arr;
+    char *reqBody;
+    BOOL ok = FALSE;
+
+    reqJson = cJSON_CreateObject();
+    if (!reqJson) return FALSE;
+
+    arr = cJSON_CreateArray();
+    if (arr) {
+        cJSON_AddItemToArray(arr, cJSON_CreateNumberInt((int)choiceIndex));
+        cJSON_AddItemToObject(reqJson, "choices", arr);
+    }
+
+    reqBody = cJSON_PrintUnformatted(reqJson);
+    cJSON_Delete(reqJson);
+    if (!reqBody) return FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/polls/%s/votes", apiBaseUrl, pollId);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    /* FS3EHttp_PostRaw(), not FS3EHttp_Post() -- same reasoning as
+     * FS3EMastodon_PostStatus above: a real request body to send, and a
+     * non-2xx response (e.g. 422 if the poll already closed, or 409 if
+     * already voted) is worth distinguishing from a network failure via
+     * the real status code rather than a discarded body. */
+    if (FS3EHttp_PostRaw(url, headers, "application/json", reqBody, strlen(reqBody), &resp))
+    {
+        ok = (resp.fhr_StatusCode >= 200 && resp.fhr_StatusCode < 300);
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    cJSON_free(reqBody);
+    return ok;
+}
+
 BOOL FS3EMastodon_LookupAccount(const char *apiBaseUrl, const char *accessToken,
                                 const char *acct, FS3EMastodonAccount *outAccount)
 {
@@ -1327,7 +1399,8 @@ BOOL FS3EMastodon_LookupAccount(const char *apiBaseUrl, const char *accessToken,
 }
 
 BOOL FS3EMastodon_GetRelationship(const char *apiBaseUrl, const char *accessToken,
-                                  const char *accountId, BOOL *outFollowing)
+                                  const char *accountId, BOOL *outFollowing,
+                                  BOOL *outBlocking)
 {
     char url[300];
     char authHeader[300];
@@ -1337,6 +1410,7 @@ BOOL FS3EMastodon_GetRelationship(const char *apiBaseUrl, const char *accessToke
     BOOL ok = FALSE;
 
     *outFollowing = FALSE;
+    *outBlocking  = FALSE;
 
     snprintf(url, sizeof(url), "%s/api/v1/accounts/relationships?id[]=%s", apiBaseUrl, accountId);
     FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
@@ -1356,7 +1430,9 @@ BOOL FS3EMastodon_GetRelationship(const char *apiBaseUrl, const char *accessToke
         if (item)
         {
             const cJSON *v = cJSON_GetObjectItemCaseSensitive(item, "following");
+            const cJSON *b = cJSON_GetObjectItemCaseSensitive(item, "blocking");
             *outFollowing = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
+            *outBlocking  = (b && cJSON_IsTrue(b)) ? TRUE : FALSE;
             ok = TRUE;
         }
     }
@@ -1466,6 +1542,171 @@ BOOL FS3EMastodon_Follow(const char *apiBaseUrl, const char *accessToken,
         }
 
         FS3EHttp_FreeResponse(&resp);
+    }
+
+    return ok;
+}
+
+BOOL FS3EMastodon_Block(const char *apiBaseUrl, const char *accessToken,
+                        const char *accountId,
+                        BOOL *outFollowing, BOOL *outBlocking)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    *outFollowing = FALSE;
+    *outBlocking  = FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/accounts/%s/block", apiBaseUrl, accountId);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    /* Empty body, same as Follow/Unfollow -- only the auth header and the
+     * :id in the URL. */
+    if (FS3EHttp_Post(url, headers, "application/json", "", 0, &resp))
+    {
+        json = cJSON_Parse((char *)resp.fhr_Body);
+        if (json)
+        {
+            const cJSON *f = cJSON_GetObjectItemCaseSensitive(json, "following");
+            const cJSON *b = cJSON_GetObjectItemCaseSensitive(json, "blocking");
+            *outFollowing = (f && cJSON_IsTrue(f)) ? TRUE : FALSE;
+            *outBlocking  = (b && cJSON_IsTrue(b)) ? TRUE : FALSE;
+
+            ok = TRUE;
+            cJSON_Delete(json);
+        }
+
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    return ok;
+}
+
+BOOL FS3EMastodon_Unblock(const char *apiBaseUrl, const char *accessToken,
+                          const char *accountId)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    BOOL ok = FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/accounts/%s/unblock", apiBaseUrl, accountId);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    /* Empty body, same as Follow/Unfollow -- only the auth header and the
+     * :id in the URL. */
+    if (FS3EHttp_Post(url, headers, "application/json", "", 0, &resp))
+    {
+        ok = TRUE;
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    return ok;
+}
+
+/* Case-insensitive full-string compare -- plain manual compare, not
+ * strcasecmp()/Stricmp(), same reasoning FS3ENet_UrlHasExt's own comment
+ * documents (this process doesn't open utility.library, and there's no
+ * guarantee libnix's own strcasecmp is pulled in on every target build). */
+static BOOL FS3EMastodon_DomainEquals(const char *a, const char *b)
+{
+    if (!a || !b) return FALSE;
+    while (*a && *b) {
+        char ca = *a, cb = *b;
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca + 32);
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb + 32);
+        if (ca != cb) return FALSE;
+        a++; b++;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+BOOL FS3EMastodon_IsDomainBlocked(const char *apiBaseUrl, const char *accessToken,
+                                  const char *domain, BOOL *outBlocked)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    *outBlocked = FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/domain_blocks", apiBaseUrl);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    if (!FS3EHttp_Get(url, headers, &resp))
+        return FALSE;
+
+    json = cJSON_Parse((char *)resp.fhr_Body);
+    if (json && cJSON_IsArray(json))
+    {
+        cJSON *item;
+        cJSON_ArrayForEach(item, json) {
+            if (cJSON_IsString(item) && item->valuestring &&
+                FS3EMastodon_DomainEquals(item->valuestring, domain))
+            {
+                *outBlocked = TRUE;
+                break;
+            }
+        }
+        ok = TRUE;
+    }
+    if (json) cJSON_Delete(json);
+
+    FS3EHttp_FreeResponse(&resp);
+
+    return ok;
+}
+
+BOOL FS3EMastodon_ToggleDomainBlock(const char *apiBaseUrl, const char *accessToken,
+                                    const char *domain, BOOL block)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    BOOL ok = FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/domain_blocks?domain=%s", apiBaseUrl, domain);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    if (block) {
+        if (FS3EHttp_Post(url, headers, "application/json", "", 0, &resp)) {
+            ok = TRUE;
+            FS3EHttp_FreeResponse(&resp);
+        }
+    } else {
+        if (FS3EHttp_Delete(url, headers, &resp)) {
+            ok = TRUE;
+            FS3EHttp_FreeResponse(&resp);
+        }
     }
 
     return ok;

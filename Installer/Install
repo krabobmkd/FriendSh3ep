@@ -68,7 +68,19 @@
 (copyfiles
     (source "bin/FriendSh3ep")
     (dest #dest)
-    (infos)
+)
+
+; The icon stores the app's saved settings in its tooltypes, so we only
+; install it if it doesn't already exist -- an upgrade must never overwrite
+; the user's settings.
+(if (not (exists (tackon #dest "FriendSh3ep.info")))
+    (
+        (working "Copying FriendSh3ep icon ...")
+        (copyfiles
+            (source "bin/FriendSh3ep.info")
+            (dest #dest)
+        )
+    )
 )
 
 (complete 40)

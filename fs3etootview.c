@@ -282,6 +282,24 @@ static const char *fs3eTootPollExpirations[FS3ETOOT_NUM_POLL_EXPIRATIONS] = {
     "2 days", "3 days", "5 days", "7 days", "14 days"
 };
 
+/* Seconds equivalent of each fs3eTootPollExpirations entry, same order --
+ * what FS3ETootView_GetPollExpiresInSeconds actually sends as Mastodon's
+ * poll[expires_in]. */
+static const ULONG fs3eTootPollExpirationSeconds[FS3ETOOT_NUM_POLL_EXPIRATIONS] = {
+    1800, 3600, 10800, 18000, 86400,
+    172800, 259200, 432000, 604800, 1209600
+};
+
+/* pollMultipleChooser's entries -- index FS3ETOOT_POLL_TYPE_DEFAULT_IDX
+ * ("Single choice") is what FS3ETootView_SetComposeContext resets the
+ * chooser to every time it configures poll mode, same convention as
+ * fs3eTootPollExpirations above. Plain ASCII/LOC()'d either would do here
+ * (only 2 short entries, unlike the technical-value lists above) -- kept
+ * as a locale string since it's ordinary UI copy, not a value table. */
+static const ULONG fs3eTootPollTypeMsgIds[FS3ETOOT_NUM_POLL_TYPES] = {
+    MSG_TOOT_POLL_TYPE_SINGLE, MSG_TOOT_POLL_TYPE_MULTIPLE
+};
+
 /* Defined below FS3ETootKindConfig/tootKindConfig (needs both); forward-
  * declared here since it's called from FS3ETootView_HandleInput, which
  * comes first in the file. */
@@ -318,6 +336,7 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
     Object *attachMediaLabel;
     Object *attachMediaRow2;
     Object *attachMediaLabel2;
+    Object *pollExpirationRow;
     Object *sensitiveLabel;
     Object *languageLabel;
     Object *sensitiveLanguageCol;
@@ -502,7 +521,7 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
                 UTED_BgPen,             0UL,
                 UTED_MaxDisplayLines,   1UL,
                 UTED_NoLineFeed,        TRUE,
-                UTED_WordWrap,          FALSE,
+                UTED_WordWrap,          TRUE,
                 UTED_LeftMargin,        2,
                 UTED_TopMargin,         3,
                 UTED_BottomMargin,      1,
@@ -513,12 +532,16 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
     }
 
     /* ------------------------------------------------------------------ */
-    /* Poll expiration chooser -- last pollExtrasLayout row, options in     */
-    /* fs3eTootPollExpirations, added with CHILD_Label below same as the    */
-    /* poll-answer editors above. Default reset to                         */
-    /* FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX ("3 days") every time           */
+    /* Poll expiration + type row -- last pollExtrasLayout row, two         */
+    /* [label][popup chooser] pairs side by side in their own horizontal    */
+    /* sub-layout (same [label][gadget]-pair-per-child shape attachMediaRow */
+    /* uses, just with two pairs instead of one gadget + clear button).     */
+    /* Expiration options in fs3eTootPollExpirations; default reset to      */
+    /* FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX ("3 days") every time            */
     /* FS3ETootView_SetComposeContext configures poll mode (see below).     */
-    /* ------------------------------------------------------------------ */
+    /* Type ("Single choice"/"Multiple choice" -- Mastodon's poll[multiple]) */
+    /* defaults to FS3ETOOT_POLL_TYPE_DEFAULT_IDX ("Single choice") the      */
+    /* same way. ------------------------------------------------------- */
     NewList(&tv->pollExpirationList);
     for (i = 0; i < FS3ETOOT_NUM_POLL_EXPIRATIONS; i++) {
         struct Node *node = NULL;
@@ -540,6 +563,41 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         CHOOSER_Active, (ULONG)FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX,
         TAG_END);
     if (!tv->pollExpirationChooser) return FALSE;
+
+    NewList(&tv->pollMultipleList);
+    for (i = 0; i < FS3ETOOT_NUM_POLL_TYPES; i++) {
+        struct Node *node = NULL;
+        if (ChooserBase)
+            node = AllocChooserNode(CNA_Text, (ULONG)LOC(fs3eTootPollTypeMsgIds[i]), TAG_END);
+        tv->pollMultipleNodes[i] = node;
+        if (node) AddTail(&tv->pollMultipleList, node);
+    }
+
+    tv->pollMultipleLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_TOOT_POLL_TYPE), TAG_END);
+
+    tv->pollMultipleChooser = (Object *)NewObject(CHOOSER_GetClass(), NULL,
+        GA_ID,          (ULONG)GID_TOOT_POLL_TYPE,
+        GA_RelVerify,   TRUE,
+        ICA_TARGET,     (ULONG)TargetInstance,
+        CHOOSER_PopUp,  TRUE,
+        CHOOSER_Labels, (ULONG)&tv->pollMultipleList,
+        CHOOSER_Active, (ULONG)FS3ETOOT_POLL_TYPE_DEFAULT_IDX,
+        TAG_END);
+    if (!tv->pollMultipleChooser) return FALSE;
+
+    pollExpirationRow = (Object *)NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation,   LAYOUT_ORIENT_HORIZ,
+        LAYOUT_BevelStyle,    BVS_NONE,
+        LAYOUT_SpaceInner,    FALSE,
+        LAYOUT_AddChild,      (ULONG)tv->pollExpirationChooser,
+            CHILD_Label,          (ULONG)tv->pollExpirationLabel,
+            CHILD_WeightedWidth,  1,
+        LAYOUT_AddChild,      (ULONG)tv->pollMultipleChooser,
+            CHILD_Label,          (ULONG)tv->pollMultipleLabel,
+            CHILD_WeightedWidth,  1,
+        TAG_END);
+    if (!pollExpirationRow) return FALSE;
 
     /* ------------------------------------------------------------------ */
     /* tootExtrasLayout/pollExtrasLayout: two independent, ordinary vertical */
@@ -586,8 +644,7 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         LAYOUT_AddChild,    (ULONG)tv->pollOptionEditor[3],
             CHILD_Label,          (ULONG)tv->pollOptionLabel[3],
             CHILD_WeightedHeight, 0,
-        LAYOUT_AddChild,    (ULONG)tv->pollExpirationChooser,
-            CHILD_Label,          (ULONG)tv->pollExpirationLabel,
+        LAYOUT_AddChild,    (ULONG)pollExpirationRow,
             CHILD_WeightedHeight, 0,
         TAG_END);
     if (!tv->pollExtrasLayout) return FALSE;
@@ -878,6 +935,12 @@ void FS3ETootView_Dispose(FS3ETootView *tv)
             if (tv->pollExpirationNodes[i]) {
                 FreeChooserNode(tv->pollExpirationNodes[i]);
                 tv->pollExpirationNodes[i] = NULL;
+            }
+        }
+        for (i = 0; i < FS3ETOOT_NUM_POLL_TYPES; i++) {
+            if (tv->pollMultipleNodes[i]) {
+                FreeChooserNode(tv->pollMultipleNodes[i]);
+                tv->pollMultipleNodes[i] = NULL;
             }
         }
     }
@@ -1552,12 +1615,12 @@ void FS3ETootView_SetComposeContext(FS3ETootView *tv, FS3ETootKind kind,
         }
     }
 
-    /* Every time poll mode is (re)configured, the expiration chooser goes
-     * back to its default ("3 days") -- same "don't carry over a leftover
-     * pick from whatever was open before" reasoning as
-     * FS3ETootView_Open's visibility/quote-policy chooser resets, just
-     * triggered from SetComposeContext instead since that's the point
-     * poll mode is actually (re)entered. */
+    /* Every time poll mode is (re)configured, the expiration and type
+     * choosers go back to their defaults ("3 days" / "Single choice") --
+     * same "don't carry over a leftover pick from whatever was open
+     * before" reasoning as FS3ETootView_Open's visibility/quote-policy
+     * chooser resets, just triggered from SetComposeContext instead since
+     * that's the point poll mode is actually (re)entered. */
     if (tv->pollExpirationChooser && cfg->pollMode) {
         if (tv->window)
             SetGadgetAttrs((struct Gadget *)tv->pollExpirationChooser, tv->window, NULL,
@@ -1565,6 +1628,14 @@ void FS3ETootView_SetComposeContext(FS3ETootView *tv, FS3ETootKind kind,
         else
             SetAttrs(tv->pollExpirationChooser,
                      CHOOSER_Active, (ULONG)FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX, TAG_END);
+    }
+    if (tv->pollMultipleChooser && cfg->pollMode) {
+        if (tv->window)
+            SetGadgetAttrs((struct Gadget *)tv->pollMultipleChooser, tv->window, NULL,
+                           CHOOSER_Active, (ULONG)FS3ETOOT_POLL_TYPE_DEFAULT_IDX, TAG_DONE);
+        else
+            SetAttrs(tv->pollMultipleChooser,
+                     CHOOSER_Active, (ULONG)FS3ETOOT_POLL_TYPE_DEFAULT_IDX, TAG_END);
     }
 
     FS3ETootView_UpdateVisibilityMeaning(tv);
@@ -1656,6 +1727,40 @@ const char *FS3ETootView_GetLanguage(FS3ETootView *tv)
     GetAttr(CHOOSER_Active, tv->languageChooser, &active);
     if (active >= FS3ETOOT_NUM_LANGUAGES) return "";
     return fs3eTootLanguages[active].code;
+}
+
+const char *FS3ETootView_GetPollOption(FS3ETootView *tv, ULONG index)
+{
+    const char *p = NULL;
+
+    if (!tv || index >= FS3ETOOT_NUM_POLL_OPTIONS || !tv->pollOptionEditor[index])
+        return NULL;
+
+    GetAttr(UTED_Text, tv->pollOptionEditor[index], (ULONG *)&p);
+    return p;
+}
+
+ULONG FS3ETootView_GetPollExpiresInSeconds(FS3ETootView *tv)
+{
+    ULONG active = 0;
+
+    if (!tv || !tv->pollExpirationChooser)
+        return fs3eTootPollExpirationSeconds[FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX];
+
+    GetAttr(CHOOSER_Active, tv->pollExpirationChooser, &active);
+    if (active >= FS3ETOOT_NUM_POLL_EXPIRATIONS)
+        return fs3eTootPollExpirationSeconds[FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX];
+    return fs3eTootPollExpirationSeconds[active];
+}
+
+BOOL FS3ETootView_GetPollMultiple(FS3ETootView *tv)
+{
+    ULONG active = 0;
+
+    if (!tv || !tv->pollMultipleChooser) return FALSE;
+
+    GetAttr(CHOOSER_Active, tv->pollMultipleChooser, &active);
+    return (active == 1) ? TRUE : FALSE;
 }
 
 /* Case-insensitive full-string match -- avoids a Stricmp()/UtilityBase

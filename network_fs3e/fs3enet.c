@@ -218,7 +218,9 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     const char *inReplyToId, const char *quoteApprovalPolicy,
     const char *quotedStatusId,
     const char *const *mediaIds, ULONG mediaCount,
-    const char *language)
+    const char *language,
+    const char *const *pollOptions, ULONG pollOptionCount, ULONG pollExpiresIn,
+    BOOL pollMultiple)
 {
     ULONG total = sizeof(FS3ENetPostStatusReq)
                 + FS3ENet_PackLen(apiBaseUrl)
@@ -238,6 +240,10 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     for (i = 0; i < mediaCount; i++)
         total += FS3ENet_PackLen(mediaIds ? mediaIds[i] : NULL);
 
+    if (pollOptionCount > FS3ENET_MAX_POLL_OPTIONS) pollOptionCount = FS3ENET_MAX_POLL_OPTIONS;
+    for (i = 0; i < pollOptionCount; i++)
+        total += FS3ENet_PackLen(pollOptions ? pollOptions[i] : NULL);
+
     req = (FS3ENetPostStatusReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
     if (!req) return NULL;
     p = (char *)req + sizeof(*req);
@@ -256,6 +262,13 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
         req->fs3ep_MediaIds[i] = NULL;
     req->fs3ep_MediaCount = mediaCount;
     FS3ENet_PackStr(&req->fs3ep_Language, &p, language);
+    for (i = 0; i < pollOptionCount; i++)
+        FS3ENet_PackStr(&req->fs3ep_PollOptions[i], &p, pollOptions ? pollOptions[i] : NULL);
+    for (; i < FS3ENET_MAX_POLL_OPTIONS; i++)
+        req->fs3ep_PollOptions[i] = NULL;
+    req->fs3ep_PollOptionCount = pollOptionCount;
+    req->fs3ep_PollExpiresIn   = pollExpiresIn;
+    req->fs3ep_PollMultiple    = pollMultiple;
     return req;
 }
 
@@ -446,6 +459,47 @@ FS3ENetBookmarkReq *FS3ENetBookmarkReq_Alloc(
     return req;
 }
 
+FS3ENetVotePollReq *FS3ENetVotePollReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *pollId, const char *statusId, ULONG choiceIndex)
+{
+    ULONG total = sizeof(FS3ENetVotePollReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(pollId)
+                + FS3ENet_PackLen(statusId);
+    FS3ENetVotePollReq *req =
+        (FS3ENetVotePollReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3evp_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3evp_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3evp_PollId,      &p, pollId);
+    FS3ENet_PackStr(&req->fs3evp_StatusId,    &p, statusId);
+    req->fs3evp_ChoiceIndex = choiceIndex;
+    return req;
+}
+
+FS3ENetDomainBlocksReq *FS3ENetDomainBlocksReq_Alloc(ULONG accountGeneration,
+    const char *apiBaseUrl, const char *accessToken)
+{
+    ULONG total = sizeof(FS3ENetDomainBlocksReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken);
+    FS3ENetDomainBlocksReq *req =
+        (FS3ENetDomainBlocksReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    req->fs3edb_AccountGeneration = accountGeneration;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3edb_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3edb_AccessToken, &p, accessToken);
+    return req;
+}
+
 FS3ENetBookmarksLocalReq *FS3ENetBookmarksLocalReq_Alloc(ULONG pageDirection,
     ULONG accountGeneration, ULONG offset, ULONG limit, const char *cacheDir)
 {
@@ -598,6 +652,83 @@ FS3ENetFollowReq *FS3ENetFollowReq_Alloc(
     FS3ENet_PackStr(&req->fs3efo_AccessToken, &p, accessToken);
     FS3ENet_PackStr(&req->fs3efo_AccountId,   &p, accountId);
     req->fs3efo_Follow = follow;
+    return req;
+}
+
+FS3ENetBlockReq *FS3ENetBlockReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *accountId)
+{
+    ULONG total = sizeof(FS3ENetBlockReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(accountId);
+    FS3ENetBlockReq *req =
+        (FS3ENetBlockReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3eblk_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3eblk_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3eblk_AccountId,   &p, accountId);
+    return req;
+}
+
+FS3ENetUnblockReq *FS3ENetUnblockReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *accountId)
+{
+    ULONG total = sizeof(FS3ENetUnblockReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(accountId);
+    FS3ENetUnblockReq *req =
+        (FS3ENetUnblockReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3eub_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3eub_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3eub_AccountId,   &p, accountId);
+    return req;
+}
+
+FS3ENetDomainBlockStateReq *FS3ENetDomainBlockStateReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *domain)
+{
+    ULONG total = sizeof(FS3ENetDomainBlockStateReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(domain);
+    FS3ENetDomainBlockStateReq *req =
+        (FS3ENetDomainBlockStateReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3edbs_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3edbs_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3edbs_Domain,      &p, domain);
+    return req;
+}
+
+FS3ENetDomainBlockToggleReq *FS3ENetDomainBlockToggleReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *domain, BOOL block)
+{
+    ULONG total = sizeof(FS3ENetDomainBlockToggleReq)
+                + FS3ENet_PackLen(apiBaseUrl)
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(domain);
+    FS3ENetDomainBlockToggleReq *req =
+        (FS3ENetDomainBlockToggleReq *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    char *p;
+
+    if (!req) return NULL;
+    p = (char *)req + sizeof(*req);
+    FS3ENet_PackStr(&req->fs3edbt_ApiBaseUrl,  &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3edbt_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3edbt_Domain,      &p, domain);
+    req->fs3edbt_Block = block;
     return req;
 }
 
@@ -2311,6 +2442,14 @@ static ULONG FS3ENet_SizeStatusFields(const cJSON *item, const cJSON *src)
             total += (title && cJSON_IsString(title) && title->valuestring)
                    ? strlen(title->valuestring) + 1 : 1;
         }
+        {
+            const cJSON *pid = cJSON_GetObjectItemCaseSensitive(v, "id");
+            const cJSON *pex = cJSON_GetObjectItemCaseSensitive(v, "expires_at");
+            total += (pid && cJSON_IsString(pid) && pid->valuestring)
+                   ? strlen(pid->valuestring) + 1 : 1;
+            total += (pex && cJSON_IsString(pex) && pex->valuestring)
+                   ? strlen(pex->valuestring) + 1 : 1;
+        }
     }
 
     /* Link preview card -- belongs to src same as poll/media_attachments
@@ -2568,6 +2707,15 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
         dst->fmas_PollExpired = (ev && cJSON_IsTrue(ev)) ? TRUE : FALSE;
         ev = cJSON_GetObjectItemCaseSensitive(v, "multiple");
         dst->fmas_PollMultiple = (ev && cJSON_IsTrue(ev)) ? TRUE : FALSE;
+        ev = cJSON_GetObjectItemCaseSensitive(v, "voted");
+        dst->fmas_PollVoted = (ev && cJSON_IsTrue(ev)) ? TRUE : FALSE;
+
+        ev = cJSON_GetObjectItemCaseSensitive(v, "id");
+        str = (ev && cJSON_IsString(ev)) ? ev->valuestring : "";
+        FS3ENet_PackStr(&dst->fmas_PollId, p, str);
+        ev = cJSON_GetObjectItemCaseSensitive(v, "expires_at");
+        str = (ev && cJSON_IsString(ev)) ? ev->valuestring : "";
+        FS3ENet_PackStr(&dst->fmas_PollExpiresAt, p, str);
     } else {
         ULONG oi;
         for (oi = 0; oi < FS3ENET_MAX_POLL_OPTIONS; oi++)
@@ -2576,6 +2724,9 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
         dst->fmas_PollVotesCount = 0;
         dst->fmas_PollExpired = FALSE;
         dst->fmas_PollMultiple = FALSE;
+        dst->fmas_PollVoted = FALSE;
+        dst->fmas_PollId = NULL;
+        dst->fmas_PollExpiresAt = NULL;
     }
 
     /* Link preview card -- see the matching block in FS3ENet_SizeStatusFields. */
@@ -3101,6 +3252,16 @@ static void FS3ENet_HandleAccountsList(FS3ENetMessage *fs3em)
             snprintf(path, sizeof(path), "accounts/%s/followers?limit=40", req->fs3eal_AccountId);
         else if (req->fs3eal_Kind == FS3ENET_ACCLIST_FOLLOWING)
             snprintf(path, sizeof(path), "accounts/%s/following?limit=40", req->fs3eal_AccountId);
+        else if (req->fs3eal_Kind == FS3ENET_ACCLIST_BLOCKS) {
+            /* Bare Account[] array, same shape as followers/following above
+             * -- no :id in the path, this is always the connected account's
+             * own block list. */
+            snprintf(path, sizeof(path), "blocks?limit=40");
+        }
+        else if (req->fs3eal_Kind == FS3ENET_ACCLIST_FAVOURITED_BY)
+            snprintf(path, sizeof(path), "statuses/%s/favourited_by?limit=40", req->fs3eal_AccountId);
+        else if (req->fs3eal_Kind == FS3ENET_ACCLIST_REBLOGGED_BY)
+            snprintf(path, sizeof(path), "statuses/%s/reblogged_by?limit=40", req->fs3eal_AccountId);
         else {
             char encQuery[512];
             FS3EMastodon_UrlEncode(req->fs3eal_Query ? req->fs3eal_Query : "",
@@ -3175,6 +3336,8 @@ static void FS3ENet_HandlePostStatus(FS3ENetMessage *fs3em)
             req->fs3ep_QuoteApprovalPolicy, req->fs3ep_QuotedStatusId,
             (const char *const *)req->fs3ep_MediaIds, req->fs3ep_MediaCount,
             req->fs3ep_Language,
+            (const char *const *)req->fs3ep_PollOptions, req->fs3ep_PollOptionCount,
+            req->fs3ep_PollExpiresIn, (BOOL)req->fs3ep_PollMultiple,
             statusId, sizeof(statusId)))
     {
         fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
@@ -3747,6 +3910,112 @@ static void FS3ENet_HandleBookmark(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 
+/* FS3ENETQ_VOTE_POLL — cast a vote, see FS3ENetVotePollReq's own doc
+ * comment in fs3enet.h for why the reply carries nothing but the status id
+ * back (the GUI re-fetches the whole status to pick up the poll's new
+ * state, same SINGLE_REFRESH plumbing F5 already has). */
+static void FS3ENet_HandleVotePoll(FS3ENetMessage *fs3em)
+{
+    FS3ENetVotePollReq   *req = (FS3ENetVotePollReq *)fs3em->fs3em_Data;
+    FS3ENetVotePollReply *reply;
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    if (!FS3EMastodon_VotePoll(req->fs3evp_ApiBaseUrl, req->fs3evp_AccessToken,
+            req->fs3evp_PollId, req->fs3evp_ChoiceIndex))
+    {
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    total = sizeof(FS3ENetVotePollReply) + FS3ENet_PackLen(req->fs3evp_StatusId);
+    reply = (FS3ENetVotePollReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3evp_StatusId, &p, req->fs3evp_StatusId);
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
+/* FS3ENETQ_DOMAIN_BLOCKS — see FS3ENetDomainBlocksReq's own doc comment in
+ * fs3enet.h. Same two-pass size-then-pack shape as FS3ENet_HandleAccountsList
+ * above, just packing bare cJSON string items (skipping anything that
+ * somehow isn't a string, rather than assuming every array element is a
+ * well-formed object the way every other array-shaped reply here does) into
+ * a char* pointer array instead of FS3EMastodonAccount structs. */
+static void FS3ENet_HandleDomainBlocks(FS3ENetMessage *fs3em)
+{
+    FS3ENetDomainBlocksReq   *req = (FS3ENetDomainBlocksReq *)fs3em->fs3em_Data;
+    FS3ENetDomainBlocksReply *reply;
+    cJSON *json = NULL;
+    cJSON *item;
+    BOOL   authRequired = FALSE;
+    ULONG  count = 0, total;
+    char  *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    if (!FS3EMastodon_GetTimeline(req->fs3edb_ApiBaseUrl, req->fs3edb_AccessToken,
+            "domain_blocks", FS3ENET_TLSHAPE_ARRAY, &json, &authRequired)) {
+        fs3em->fs3em_Result = authRequired ? FS3ENETR_AUTH_REQUIRED : FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    /* Pass 1: count string entries and compute flat-block size (pointer
+     * array + trailing string pool). */
+    total = sizeof(FS3ENetDomainBlocksReply);
+    cJSON_ArrayForEach(item, json) {
+        if (count >= MAX_STATUSES_TIMELINE) break;
+        if (cJSON_IsString(item) && item->valuestring) {
+            total += sizeof(char *) + FS3ENet_PackLen(item->valuestring);
+            count++;
+        }
+    }
+
+    reply = (FS3ENetDomainBlocksReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) {
+        cJSON_Delete(json);
+        fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR;
+        return;
+    }
+    reply->fs3edb_AccountGeneration = req->fs3edb_AccountGeneration;
+    reply->fs3edb_Count             = count;
+
+    /* Pass 2: pack domain strings into the block -- same filtered walk
+     * order as pass 1 above, so domains[i] lines up with what was sized. */
+    {
+        char **domains = (char **)(reply + 1);
+        ULONG i = 0;
+        p = (char *)(domains + count);
+
+        cJSON_ArrayForEach(item, json) {
+            if (i >= count) break;
+            if (cJSON_IsString(item) && item->valuestring) {
+                FS3ENet_PackStr(&domains[i], &p, item->valuestring);
+                i++;
+            }
+        }
+    }
+
+    cJSON_Delete(json);
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
 /* FS3ENETQ_BOOKMARKS_LOCAL — see this request's own doc comment in
  * fs3enet.h. Reads a page of the local offline-bookmarks cache directory
  * (no server round trip), parsing each cached file with the same
@@ -4061,7 +4330,7 @@ static void FS3ENet_HandleRelationship(FS3ENetMessage *fs3em)
 {
     FS3ENetRelationshipReq   *req = (FS3ENetRelationshipReq *)fs3em->fs3em_Data;
     FS3ENetRelationshipReply *reply;
-    BOOL  following;
+    BOOL  following, blocking;
     ULONG total;
     char *p;
 
@@ -4072,7 +4341,7 @@ static void FS3ENet_HandleRelationship(FS3ENetMessage *fs3em)
 
 
     if (!FS3EMastodon_GetRelationship(req->fs3erl_ApiBaseUrl, req->fs3erl_AccessToken,
-            req->fs3erl_AccountId, &following))
+            req->fs3erl_AccountId, &following, &blocking))
     {
         fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
         return;
@@ -4085,6 +4354,7 @@ static void FS3ENet_HandleRelationship(FS3ENetMessage *fs3em)
     p = (char *)reply + sizeof(*reply);
     FS3ENet_PackStr(&reply->fs3erl_AccountId, &p, req->fs3erl_AccountId);
     reply->fs3erl_Following = following;
+    reply->fs3erl_Blocking  = blocking;
 
     FreeVec(fs3em->fs3em_Data);
     fs3em->fs3em_Data    = reply;
@@ -4207,6 +4477,151 @@ static void FS3ENet_HandleFollow(FS3ENetMessage *fs3em)
     p = (char *)reply + sizeof(*reply);
     FS3ENet_PackStr(&reply->fs3efo_AccountId, &p, req->fs3efo_AccountId);
     reply->fs3efo_Following = following;
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
+/* FS3ENETQ_BLOCK -- blocks an account, echoing back both following and
+ * blocking (see FS3EMastodon_Block's own comment on why following matters
+ * here too). */
+static void FS3ENet_HandleBlock(FS3ENetMessage *fs3em)
+{
+    FS3ENetBlockReq   *req = (FS3ENetBlockReq *)fs3em->fs3em_Data;
+    FS3ENetBlockReply *reply;
+    BOOL  following, blocking;
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    if (!FS3EMastodon_Block(req->fs3eblk_ApiBaseUrl, req->fs3eblk_AccessToken,
+            req->fs3eblk_AccountId, &following, &blocking))
+    {
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    total = sizeof(FS3ENetBlockReply) + FS3ENet_PackLen(req->fs3eblk_AccountId);
+    reply = (FS3ENetBlockReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3eblk_AccountId, &p, req->fs3eblk_AccountId);
+    reply->fs3eblk_Following = following;
+    reply->fs3eblk_Blocking  = blocking;
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
+/* FS3ENETQ_UNBLOCK -- lifts a block, see FS3EMastodon_Unblock's own
+ * comment for why there's no boolean state to echo back like
+ * FS3ENETQ_FOLLOW does. */
+static void FS3ENet_HandleUnblock(FS3ENetMessage *fs3em)
+{
+    FS3ENetUnblockReq   *req = (FS3ENetUnblockReq *)fs3em->fs3em_Data;
+    FS3ENetUnblockReply *reply;
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    if (!FS3EMastodon_Unblock(req->fs3eub_ApiBaseUrl, req->fs3eub_AccessToken,
+            req->fs3eub_AccountId))
+    {
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    total = sizeof(FS3ENetUnblockReply) + FS3ENet_PackLen(req->fs3eub_AccountId);
+    reply = (FS3ENetUnblockReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3eub_AccountId, &p, req->fs3eub_AccountId);
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
+/* FS3ENETQ_DOMAIN_BLOCK_STATE -- see FS3EMastodon_IsDomainBlocked's own
+ * doc comment for the single-page limitation. */
+static void FS3ENet_HandleDomainBlockState(FS3ENetMessage *fs3em)
+{
+    FS3ENetDomainBlockStateReq   *req = (FS3ENetDomainBlockStateReq *)fs3em->fs3em_Data;
+    FS3ENetDomainBlockStateReply *reply;
+    BOOL  blocked;
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    if (!FS3EMastodon_IsDomainBlocked(req->fs3edbs_ApiBaseUrl, req->fs3edbs_AccessToken,
+            req->fs3edbs_Domain, &blocked))
+    {
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    total = sizeof(FS3ENetDomainBlockStateReply) + FS3ENet_PackLen(req->fs3edbs_Domain);
+    reply = (FS3ENetDomainBlockStateReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3edbs_Domain, &p, req->fs3edbs_Domain);
+    reply->fs3edbs_Blocked = blocked;
+
+    FreeVec(fs3em->fs3em_Data);
+    fs3em->fs3em_Data    = reply;
+    fs3em->fs3em_DataLen = total;
+    fs3em->fs3em_Result  = FS3ENETR_OK;
+}
+
+/* FS3ENETQ_DOMAIN_BLOCK_TOGGLE -- see FS3EMastodon_ToggleDomainBlock's own
+ * comment for why there's no state to echo back beyond the requested
+ * direction itself. */
+static void FS3ENet_HandleDomainBlockToggle(FS3ENetMessage *fs3em)
+{
+    FS3ENetDomainBlockToggleReq   *req = (FS3ENetDomainBlockToggleReq *)fs3em->fs3em_Data;
+    FS3ENetDomainBlockToggleReply *reply;
+    ULONG total;
+    char *p;
+
+    if (!req || fs3em->fs3em_DataLen < sizeof(*req)) {
+        fs3em->fs3em_Result = FS3ENETR_PARSE_ERROR;
+        return;
+    }
+
+    if (!FS3EMastodon_ToggleDomainBlock(req->fs3edbt_ApiBaseUrl, req->fs3edbt_AccessToken,
+            req->fs3edbt_Domain, req->fs3edbt_Block))
+    {
+        fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
+        return;
+    }
+
+    total = sizeof(FS3ENetDomainBlockToggleReply) + FS3ENet_PackLen(req->fs3edbt_Domain);
+    reply = (FS3ENetDomainBlockToggleReply *)AllocVec(total, MEMF_ANY | MEMF_PUBLIC);
+    if (!reply) { fs3em->fs3em_Result = FS3ENETR_NETWORK_ERROR; return; }
+
+    p = (char *)reply + sizeof(*reply);
+    FS3ENet_PackStr(&reply->fs3edbt_Domain, &p, req->fs3edbt_Domain);
+    reply->fs3edbt_Blocked = req->fs3edbt_Block;
 
     FreeVec(fs3em->fs3em_Data);
     fs3em->fs3em_Data    = reply;
@@ -4509,6 +4924,30 @@ static BOOL FS3ENet_Dispatch(FS3ENetMessage *fs3em)
 
         case FS3ENETQ_BOOKMARKS_SYNC:
             FS3ENet_HandleBookmarksSync(fs3em);
+            break;
+
+        case FS3ENETQ_VOTE_POLL:
+            FS3ENet_HandleVotePoll(fs3em);
+            break;
+
+        case FS3ENETQ_DOMAIN_BLOCKS:
+            FS3ENet_HandleDomainBlocks(fs3em);
+            break;
+
+        case FS3ENETQ_BLOCK:
+            FS3ENet_HandleBlock(fs3em);
+            break;
+
+        case FS3ENETQ_UNBLOCK:
+            FS3ENet_HandleUnblock(fs3em);
+            break;
+
+        case FS3ENETQ_DOMAIN_BLOCK_STATE:
+            FS3ENet_HandleDomainBlockState(fs3em);
+            break;
+
+        case FS3ENETQ_DOMAIN_BLOCK_TOGGLE:
+            FS3ENet_HandleDomainBlockToggle(fs3em);
             break;
 
         case FS3ENETQ_ACCOUNT_LOOKUP:

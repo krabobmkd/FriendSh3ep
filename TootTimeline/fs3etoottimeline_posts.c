@@ -341,6 +341,9 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
         post->pollVotesCount = setup->pollVotesCount;
         post->pollExpired    = setup->pollExpired;
         post->pollMultiple   = setup->pollMultiple;
+        post->pollId         = (setup->pollId        && setup->pollId[0])        ? dup_str(setup->pollId)        : NULL;
+        post->pollExpiresAt  = (setup->pollExpiresAt && setup->pollExpiresAt[0]) ? dup_str(setup->pollExpiresAt) : NULL;
+        post->pollVoted      = setup->pollVoted;
 
         post->hasCard = setup->hasCard;
         post->cardUrl          = (setup->cardUrl          && setup->cardUrl[0])          ? dup_str(setup->cardUrl)          : NULL;
@@ -419,6 +422,8 @@ void ttl_post_refresh_fields(TTLPost *post, const TTLPostSetup *setup)
     }
     for (mi = 0; mi < post->pollOptionCount; mi++)
         if (post->pollOptionTitles[mi]) FreeVec(post->pollOptionTitles[mi]);
+    if (post->pollId)        FreeVec(post->pollId);
+    if (post->pollExpiresAt) FreeVec(post->pollExpiresAt);
 
     post->username  = dup_str(setup->username);
     post->acct      = dup_str(setup->acct);
@@ -502,6 +507,9 @@ void ttl_post_refresh_fields(TTLPost *post, const TTLPostSetup *setup)
     post->pollVotesCount = setup->pollVotesCount;
     post->pollExpired    = setup->pollExpired;
     post->pollMultiple   = setup->pollMultiple;
+    post->pollId         = (setup->pollId        && setup->pollId[0])        ? dup_str(setup->pollId)        : NULL;
+    post->pollExpiresAt  = (setup->pollExpiresAt && setup->pollExpiresAt[0]) ? dup_str(setup->pollExpiresAt) : NULL;
+    post->pollVoted      = setup->pollVoted;
 
     post->hasCard = setup->hasCard;
     post->cardUrl          = (setup->cardUrl          && setup->cardUrl[0])          ? dup_str(setup->cardUrl)          : NULL;
@@ -595,6 +603,8 @@ static void ttl_toot_dispose(TTLPost *post)
         }
         for (mi = 0; mi < post->pollOptionCount; mi++)
             if (post->pollOptionTitles[mi]) FreeVec(post->pollOptionTitles[mi]);
+        if (post->pollId)        FreeVec(post->pollId);
+        if (post->pollExpiresAt) FreeVec(post->pollExpiresAt);
         for (mi = 0; mi < post->cardTitleLineCount; mi++)
             if (post->cardTitleLines[mi]) FreeVec(post->cardTitleLines[mi]);
         for (mi = 0; mi < post->cardDescLineCount; mi++)
@@ -890,25 +900,29 @@ static void ttl_toot_layout(TTLData *inst, TTLPost *post)
         post->sensitiveBottomY = (WORD)(hasThumb ? (post->previewY + post->previewH) : bodyBottomY);
     }
 
-    /* ---- Poll ("survey") results block -- closed/result rendering only.
+    /* ---- Poll ("survey") block -- two render modes, see
+     * ttl_poll_show_results/TTL_POST_MAX_POLL_OPTIONS's own comment.
      * Skipped entirely when there's no poll; when there is, the media
      * preview block above was already suppressed (Mastodon disallows
      * both on one status anyway). Each option reserves one text row
-     * (title + percentage) plus a thin proportional bar underneath;
-     * pollBlockY is stored here and reused as-is by render/
-     * build_hotspots -- never re-derived, same fix as the profile
-     * Follow-button-row bug. ---- */
+     * (title + percentage when showing results, just the radio-button
+     * title otherwise) plus, only when showing results, a thin
+     * proportional bar underneath; pollBlockY is stored here and reused
+     * as-is by render/build_hotspots -- never re-derived, same fix as the
+     * profile Follow-button-row bug. ---- */
     post->pollBlockY = 0;
     if (post->pollOptionCount > 0) {
         ULONG oi;
+        BOOL  showResults = ttl_poll_show_results(post);
         curRelY += avatarGap;
         post->pollBlockY = (WORD)curRelY;
         for (oi = 0; oi < post->pollOptionCount; oi++) {
-            curRelY += inst->miniLineHeight;   /* title + percentage text */
-            curRelY += TTL_POLL_BAR_H;         /* proportional result bar */
+            curRelY += inst->miniLineHeight;   /* title (+ percentage) text */
+            if (showResults)
+                curRelY += TTL_POLL_BAR_H;     /* proportional result bar */
             curRelY += TTL_POLL_ROW_GAP;       /* gap before next option */
         }
-        curRelY += inst->miniLineHeight;       /* "N votes - Poll closed" summary line */
+        curRelY += inst->miniLineHeight;       /* summary line -- see ttl_toot_render */
     }
 
     /* ---- "Follow discussion up" row -- reserved only when this post is
@@ -1264,6 +1278,33 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
                    post->cardUrl, post->cardUrl ? (ULONG)strlen(post->cardUrl) : 0);
     }
 
+    /* Poll vote picker -- one full-row hot-spot per option, open poll not
+     * yet voted on only (see ttl_poll_show_results). Row Y/height math
+     * here MUST match ttl_toot_render's own poll loop exactly (same
+     * miniLineHeight/TTL_POLL_ROW_GAP, no bar in this mode) or the
+     * clickable rect drifts from what's actually drawn -- see
+     * TTLPost.pollBlockY's "store once" comment. data is the 1-based
+     * option number as an ASCII digit -- see TTL_HOT_POLL_VOTE's own
+     * comment in fs3etoottimeline.h for why (postId/targetId alone can't
+     * tell which of several answers was clicked). */
+    if (post->pollOptionCount > 0 && !ttl_poll_show_results(post) &&
+        post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT)
+    {
+        static const char *const pollDigits[TTL_POST_MAX_POLL_VOTE_HOTSPOTS] = { "1", "2", "3", "4" };
+        WORD  rowW = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
+        WORD  rowH = (WORD)(inst->miniLineHeight + TTL_POLL_ROW_GAP);
+        WORD  rowY = post->pollBlockY;
+        ULONG oi, voteCount = post->pollOptionCount;
+
+        if (voteCount > TTL_POST_MAX_POLL_VOTE_HOTSPOTS) voteCount = TTL_POST_MAX_POLL_VOTE_HOTSPOTS;
+
+        for (oi = 0; oi < voteCount && post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT; oi++) {
+            ttl_hs_add(post, TTL_HOT_POLL_VOTE, textX, rowY, rowW, inst->miniLineHeight,
+                       pollDigits[oi], 1);
+            rowY = (WORD)(rowY + rowH);
+        }
+    }
+
     /* "Follow discussion up" row -- see TTLPost.threadUpRowY. Same full-
      * width clickable treatment as the "...down" row below. */
     if (post->isReply && post->threadUpRowY > 0 &&
@@ -1353,15 +1394,17 @@ static void ttl_toot_build_hotspots(TTLData *inst, TTLPost *post)
     /* Modify/Delete: same bar row, left-aligned from textX, own toots
      * only -- measured from the same ttl_ownActionLabels[] that
      * ttl_toot_render draws, per this codebase's "single shared copy"
-     * rule (see that array's definition in fs3etoottimeline_tiles.c). */
+     * rule (see that array's definition in fs3etoottimeline_tiles.c).
+     * Modify (a==0) is skipped for a poll -- see ttl_toot_render's matching
+     * skip, same post->pollOptionCount check, for why. */
     if (post->isOwn && post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT) {
         struct URPDrawContext *dcA = inst->style ? inst->style->dcNormal : NULL;
         WORD barH  = inst->lineHeight;
         WORD y     = post->actionBarY;
         WORD xLeft = textX;
-        int  a;
+        int  a = (post->pollOptionCount > 0) ? 1 : 0;
 
-        for (a = 0; a < 2 && post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT; a++) {
+        for (; a < 2 && post->hotSpotCount < TTL_HOTSPOT_MAX_PER_TOOT; a++) {
             WORD w = 40;
             if (dcA) {
                 struct URPTextMetric m;
@@ -1600,6 +1643,34 @@ void ttl_channel_insert_top(TTLData *inst, TTLChannel *channel, TTLPost *post)
 {
     TTLPost *head = (TTLPost *)channel->posts.mlh_Head;
 
+    if (channel->headerPost) {
+        /* A profile channel's list is pinned directly below its own
+         * fixed-position header (see TTLChannel.headerPost and
+         * contentTopY's comment in fs3etoottimeline_private.h) -- there is
+         * no free space above contentTopY to grow into the way a
+         * headerless channel's negative-Y "push the boundary further up"
+         * trick below relies on. Doing that here would move the "look for
+         * something new" row (and the new post itself) to Y < header-
+         * >height, drawing them overlapping/above the header, which
+         * always renders fixed at [0, header->height) regardless of
+         * contentTopY -- confirmed the actual bug this guard fixes.
+         * Insert right after the loadNewer boundary instead (or at head,
+         * if it's somehow missing) and reflow every post's Y from
+         * contentTopY downward via ttl_rebuild_ypositions -- contentTopY
+         * itself never moves for a headered channel, only what comes
+         * after it shifts down to make room, same direction
+         * ttl_channel_insert_bottom always pushes in anyway. */
+        if (head->cls == &TTLLoadNewer_Class)
+            Insert((struct List *)&channel->posts,
+                   (struct Node *)&post->node, (struct Node *)&head->node);
+        else
+            AddHead((struct List *)&channel->posts, (struct Node *)&post->node);
+        ttl_rebuild_ypositions(inst, (ULONG)(channel - inst->channels));
+        if (channel == ttl_active(inst))
+            ttl_tiles_invalidate_all(inst);
+        return;
+    }
+
     if (head->cls == &TTLLoadNewer_Class) {
         /* Real content currently starts right where the pinned "load
          * newer" row ends; the new (newest) post takes that spot, and the
@@ -1745,6 +1816,65 @@ const TTLItemClass TTLListTitle_Class = {
     NULL,  /* buildHotspots: purely informational, no click target */
     NULL,
     ttl_list_title_dispose
+};
+
+/* ------------------------------------------------------------------ */
+/* TTLDomainRow_Class -- one blocked-server domain per row (see           */
+/* TTLPostSetup.isDomainRow) -- ordinary scrolling list content, unlike   */
+/* TTLListTitle_Class's singular pinned banner above, so it uses its own  */
+/* left-aligned/normal-pen ttl_domain_row_render instead of reusing       */
+/* ttl_boundary_render -- but still reuses ttl_boundary_layout's plain    */
+/* fixed one-line height, and the same dup-on-alloc/free-on-dispose       */
+/* ownership of post->body (built per-request from the server's reply,    */
+/* not a static literal) as TTLListTitle_Class. The whole row is one      */
+/* TTL_HOT_DOMAIN hotspot -- click it to open that domain's own "about    */
+/* this server" page (which shows its own Block/Unblock button), same    */
+/* "full-row click target" convention TTL_HOT_AVATAR gets on              */
+/* TTLAccountRow_Class. */
+/* ------------------------------------------------------------------ */
+
+TTLPost *ttl_domain_row_alloc(const TTLPostSetup *setup)
+{
+    TTLPost *post = (TTLPost *)AllocVec(sizeof(TTLPost), MEMF_ANY | MEMF_CLEAR);
+    if (!post) return NULL;
+
+    NewList((struct List *)&post->textSpans);
+    post->cls           = &TTLDomainRow_Class;
+    post->dirty         = TRUE;
+    post->hotSpotBucket = -1;
+    post->hotSpotsDirty = TRUE;
+
+    if (setup)
+        post->body = dup_str(setup->body);
+
+    return post;
+}
+
+static void ttl_domain_row_dispose(TTLPost *post)
+{
+    if (post->body) FreeVec(post->body);
+}
+
+/* One hotspot covering the whole row -- see TTL_HOT_DOMAIN's own doc
+ * comment in fs3etoottimeline.h. Mirrors ttl_account_row_build_hotspots
+ * exactly (data = post->body, the domain text, instead of post->acct). */
+static void ttl_domain_row_build_hotspots(TTLData *inst, TTLPost *post)
+{
+    post->hotSpotCount = 0;
+
+    if (post->body && post->body[0])
+        ttl_hs_add(post, TTL_HOT_DOMAIN, 0, 0,
+                   inst->gadWidth, (WORD)post->height,
+                   post->body, (ULONG)strlen(post->body));
+}
+
+const TTLItemClass TTLDomainRow_Class = {
+    ttl_boundary_layout,
+    ttl_domain_row_render,
+    ttl_domain_row_build_hotspots,
+    NULL, /* .activate: the generic ttl_notify_hotspot() already fires for
+           * TTL_HOT_DOMAIN -- nothing kind-specific to do locally. */
+    ttl_domain_row_dispose
 };
 
 /* ------------------------------------------------------------------ */

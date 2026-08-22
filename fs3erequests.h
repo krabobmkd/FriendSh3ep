@@ -36,7 +36,11 @@ void FS3EApp_OpenDiscussion(const char *statusId, BOOL includeAncestors);
 
 /* F5 "refresh visible toots" -- re-fetches, one at a time, every toot
  * currently on screen in the active TootTimeline channel and patches its
- * data in place (see TTIMELINE_GetVisiblePosts/RefreshPost). */
+ * data in place (see TTIMELINE_GetVisiblePosts/RefreshPost), AND checks for
+ * anything posted since the channel's current top (same FS3ENETPAGE_NEWER
+ * fetch the pinned "Look for something new" row fires) so a brand new toot
+ * (e.g. one you just posted yourself) actually appears on F5 instead of
+ * only updating what was already shown. */
 void FS3EApp_RefreshVisibleToots(void);
 
 /* Clears and re-fetches VIEWMODE_Bookmarks from scratch (local cache page 0
@@ -77,6 +81,17 @@ void FS3EApp_SearchInstance(const char *domainOrUrl);
  * if no profile is currently open. */
 void FS3EApp_ShowFollowers(void);
 void FS3EApp_ShowFollowing(void);
+
+/* Show the connected account's own GET /api/v1/blocks in the Search
+ * channel, same flat account-row list as FS3EApp_ShowFollowers/Following
+ * above but with no profile involved (there's no single "whose list" to
+ * name -- it's always your own) -- called from the FriendSh3ep menu's
+ * "Blocked Users..." (Action_ShowBlockedUsers, fs3eaction.c), not a
+ * profile-header button. No-op if not logged in with a real account. */
+void FS3EApp_ShowBlockedUsers(void);
+void FS3EApp_ShowBlockedServers(void);
+void FS3EApp_ShowFavouritedBy(const char *statusId);
+void FS3EApp_ShowRebloggedBy(const char *statusId);
 
 /* GID_SEARCH_BACK_BUTTON / Delete key -- pops and restores the most
  * recently pushed Search view configuration (see App.searchStack in

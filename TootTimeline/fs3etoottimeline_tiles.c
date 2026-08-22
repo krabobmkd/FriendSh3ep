@@ -34,6 +34,7 @@
 #include <graphics/layers.h>
 #include <string.h>
 #include <stdio.h>
+#include <time.h>
 
 #include "fs3etoottimeline_private.h"
 #include "../avatarimages.h"
@@ -371,6 +372,71 @@ static void ttl_format_timestamp_lines(const char *raw,
 
     snprintf(dateLine, dateLineSize, "%.*s", (int)(t - raw), raw);
     snprintf(timeLine, timeLineSize, "%.8s UTC", t + 1);
+}
+
+/* Howard Hinnant's well-known constant-time algorithm, proleptic Gregorian
+ * civil calendar date -> days since 1970-01-01 (the Unix epoch) -- used by
+ * ttl_parse_iso8601_utc below to turn a poll's expires_at into a value
+ * comparable against time(NULL), without a full localtime/mktime/timezone
+ * dependency (everything Mastodon sends is already UTC, same as
+ * fmas_CreatedAt -- see ttl_format_timestamp_lines above). y/m/d are the
+ * calendar year/month(1-12)/day(1-31). */
+static long ttl_days_from_civil(long y, int m, int d)
+{
+    long era;
+    unsigned long yoe, doy, doe;
+
+    y -= (m <= 2);
+    era = (y >= 0 ? y : y - 399) / 400;
+    yoe = (unsigned long)(y - era * 400);
+    doy = (unsigned long)((153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1);
+    doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + (long)doe - 719468;
+}
+
+/* Parses an ISO8601 "YYYY-MM-DDTHH:MM:SS[.sss][Z]" UTC string (same shape
+ * as fmas_CreatedAt/fmas_PollExpiresAt) into Unix epoch seconds. Returns
+ * FALSE (leaves *outEpoch untouched) if raw doesn't look like that shape --
+ * same "fall back rather than guess" rule as ttl_format_timestamp_lines. */
+static BOOL ttl_parse_iso8601_utc(const char *raw, LONG *outEpoch)
+{
+    int y, mo, d, h, mi, se;
+    if (!raw || !raw[0]) return FALSE;
+    if (sscanf(raw, "%d-%d-%dT%d:%d:%d", &y, &mo, &d, &h, &mi, &se) != 6) return FALSE;
+    *outEpoch = (LONG)((long)ttl_days_from_civil(y, mo, d) * 86400L + h * 3600 + mi * 60 + se);
+    return TRUE;
+}
+
+/* post->pollExpiresAt -> "X left" (days/hours/minutes, whichever is the
+ * largest non-zero unit) for an open poll's summary line -- see
+ * ttl_poll_show_results/TTL_POST_MAX_POLL_OPTIONS's render-mode comment in
+ * fs3etoottimeline.h. Falls back to "Poll closed" if expiresAt is missing/
+ * unparseable/already past (shouldn't normally happen -- pollExpired
+ * should already be TRUE by then and take the other render mode -- but a
+ * local clock a little behind the server's is exactly the kind of edge
+ * case worth not showing garbage for, rather than a negative number). */
+static void ttl_format_poll_remaining(const char *expiresAt, char *out, ULONG outSize)
+{
+    LONG expEpoch, remain;
+
+    if (!ttl_parse_iso8601_utc(expiresAt, &expEpoch)) {
+        snprintf(out, outSize, "Poll closed");
+        return;
+    }
+    remain = expEpoch - (LONG)time(NULL);
+    if (remain <= 0) {
+        snprintf(out, outSize, "Poll closed");
+    } else if (remain >= 86400) {
+        LONG days = remain / 86400;
+        snprintf(out, outSize, "%ld day%s left", (long)days, days == 1 ? "" : "s");
+    } else if (remain >= 3600) {
+        LONG hours = remain / 3600;
+        snprintf(out, outSize, "%ld hour%s left", (long)hours, hours == 1 ? "" : "s");
+    } else {
+        LONG mins = remain / 60;
+        if (mins < 1) mins = 1;
+        snprintf(out, outSize, "%ld minute%s left", (long)mins, mins == 1 ? "" : "s");
+    }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1027,57 +1093,96 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                     Draw(rp, rx, ry);
                 }
 
-                /* Poll ("survey") results — closed/result rendering only
-                 * (see TTL_POST_MAX_POLL_OPTIONS): one title+percentage
-                 * text row per option, followed by a track rect with a
-                 * proportional fill, then a "N votes · Poll closed"
-                 * summary line. pollBlockY was computed once by
-                 * ttl_toot_layout and is reused verbatim here -- never
-                 * re-derived (see that function's comment). */
+                /* Poll ("survey") -- two render modes, see
+                 * ttl_poll_show_results/TTL_POST_MAX_POLL_OPTIONS's own
+                 * comment in fs3etoottimeline.h. pollBlockY was computed
+                 * once by ttl_toot_layout and is reused verbatim here --
+                 * never re-derived (see that function's comment); the
+                 * unvoted-open row math below MUST match
+                 * ttl_toot_build_hotspots's own poll loop exactly, same
+                 * reason. */
                 if (post->pollOptionCount > 0) {
-                    LONG accentPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT);
-                    LONG trackPen  = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_BUTTON_BG);
-                    WORD pollTextW = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
-                    WORD rowY = (WORD)(drawY + post->pollBlockY);
+                    BOOL  showResults = ttl_poll_show_results(post);
+                    WORD  pollTextW = (WORD)(inst->gadWidth - textX - TTL_POST_PAD_RIGHT);
+                    WORD  rowY = (WORD)(drawY + post->pollBlockY);
                     ULONG oi;
 
-                    for (oi = 0; oi < post->pollOptionCount; oi++) {
-                        const char *title = post->pollOptionTitles[oi] ? post->pollOptionTitles[oi] : "";
-                        ULONG votes = post->pollOptionVotes[oi];
-                        ULONG pct = (post->pollVotesCount > 0)
-                                  ? (votes * 100) / post->pollVotesCount : 0;
-                        char pctLabel[16];
-                        struct URPTextMetric m;
-                        WORD barY = (WORD)(rowY + inst->miniLineHeight);
-                        WORD fillW;
+                    if (showResults) {
+                        LONG accentPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT);
+                        LONG trackPen  = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_BUTTON_BG);
 
-                        snprintf(pctLabel, sizeof(pctLabel), "%lu%%", (unsigned long)pct);
+                        for (oi = 0; oi < post->pollOptionCount; oi++) {
+                            const char *title = post->pollOptionTitles[oi] ? post->pollOptionTitles[oi] : "";
+                            ULONG votes = post->pollOptionVotes[oi];
+                            ULONG pct = (post->pollVotesCount > 0)
+                                      ? (votes * 100) / post->pollVotesCount : 0;
+                            char pctLabel[16];
+                            struct URPTextMetric m;
+                            WORD barY = (WORD)(rowY + inst->miniLineHeight);
+                            WORD fillW;
 
-                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, txtPen, bgPen);
-                        tile_draw_text(inst, rp, textX, (WORD)(rowY + inst->miniLineAscent), title, dcMini);
+                            snprintf(pctLabel, sizeof(pctLabel), "%lu%%", (unsigned long)pct);
 
-                        URPDC_TextSizeUTF8(dcMini, pctLabel, -1, &m);
-                        URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
-                        tile_draw_text(inst, rp,
-                                       (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT - m.width),
-                                       (WORD)(rowY + inst->miniLineAscent), pctLabel, dcMini);
+                            URPDC_SetDrawColorFromPen(dcMini, inst->screen, txtPen, bgPen);
+                            tile_draw_text(inst, rp, textX, (WORD)(rowY + inst->miniLineAscent), title, dcMini);
 
-                        SetAPen(rp, trackPen);
-                        RectFill(rp, textX, barY, (WORD)(textX + pollTextW - 1), (WORD)(barY + TTL_POLL_BAR_H - 1));
+                            URPDC_TextSizeUTF8(dcMini, pctLabel, -1, &m);
+                            URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                            tile_draw_text(inst, rp,
+                                           (WORD)(inst->gadWidth - TTL_POST_PAD_RIGHT - m.width),
+                                           (WORD)(rowY + inst->miniLineAscent), pctLabel, dcMini);
 
-                        fillW = (WORD)(((LONG)pollTextW * (LONG)pct) / 100);
-                        if (fillW > 0) {
-                            SetAPen(rp, accentPen);
-                            RectFill(rp, textX, barY, (WORD)(textX + fillW - 1), (WORD)(barY + TTL_POLL_BAR_H - 1));
+                            SetAPen(rp, trackPen);
+                            RectFill(rp, textX, barY, (WORD)(textX + pollTextW - 1), (WORD)(barY + TTL_POLL_BAR_H - 1));
+
+                            fillW = (WORD)(((LONG)pollTextW * (LONG)pct) / 100);
+                            if (fillW > 0) {
+                                SetAPen(rp, accentPen);
+                                RectFill(rp, textX, barY, (WORD)(textX + fillW - 1), (WORD)(barY + TTL_POLL_BAR_H - 1));
+                            }
+
+                            rowY = (WORD)(rowY + inst->miniLineHeight + TTL_POLL_BAR_H + TTL_POLL_ROW_GAP);
                         }
+                    } else {
+                        /* Open, not yet voted -- a round radio-button glyph
+                         * (unchecked; there's no local "selected but not
+                         * yet submitted" state to reflect -- picking an
+                         * option and confirming are the same click, see
+                         * TTL_HOT_POLL_VOTE) plus the plain option title,
+                         * no percentage/bar (matches official Mastodon
+                         * apps: results stay hidden from an un-voted open
+                         * poll so seeing them can't bias the vote). */
+                        for (oi = 0; oi < post->pollOptionCount; oi++) {
+                            const char *title = post->pollOptionTitles[oi] ? post->pollOptionTitles[oi] : "";
+                            struct URPTextMetric m;
 
-                        rowY = (WORD)(rowY + inst->miniLineHeight + TTL_POLL_BAR_H + TTL_POLL_ROW_GAP);
+                            URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
+                            tile_draw_text(inst, rp, textX, (WORD)(rowY + inst->miniLineAscent),
+                                           "\xE2\x97\x8B" /* U+25CB WHITE CIRCLE */, dcMini);
+                            URPDC_TextSizeUTF8(dcMini, "\xE2\x97\x8B", -1, &m);
+
+                            URPDC_SetDrawColorFromPen(dcMini, inst->screen, txtPen, bgPen);
+                            tile_draw_text(inst, rp, (WORD)(textX + m.width + TTL_POLL_ROW_GAP),
+                                           (WORD)(rowY + inst->miniLineAscent), title, dcMini);
+
+                            rowY = (WORD)(rowY + inst->miniLineHeight + TTL_POLL_ROW_GAP);
+                        }
                     }
 
                     {
-                        char summary[64];
-                        snprintf(summary, sizeof(summary), "%lu votes \xC2\xB7 Poll closed",
-                                 (unsigned long)post->pollVotesCount);
+                        char summary[80];
+
+                        if (post->pollExpired) {
+                            snprintf(summary, sizeof(summary), "%lu votes \xC2\xB7 Poll closed",
+                                     (unsigned long)post->pollVotesCount);
+                        } else if (post->pollVoted) {
+                            char remain[40];
+                            ttl_format_poll_remaining(post->pollExpiresAt, remain, sizeof(remain));
+                            snprintf(summary, sizeof(summary), "%lu votes \xC2\xB7 %s \xC2\xB7 Already voted",
+                                     (unsigned long)post->pollVotesCount, remain);
+                        } else {
+                            ttl_format_poll_remaining(post->pollExpiresAt, summary, sizeof(summary));
+                        }
                         URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
                         tile_draw_text(inst, rp, textX, (WORD)(rowY + inst->miniLineAscent), summary, dcMini);
                     }
@@ -1192,9 +1297,16 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                     WORD barTopY = (WORD)(drawY + post->actionBarY);
                     WORD barBaselineY = (WORD)(barTopY + inst->lineAscent);
                     WORD xLeft = textX;
-                    int  a;
+                    /* Polls can't be edited (Mastodon has no endpoint for
+                     * it), so a==0 (TTL_HOT_MODIFY/"Modify") is skipped for
+                     * one -- see ttl_toot_build_hotspots's matching skip in
+                     * fs3etoottimeline_posts.c, both driven by the same
+                     * post->pollOptionCount check. Delete (a==1) still
+                     * shows: you can always delete your own poll, just not
+                     * change its options after the fact. */
+                    int  a = (post->pollOptionCount > 0) ? 1 : 0;
                     URPDC_SetDrawColorFromPen(dcBody, inst->screen, actionPen, bgPen);
-                    for (a = 0; a < 2; a++) {
+                    for (; a < 2; a++) {
                         struct URPTextMetric m;
                         struct URPTextPos pos;
                         LONG nc = utf8_codepoints_range(ttl_ownActionLabels[a],
@@ -1333,6 +1445,35 @@ void ttl_boundary_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG
     }
 }
 
+/* TTLItemClass.render for TTLDomainRow_Class (see fs3etoottimeline_posts.c)
+ * -- one blocked-server domain per row. Reuses ttl_boundary_layout's fixed
+ * one-line height (same as ttl_boundary_render above), but left-aligned in
+ * the ordinary body text column and drawn in the normal text pen, not
+ * centered/accent-colored -- unlike TTLLoadNewer_Class/TTLLoadOlder_Class/
+ * TTLListTitle_Class above, this is ordinary scrolling list content (one
+ * row per domain), not a singular pinned banner, so it should read like a
+ * plain list row, not another "banner". */
+void ttl_domain_row_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG tileBaseY)
+{
+    WORD  drawY  = (WORD)(post->timelineY - tileBaseY);
+    LONG  bgPen  = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TIMELINE_BG);
+    LONG  txtPen = (LONG)FS3E_PEN(inst->style, FS3E_COLOR_TEXT);
+    struct URPDrawContext *dc = inst->style ? inst->style->dcNormal : NULL;
+    WORD  padLeft = (inst->style && inst->style->postPadLeft > 0) ? inst->style->postPadLeft : 6;
+
+    if (!dc || !post->body || !post->body[0]) return;
+
+    {
+        struct URPTextPos pos;
+        LONG nc = utf8_codepoints_range(post->body, post->body + strlen(post->body));
+
+        URPDC_SetDrawColorFromPen(dc, inst->screen, txtPen, bgPen);
+        pos.x = padLeft;
+        pos.y = (WORD)(drawY + (post->height - inst->lineHeight) / 2 + inst->lineAscent);
+        URPDrawTextUTF8(rp, dc, &pos, post->body, (ULONG)nc);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* ttl_render_tile                                                      */
 /*                                                                      */
@@ -1451,10 +1592,10 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                          const char *postId, BOOL favourited, BOOL following,
                          BOOL reblogged, BOOL bookmarked, BOOL quotable,
                          const char *mediaIds, const char *acct,
-                         const char *audioUrl)
+                         const char *audioUrl, const char *pollId)
 {
     TTLData         *inst = TTL_DATA(cl, o);
-    struct TagItem  tags[13];
+    struct TagItem  tags[14];
     struct opUpdate nmsg;
 
     /* Copy into the gadget-owned buffers first -- see the TTLData comment
@@ -1521,6 +1662,15 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
         inst->lastHotSpotAudioUrl = NULL;
     }
 
+    if (pollId && pollId[0]) {
+        ULONG n = (ULONG)strlen(pollId);
+        if (n >= sizeof(inst->lastHotSpotPollId)) n = sizeof(inst->lastHotSpotPollId) - 1;
+        CopyMem((APTR)pollId, inst->lastHotSpotPollId, n);
+        inst->lastHotSpotPollId[n] = '\0';
+    } else {
+        inst->lastHotSpotPollId[0] = '\0';
+    }
+
     if (!inst->target) return;
 
     tags[0].ti_Tag  = GA_ID;
@@ -1547,7 +1697,9 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
     tags[10].ti_Data = inst->lastHotSpotAudioUrl ? (ULONG)inst->lastHotSpotAudioUrl : 0;
     tags[11].ti_Tag  = TTIMELINE_LastHotSpotBookmarked;
     tags[11].ti_Data = (ULONG)bookmarked;
-    tags[12].ti_Tag = TAG_DONE;
+    tags[12].ti_Tag  = TTIMELINE_LastHotSpotPollId;
+    tags[12].ti_Data = inst->lastHotSpotPollId[0] ? (ULONG)inst->lastHotSpotPollId : 0;
+    tags[13].ti_Tag = TAG_DONE;
 
     nmsg.MethodID     = OM_UPDATE;
     nmsg.opu_AttrList = (struct TagItem *)tags;

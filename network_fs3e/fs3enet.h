@@ -69,6 +69,19 @@ enum FS3ENetRequestType
                                * Reply below */
     FS3ENETQ_BOOKMARKS_SYNC, /* backfill the on-disk bookmarks cache from the server's
                                * own first page -- see FS3ENetBookmarksSyncReq/Reply below */
+    FS3ENETQ_VOTE_POLL,      /* cast a vote on an open poll -- see FS3ENetVotePollReq/Reply
+                               * below */
+    FS3ENETQ_DOMAIN_BLOCKS,  /* list the connected account's own blocked servers (domains)
+                               * -- see FS3ENetDomainBlocksReq/Reply below */
+    FS3ENETQ_BLOCK,          /* block an account, from the User menu's "Block user"
+                               * item -- see FS3ENetBlockReq/Reply below */
+    FS3ENETQ_UNBLOCK,        /* lift a block on an account, from the profile header's
+                               * "Unblock" button -- see FS3ENetUnblockReq/Reply below */
+    FS3ENETQ_DOMAIN_BLOCK_STATE,  /* check whether the connected account blocks one
+                               * domain -- see FS3ENetDomainBlockStateReq/Reply below */
+    FS3ENETQ_DOMAIN_BLOCK_TOGGLE, /* block or unblock one domain, from the instance
+                               * header's "Block server"/"Unblock server" button --
+                               * see FS3ENetDomainBlockToggleReq/Reply below */
     FS3ENETQ_FETCH_PROGRESS /* net-process-originated ONLY -- never sent by the GUI.
                               * A one-way PutMsg() of an FS3ENetFetchProgress block to
                               * app->netReplyPort while a chunked FS3ENETQ_FETCH_IMAGE
@@ -763,14 +776,32 @@ typedef struct FS3ENetStatus {
      * fmas_PollOptionCount==0 means no poll on this status. An option's
      * votes_count comes back JSON null (not present) from the server
      * until the poll is closed or the connected user has voted -- packed
-     * as 0 either way, since there's nothing else to show yet regardless
-     * (voting isn't wired up on the GUI side either). */
+     * as 0 either way, matching what there's actually something to show. */
     char  *fmas_PollOptionTitles[FS3ENET_MAX_POLL_OPTIONS];
     ULONG  fmas_PollOptionVotes[FS3ENET_MAX_POLL_OPTIONS];
     ULONG  fmas_PollOptionCount;
     ULONG  fmas_PollVotesCount;   /* total votes across all options -- percentage denominator */
     BOOL   fmas_PollExpired;      /* TRUE = closed, results are final */
     BOOL   fmas_PollMultiple;     /* TRUE = multiple-choice poll (not used yet, carried for later) */
+    /* The poll's OWN id -- distinct from the status id, needed to POST
+     * /api/v1/polls/:id/votes (submitting a vote is future work, see
+     * TootTimeline/fs3etoottimeline_posts.c's TTL_HOT_POLL_VOTE build; this
+     * is carried now so it's already in place when that lands). "" when
+     * fmas_PollOptionCount==0. */
+    char  *fmas_PollId;
+    /* ISO8601 "YYYY-MM-DDTHH:MM:SS.sssZ", always UTC, same shape as
+     * fmas_CreatedAt -- "" if the server sent JSON null (an anonymous
+     * client-created poll with no expiry, or an ancient server predating
+     * this field). Used to compute the "X hours/days left" the GUI shows
+     * on an open poll in place of "Poll closed". */
+    char  *fmas_PollExpiresAt;
+    /* TRUE if the CONNECTED user has already cast a vote on this poll
+     * (Mastodon's own "voted" field -- only meaningful when authenticated;
+     * FALSE for an anonymous/unauthenticated fetch, same as every other
+     * *_Favourited/Reblogged/Bookmarked-style "did I already..." flag).
+     * Drives whether the GUI shows the vote-picker (radio buttons) or the
+     * result bars with no vote hot-spots. */
+    BOOL   fmas_PollVoted;
 
     /* Link preview "card" -- server-generated (Mastodon itself fetches the
      * linked page's OpenGraph tags when the toot is posted and caches the
@@ -833,6 +864,23 @@ typedef struct FS3ENetPostStatusReq {
     ULONG fs3ep_MediaCount;
     char *fs3ep_Language;    /* ISO 639 code (e.g. "en"), "" = unspecified -- see
                                * FS3ETootView_GetLanguage/FS3EMastodon_PostStatus */
+
+    /* Poll ("survey") to attach to this status -- fs3ep_PollOptionCount==0
+     * means no poll (the common case, and the only option when
+     * fs3ep_MediaCount>0: Mastodon itself disallows a status having both a
+     * poll and attached media, same mutual exclusion as read-side
+     * FS3ENetStatus.fmas_PollOptionCount/fmas_MediaCount above). Options
+     * past fs3ep_PollOptionCount are NULL. See FS3ETootView's
+     * pollOptionEditor[]/pollExpirationChooser (fs3etootview.h) for where
+     * these come from on the compose side. */
+    char  *fs3ep_PollOptions[FS3ENET_MAX_POLL_OPTIONS];
+    ULONG  fs3ep_PollOptionCount;
+    ULONG  fs3ep_PollExpiresIn; /* seconds until the poll closes; meaningless
+                                  * when fs3ep_PollOptionCount==0 */
+    BOOL   fs3ep_PollMultiple;  /* TRUE = multiple-choice poll (Mastodon's
+                                  * poll[multiple]); meaningless when
+                                  * fs3ep_PollOptionCount==0 -- see
+                                  * FS3ETootView_GetPollMultiple */
 } FS3ENetPostStatusReq;
 
 FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
@@ -841,7 +889,9 @@ FS3ENetPostStatusReq *FS3ENetPostStatusReq_Alloc(
     const char *inReplyToId, const char *quoteApprovalPolicy,
     const char *quotedStatusId,
     const char *const *mediaIds, ULONG mediaCount,
-    const char *language);
+    const char *language,
+    const char *const *pollOptions, ULONG pollOptionCount, ULONG pollExpiresIn,
+    BOOL pollMultiple);
 
 typedef struct FS3ENetPostStatusReply {
     char *fs3ep_StatusId; /* new status id string */
@@ -1034,7 +1084,21 @@ enum FS3ENetAccountsListKind
 {
     FS3ENET_ACCLIST_FOLLOWERS = 0, /* fs3eal_AccountId is whose followers to list */
     FS3ENET_ACCLIST_FOLLOWING,     /* fs3eal_AccountId is whose following to list */
-    FS3ENET_ACCLIST_SEARCH         /* fs3eal_Query is the raw (unencoded) search text */
+    FS3ENET_ACCLIST_SEARCH,        /* fs3eal_Query is the raw (unencoded) search text */
+    FS3ENET_ACCLIST_BLOCKS,        /* GET /api/v1/blocks -- accounts the CONNECTED user has
+                                     * blocked; fs3eal_AccountId/fs3eal_Query both "", there's
+                                     * no "whose list" to name (it's always the connected
+                                     * account's own). */
+    FS3ENET_ACCLIST_FAVOURITED_BY, /* GET /api/v1/statuses/:id/favourited_by -- fs3eal_AccountId
+                                     * is reused (same field, different meaning) as the STATUS
+                                     * id whose favouriters to list, from the Timeline menu's
+                                     * "Who Faved that Toot" (see FS3EApp_ShowFavouritedBy,
+                                     * TTIMELINE_SelectedPostId). Single page only, same
+                                     * limitation as every other kind here -- Mastodon's Link
+                                     * header pagination isn't followed. */
+    FS3ENET_ACCLIST_REBLOGGED_BY   /* GET /api/v1/statuses/:id/reblogged_by -- same reuse of
+                                     * fs3eal_AccountId as a status id, for "Who Boosted that
+                                     * Toot" (FS3EApp_ShowRebloggedBy). */
 };
 
 typedef struct FS3ENetAccountsListReq {
@@ -1043,7 +1107,9 @@ typedef struct FS3ENetAccountsListReq {
                                        * reasoning as FS3ENetTimelineReq's own field */
     char  *fs3eal_ApiBaseUrl;
     char  *fs3eal_AccessToken;
-    char  *fs3eal_AccountId; /* FOLLOWERS/FOLLOWING: whose list; "" for SEARCH */
+    char  *fs3eal_AccountId; /* FOLLOWERS/FOLLOWING: whose list; FAVOURITED_BY/REBLOGGED_BY:
+                               * the STATUS id instead (see those kinds' own comments); ""
+                               * for SEARCH/BLOCKS */
     char  *fs3eal_Query;     /* SEARCH: raw (unencoded) query text; "" otherwise */
 } FS3ENetAccountsListReq;
 
@@ -1125,6 +1191,77 @@ typedef struct FS3ENetBookmarkReply {
     char  *fs3ebk_StatusId;
     BOOL   fs3ebk_Bookmarked;
 } FS3ENetBookmarkReply;
+
+/*
+ * FS3ENETQ_VOTE_POLL — POST /api/v1/polls/:id/votes.
+ *
+ * fs3evp_PollId is the poll's OWN id (FS3ENetStatus.fmas_PollId /
+ * TTLPost.pollId), NOT the status id -- Mastodon's vote endpoint addresses
+ * the poll object directly. fs3evp_ChoiceIndex is the 0-based option index
+ * (TTL_HOT_POLL_VOTE's hot-spot data is the 1-based option number the GUI
+ * shows the user -- friendsh3ep.c subtracts 1 before building this
+ * request). Sent as a single-element JSON array ("choices":[N]) -- this
+ * app's poll UI only supports single-choice voting (see FS3ETootView's
+ * poll compose window, no "multiple choice" option either), so there's
+ * never more than one index to send.
+ *
+ * fs3evp_StatusId travels through unchanged, carried only so the reply
+ * handler (fs3erequests.c) knows which status to re-fetch on success --
+ * see FS3ENetVotePollReply. On FS3ENETR_OK, fs3em_Data is replaced with
+ * one; the vote itself carries no useful body worth keeping (Mastodon
+ * returns the updated Poll object, but re-fetching the whole status is
+ * simpler and reuses the exact SINGLE_REFRESH plumbing
+ * FS3EApp_RefreshVisibleToots/F5 already has, rather than a second,
+ * poll-only patch path).
+ */
+typedef struct FS3ENetVotePollReq {
+    char *fs3evp_ApiBaseUrl;
+    char *fs3evp_AccessToken;
+    char *fs3evp_PollId;
+    char *fs3evp_StatusId;
+    ULONG fs3evp_ChoiceIndex;
+} FS3ENetVotePollReq;
+
+FS3ENetVotePollReq *FS3ENetVotePollReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken,
+    const char *pollId, const char *statusId, ULONG choiceIndex);
+
+typedef struct FS3ENetVotePollReply {
+    char *fs3evp_StatusId; /* echoed from the request, see above */
+} FS3ENetVotePollReply;
+
+/*
+ * FS3ENETQ_DOMAIN_BLOCKS — GET /api/v1/domain_blocks: the connected
+ * account's own blocked servers. Unlike every other list request in this
+ * file, the server's reply is a bare array of plain domain strings, not
+ * Account/Status objects -- FS3ENet_HandleDomainBlocks (fs3enet.c) still
+ * reuses FS3EMastodon_GetTimeline(..., FS3ENET_TLSHAPE_ARRAY, ...) to fetch
+ * it (that function only checks "is the top-level JSON a plain array", it
+ * has no opinion on what its elements are), just walks the array expecting
+ * cJSON string items instead of object items. Single page only, same
+ * "no RFC5988 Link: header parsing" limitation as FS3ENETQ_ACCOUNTS_LIST.
+ */
+typedef struct FS3ENetDomainBlocksReq {
+    ULONG fs3edb_AccountGeneration; /* opaque caller token; echoed in reply */
+    char *fs3edb_ApiBaseUrl;
+    char *fs3edb_AccessToken;       /* always required -- there is no anonymous
+                                      * "someone else's domain blocks" to view */
+} FS3ENetDomainBlocksReq;
+
+FS3ENetDomainBlocksReq *FS3ENetDomainBlocksReq_Alloc(ULONG accountGeneration,
+    const char *apiBaseUrl, const char *accessToken);
+
+/* Header of the flat domain-blocks reply block. Immediately following in
+ * memory: fs3edb_Count char* pointers (an array of pointers, NOT a fixed
+ * cap like FS3ENetPostStatusReq.fs3ep_PollOptions), each pointing into the
+ * packed domain-string bytes that follow THAT array -- same "typed array
+ * then trailing string pool" shape FS3ENetAccountsListReply uses for
+ * FS3EMastodonAccount[], just with a bare char* as the "element" instead
+ * of a whole struct. */
+typedef struct FS3ENetDomainBlocksReply {
+    ULONG fs3edb_AccountGeneration; /* echoed from request */
+    ULONG fs3edb_Count;
+} FS3ENetDomainBlocksReply;
 
 /*
  * FS3ENETQ_BOOKMARKS_LOCAL — list a page of the on-disk offline-bookmarks
@@ -1268,6 +1405,9 @@ FS3ENetRelationshipReq *FS3ENetRelationshipReq_Alloc(
 typedef struct FS3ENetRelationshipReply {
     char *fs3erl_AccountId;
     BOOL  fs3erl_Following;
+    BOOL  fs3erl_Blocking;  /* connected user currently blocks this account --
+                              * drives the profile header's Unblock button, see
+                              * TTL_HOT_UNBLOCK/TTIMELINE_UpdateProfileBlocked. */
 } FS3ENetRelationshipReply;
 
 /*
@@ -1343,6 +1483,97 @@ typedef struct FS3ENetFollowReply {
     char *fs3efo_AccountId;
     BOOL  fs3efo_Following;
 } FS3ENetFollowReply;
+
+/*
+ * FS3ENETQ_BLOCK — POST /api/v1/accounts/:id/block, from the User menu's
+ * "Block user" item (see Action_UserBlock/Action_ToggleBlock). On
+ * FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetBlockReply carrying
+ * the server-confirmed following/blocking booleans (see
+ * FS3EMastodon_Block's own comment on why following matters here too --
+ * unlike FS3ENETQ_UNBLOCK, a block can also flip a still-showing
+ * "Following" state).
+ */
+typedef struct FS3ENetBlockReq {
+    char *fs3eblk_ApiBaseUrl;
+    char *fs3eblk_AccessToken;
+    char *fs3eblk_AccountId;
+} FS3ENetBlockReq;
+
+FS3ENetBlockReq *FS3ENetBlockReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *accountId);
+
+typedef struct FS3ENetBlockReply {
+    char *fs3eblk_AccountId;
+    BOOL  fs3eblk_Following;
+    BOOL  fs3eblk_Blocking;
+} FS3ENetBlockReply;
+
+/*
+ * FS3ENETQ_UNBLOCK — POST /api/v1/accounts/:id/unblock. Unlike
+ * FS3ENETQ_FOLLOW there is no toggle direction and nothing to echo back
+ * beyond success/failure -- the caller already knows the resulting state
+ * is "not blocked" (see FS3EMastodon_Unblock's own comment). On
+ * FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetUnblockReply
+ * carrying just the account id, so the reply handler can target the
+ * right profile header via TTIMELINE_UpdateProfileBlocked.
+ */
+typedef struct FS3ENetUnblockReq {
+    char *fs3eub_ApiBaseUrl;
+    char *fs3eub_AccessToken;
+    char *fs3eub_AccountId;
+} FS3ENetUnblockReq;
+
+FS3ENetUnblockReq *FS3ENetUnblockReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *accountId);
+
+typedef struct FS3ENetUnblockReply {
+    char *fs3eub_AccountId;
+} FS3ENetUnblockReply;
+
+/*
+ * FS3ENETQ_DOMAIN_BLOCK_STATE — GET /api/v1/domain_blocks, scanned for one
+ * domain (see FS3EMastodon_IsDomainBlocked's own doc comment for the
+ * single-page limitation). Fired once per "about this server" lookup to
+ * drive the instance header's Block/Unblock button label. On FS3ENETR_OK,
+ * fs3em_Data is replaced with an FS3ENetDomainBlockStateReply.
+ */
+typedef struct FS3ENetDomainBlockStateReq {
+    char *fs3edbs_ApiBaseUrl;
+    char *fs3edbs_AccessToken;
+    char *fs3edbs_Domain;
+} FS3ENetDomainBlockStateReq;
+
+FS3ENetDomainBlockStateReq *FS3ENetDomainBlockStateReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *domain);
+
+typedef struct FS3ENetDomainBlockStateReply {
+    char *fs3edbs_Domain;
+    BOOL  fs3edbs_Blocked;
+} FS3ENetDomainBlockStateReply;
+
+/*
+ * FS3ENETQ_DOMAIN_BLOCK_TOGGLE — POST /api/v1/domain_blocks?domain=<domain>
+ * (fs3edbt_Block=TRUE) or DELETE .../domain_blocks?domain=<domain>
+ * (fs3edbt_Block=FALSE). Same "toggle direction chosen by the caller,
+ * confirmed state echoed back" shape as FS3ENETQ_FOLLOW -- except here the
+ * confirmed state is always just fs3edbt_Block itself (see
+ * FS3EMastodon_ToggleDomainBlock's own doc comment: success guarantees
+ * that state, nothing else to read back from the response body).
+ */
+typedef struct FS3ENetDomainBlockToggleReq {
+    char *fs3edbt_ApiBaseUrl;
+    char *fs3edbt_AccessToken;
+    char *fs3edbt_Domain;
+    BOOL  fs3edbt_Block;   /* TRUE=block, FALSE=unblock */
+} FS3ENetDomainBlockToggleReq;
+
+FS3ENetDomainBlockToggleReq *FS3ENetDomainBlockToggleReq_Alloc(
+    const char *apiBaseUrl, const char *accessToken, const char *domain, BOOL block);
+
+typedef struct FS3ENetDomainBlockToggleReply {
+    char *fs3edbt_Domain;
+    BOOL  fs3edbt_Blocked;
+} FS3ENetDomainBlockToggleReply;
 
 /*
  * FS3ENETQ_TRANSLATE_STATUS — POST /api/v1/statuses/:id/translate

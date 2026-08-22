@@ -453,6 +453,19 @@ typedef struct TTLPost {
                           * patched there; the header uses its own singular
                           * FS3ENETQ_RELATIONSHIP/TTIMELINE_UpdateProfileFollow
                           * path instead). */
+    BOOL   blocked;     /* TTLProfileHeader_Class: connected user currently blocks
+                          * this account -- see TTLProfileHeaderSetup.blocked. Draws/
+                          * hit-tests the "Unblock" button (TTL_HOT_UNBLOCK) right of
+                          * Follow/Unfollow when TRUE. TTLInstanceHeader_Class reuses
+                          * this same field for a different concept -- connected user
+                          * blocks this DOMAIN (see TTLInstanceHeaderSetup.blocked),
+                          * driving its own "Block server"/"Unblock server" button
+                          * (TTL_HOT_BLOCK_SERVER) -- same "borrow the existing slot
+                          * rather than add a row-kind-specific field" convention
+                          * ttl_instance_header_alloc's own comment already documents
+                          * for username/acct/body. Always FALSE on an account-row
+                          * list item (TTLAccountRow_Class never reads or patches this
+                          * field). */
     WORD   countsRowY;     /* post-relative Y of the "N Followers   N Following" line,
                              * computed once by ttl_profile_header_layout and reused
                              * as-is by build_hotspots -- never re-derived, same
@@ -527,6 +540,9 @@ typedef struct TTLPost {
     ULONG  pollVotesCount;
     BOOL   pollExpired;
     BOOL   pollMultiple;
+    char  *pollId;              /* see TTLPostSetup.pollId */
+    char  *pollExpiresAt;       /* see TTLPostSetup.pollExpiresAt; NULL/"" = none */
+    BOOL   pollVoted;           /* see TTLPostSetup.pollVoted */
     WORD   pollBlockY;
 
     /* "N replies" thread-indicator row (vertical bar + "...", see
@@ -695,6 +711,10 @@ typedef struct TTLData {
                                       * fixed cap" reasoning as lastHotSpotStr above.
                                       * NULL = no click yet, or that attachment has no
                                       * separately-known real file URL. */
+    char   lastHotSpotPollId[64];   /* see TTIMELINE_LastHotSpotPollId -- same size/
+                                      * shape as lastHotSpotPostId above (a poll id is
+                                      * a Mastodon snowflake id too). "" = no click yet,
+                                      * or the clicked post has no poll. */
 
     /* ---- "Selected" toot for TTIMELINE_CopySelectedText (see its own
      * doc comment in fs3etoottimeline.h) ---- AllocVec'd owned copy of
@@ -719,6 +739,20 @@ typedef struct TTLData {
     char  *selectedText;
     char  *selectedAuthorName;
     char  *selectedAuthorAcct;
+
+    /* ---- TTIMELINE_SelectedPostId (see TTL_OnGet) ----
+     * The same clicked post's targetId-or-postId (see TTLPost.targetId's
+     * own comment for the reblog-wrapper case), captured as a bounded copy
+     * alongside selectedText at the same button-down -- fixed buffer, not
+     * AllocVec'd, same "a status id has a small known-bounded length"
+     * reasoning lastHotSpotPostId already uses (unlike selectedText's own
+     * unbounded body). Only meaningful when selectedText is also non-NULL
+     * (a click has happened) -- the "no click yet, topmost visible post"
+     * fallback TTIMELINE_CopySelectedText's own comment documents is
+     * re-resolved independently by TTL_OnGet's TTIMELINE_SelectedPostId
+     * case when this is still empty, written into this same buffer just
+     * before returning it. */
+    char  lastSelectedPostId[64];
 
     /* ---- TTIMELINE_OldestPostId/NewestPostId (see TTL_OnGet) ----
      * Same "owned copy, not a borrowed pointer" reasoning as
@@ -858,6 +892,18 @@ INLINE TTLChannel *ttl_active(TTLData *inst)
 INLINE BOOL ttl_is_waiting(TTLData *inst)
 {
     return (BOOL)(ttl_active(inst)->postCount == 0);
+}
+
+/* TRUE = this post's poll (if any) should render as results (bars +
+ * percentages, no vote hot-spots): either it's closed, or the connected
+ * user already voted. FALSE = it's open and not yet voted -- the
+ * radio-button picker (see TTL_POST_MAX_POLL_OPTIONS's render-mode
+ * comment in fs3etoottimeline.h). Shared by ttl_toot_layout/render/
+ * build_hotspots so the three can never disagree on which mode a poll is
+ * in. Meaningless (never called) when post->pollOptionCount==0. */
+INLINE BOOL ttl_poll_show_results(const TTLPost *post)
+{
+    return (BOOL)(post->pollExpired || post->pollVoted);
 }
 
 /* Lowest scrollY a channel may be clamped to. contentTopY is where the
@@ -1016,6 +1062,20 @@ TTLPost *ttl_news_card_alloc(const TTLPostSetup *setup); /* fs3etoottimeline_new
 extern const TTLItemClass TTLListTitle_Class;
 TTLPost *ttl_list_title_alloc(const TTLPostSetup *setup); /* fs3etoottimeline_posts.c */
 
+/* One blocked-server domain per row (see TTLPostSetup.isDomainRow) -- an
+ * ordinary scrolling list row, unlike TTLListTitle_Class's singular pinned
+ * banner above, so it gets its own left-aligned/normal-pen render
+ * (ttl_domain_row_render) instead of reusing ttl_boundary_render's
+ * centered/accent-colored look; still reuses ttl_boundary_layout's plain
+ * fixed one-line height, and the same dup-on-alloc/free-on-dispose
+ * ownership of post->body as TTLListTitle_Class (built per-request, not a
+ * static literal). No hot-spot: purely informational for now, same as
+ * TTLListTitle_Class. */
+extern const TTLItemClass TTLDomainRow_Class;
+TTLPost *ttl_domain_row_alloc(const TTLPostSetup *setup); /* fs3etoottimeline_posts.c */
+void     ttl_domain_row_render(TTLData *inst, struct RastPort *rp,
+                                TTLPost *item, LONG tileBaseY);      /* fs3etoottimeline_tiles.c */
+
 /* fs3etoottimeline_tiles.c */
 BOOL     ttl_tiles_alloc  (TTLData *inst, struct RastPort *rp);
 void     ttl_tiles_free   (TTLData *inst);
@@ -1056,13 +1116,18 @@ void     ttl_notify       (Class *cl, Object *o, struct GadgetInfo *gi,
  * TTIMELINE_LastHotSpotAudioUrl the same way -- the owning post's
  * mediaAudioUrls[mediaCurrentIndex] (TTLPost.mediaAudioUrls), or NULL/""
  * if unknown; only meaningful for TTL_HOT_PLAY_AUDIO on a slot that also
- * has cover art (see TTLPostSetup.mediaAudioUrls' own doc comment). */
+ * has cover art (see TTLPostSetup.mediaAudioUrls' own doc comment). pollId
+ * is copied into lastHotSpotPollId and carried as
+ * TTIMELINE_LastHotSpotPollId the same way -- the owning post's own
+ * TTLPost.pollId, or NULL/"" if the post has no poll; only meaningful for
+ * TTL_HOT_POLL_VOTE (postId/targetId alone identifies the STATUS, not the
+ * poll object a vote actually POSTs to). */
 void     ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                              UBYTE type, const char *data, ULONG dataLen,
                              const char *postId, BOOL favourited, BOOL following,
                              BOOL reblogged, BOOL bookmarked, BOOL quotable,
                              const char *mediaIds, const char *acct,
-                             const char *audioUrl);
+                             const char *audioUrl, const char *pollId);
 /* only process have right to send render, ask with notify ProcessREfresh
  * void     ttl_render_self  (Class *cl, Object *o, struct GadgetInfo *gi);
 */

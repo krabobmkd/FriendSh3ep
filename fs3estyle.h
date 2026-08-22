@@ -215,6 +215,15 @@ typedef struct {
     BmImage        btDeck;
     struct Image  *btDeckImages[FS3ESTYLE_BTDECK_COUNT];
 
+    /* The 3 built-in penmap.image glyphs used for whichever btDeckImages[]
+     * slot(s) aren't loaded from a theme -- same "no theme" / "button.gadget
+     * can't go back to a NULL GA_Image once a real one was attached"
+     * reasoning as tbDefaultImages above, just for the second (btdeck.iff)
+     * sheet -- see fs3etbdefaultbtn.h. Created once (also from
+     * FS3EStyle_CreateDefaultButtonImages) and persist for the whole app
+     * run, disposed only by FS3EStyle_FreeThemeImages() at final teardown. */
+    struct Image  *btDeckDefaultImages[FS3ESTYLE_BTDECK_COUNT];
+
     /* Cell size derived from btDeck as (width / 2, height / 3) by
      * FS3EStyle_LoadThemeImages. 0 when no theme image is loaded --
      * TitleBarLayout must fall back to its own dpiHeight-based square size

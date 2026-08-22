@@ -564,13 +564,22 @@ static const char *QuotePolicyString(LONG idx)
  * the same story -- an ISO 639 code from FS3ETootView_GetLanguage() (""
  * = unspecified, omitted entirely -- see FS3EMastodon_PostStatus), sent
  * on the POST path only; Mastodon's edit endpoint doesn't accept changing
- * it either.
+ * it either. pollOptions/pollOptionCount/pollExpiresIn/pollMultiple, sent
+ * on the POST path only (a poll can't be added to an existing status via
+ * edit) -- pollOptionCount==0 for every non-poll compose kind (pollMultiple
+ * is meaningless then too), the caller (GID_TOOT_SEND_BUTTON's
+ * FS3ETOOT_KIND_POLL branch below) is the only one that ever passes
+ * pollOptionCount>0, and it never has attachments to go with it (poll
+ * mode's compose window has no attach-media rows -- see fs3etootview.c's
+ * extrasLayout).
  *
  * Not static: fs3erequests.c's FS3ENETQ_UPLOAD_MEDIA reply handler calls
  * this directly too -- see the extern declaration there. */
 void FS3EApp_SubmitToot(const char *body, LONG visibility, LONG quotePolicy,
                          BOOL sensitive, const char *language,
-                         const char *const *newMediaIds, ULONG newMediaCount)
+                         const char *const *newMediaIds, ULONG newMediaCount,
+                         const char *const *pollOptions, ULONG pollOptionCount,
+                         ULONG pollExpiresIn, BOOL pollMultiple)
 {
     if (!body || !body[0] || !app->accountAccessToken) {
         if (body) FreeVec((APTR)body);
@@ -631,7 +640,8 @@ void FS3EApp_SubmitToot(const char *body, LONG visibility, LONG quotePolicy,
                 app->accountApiBaseUrl, app->accountAccessToken,
                 body, VisibilityString(visibility), sensitive, "",
                 inReplyToId, QuotePolicyString(quotePolicy), quotedStatusId,
-                mediaIds, mediaCount, language);
+                mediaIds, mediaCount, language,
+                pollOptions, pollOptionCount, pollExpiresIn, pollMultiple);
         FreeVec((APTR)body);
         FS3EApp_NetSend(FS3ENETQ_POST_STATUS, req, sizeof(*req));
     }
@@ -1011,6 +1021,13 @@ void fs3e_setViewMode(ULONG viewMode)
     oldViewMode = app->viewMode;
     app->viewMode = viewMode;
 
+    /* Remember where we're coming FROM, the moment Search is genuinely
+     * entered from somewhere else -- see searchOriginViewMode's own doc
+     * comment in friendsh3ep.h for why (FS3EApp_SearchGoBack's fallback
+     * once its own history stack is empty). */
+    if (viewMode == VIEWMODE_Search && oldViewMode != VIEWMODE_Search)
+        app->searchOriginViewMode = oldViewMode;
+
     /* Show the search word editor only in VIEWMODE_Search, and only touch
      * it (SetGdAttrs + RethinkLayout) when actually entering/leaving that
      * channel -- switching between two non-Search channels must not fire
@@ -1290,6 +1307,16 @@ int main(int argc, char **argv)
     /* -1 == "no scroll restore pending" -- MEMF_CLEAR left it 0, which is
      * a valid scroll position, so it must be set explicitly here. */
     app->searchPendingScrollY = -1;
+
+    /* VIEWMODE_Search == "no origin captured yet" -- MEMF_CLEAR left it 0
+     * (VIEWMODE_User), which is a real, valid channel FS3EApp_SearchGoBack
+     * would otherwise wrongly jump to on a stray Delete-key press before
+     * Search has ever been entered this session. VIEWMODE_Search itself can
+     * never be a legitimate origin (fs3e_setViewMode only ever assigns this
+     * field when actually LEAVING some other, non-Search channel), so it's
+     * a safe, unambiguous sentinel -- see searchOriginViewMode's own doc
+     * comment in friendsh3ep.h. */
+    app->searchOriginViewMode = VIEWMODE_Search;
 
     FS3ESettings_Load(&app->settings);
 
@@ -2430,6 +2457,74 @@ int main(int argc, char **argv)
                                     break;
                                 }
 
+                                if (app->tootView.composeKind == FS3ETOOT_KIND_POLL) {
+                                    /* Poll toots never carry attachments --
+                                     * poll mode's compose window has no
+                                     * attach-media rows (see fs3etootview.c's
+                                     * extrasLayout) -- so this bypasses the
+                                     * attach-media checking block below
+                                     * entirely, same as MODIFY_BIO above. */
+                                    if (body && body[0] && app->accountAccessToken) {
+                                        /* Options are read in order (1..4) and only trailing
+                                         * ones are optional -- option 3 is only counted if
+                                         * non-empty, and option 4 is only even looked at (let
+                                         * alone counted) when option 3 was: filling 4 while
+                                         * leaving 3 blank does not "skip ahead", it's simply
+                                         * dropped, same as the field never having been typed
+                                         * in at all. Options 1 and 2 are always mandatory --
+                                         * that's the "minimum is 2" floor. */
+                                        char *pollOptions[FS3ETOOT_NUM_POLL_OPTIONS];
+                                        ULONG pollOptionCount = 0, pi;
+                                        const char *opt1 = FS3ETootView_GetPollOption(&app->tootView, 0);
+                                        const char *opt2 = FS3ETootView_GetPollOption(&app->tootView, 1);
+                                        const char *opt3 = FS3ETootView_GetPollOption(&app->tootView, 2);
+                                        const char *opt4 = FS3ETootView_GetPollOption(&app->tootView, 3);
+
+                                        if (opt1 && opt1[0] && opt2 && opt2[0]) {
+                                            pollOptions[pollOptionCount++] = (char *)opt1;
+                                            pollOptions[pollOptionCount++] = (char *)opt2;
+                                            if (opt3 && opt3[0]) {
+                                                pollOptions[pollOptionCount++] = (char *)opt3;
+                                                if (opt4 && opt4[0])
+                                                    pollOptions[pollOptionCount++] = (char *)opt4;
+                                                else if (opt4)
+                                                    FreeVec((APTR)opt4);
+                                            } else {
+                                                if (opt3) FreeVec((APTR)opt3);
+                                                if (opt4) FreeVec((APTR)opt4); /* dropped: 3 is blank */
+                                            }
+
+                                            FS3EApp_SubmitToot(body, visibility, quotePolicy,
+                                                sensitive, language, NULL, 0,
+                                                (const char *const *)pollOptions,
+                                                pollOptionCount,
+                                                FS3ETootView_GetPollExpiresInSeconds(&app->tootView),
+                                                FS3ETootView_GetPollMultiple(&app->tootView));
+                                        } else {
+                                            /* Mastodon itself requires at least 2 non-empty
+                                             * options -- caught here rather than left to the
+                                             * server's own 422 so the user gets an immediate,
+                                             * specific explanation. */
+                                            if (opt1) FreeVec((APTR)opt1);
+                                            if (opt2) FreeVec((APTR)opt2);
+                                            if (opt3) FreeVec((APTR)opt3);
+                                            if (opt4) FreeVec((APTR)opt4);
+                                            FreeVec((APTR)body);
+                                            FS3ERequester_Show(app->tootView.window,
+                                                "FriendSh3ep - Poll Error",
+                                                "A poll needs at least 2 answers (Option 1 and Option 2).",
+                                                "OK", FS3EREQ_ERROR);
+                                            ExpungeMessages();
+                                        }
+
+                                        for (pi = 0; pi < pollOptionCount; pi++)
+                                            FreeVec(pollOptions[pi]);
+                                    } else if (body) {
+                                        FreeVec((APTR)body);
+                                    }
+                                    break;
+                                }
+
                                 if (body && body[0] && app->accountAccessToken &&
                                     !app->tootUploadPending)
                                 {
@@ -2465,7 +2560,8 @@ int main(int argc, char **argv)
                                         FreeVec((APTR)body);
                                     } else if (st1 != FS3ETOOT_ATTACH_OK && st2 != FS3ETOOT_ATTACH_OK) {
                                         /* Neither row has a file -- send as-is. */
-                                        FS3EApp_SubmitToot(body, visibility, quotePolicy, sensitive, language, NULL, 0);
+                                        FS3EApp_SubmitToot(body, visibility, quotePolicy, sensitive, language,
+                                                            NULL, 0, NULL, 0, 0, FALSE);
                                     } else {
                                         /* At least one attachment ready -- upload it first; queue
                                          * the second behind it if both are ready (Mastodon's media
@@ -2645,6 +2741,7 @@ int main(int argc, char **argv)
                                     const char *hotSpotMediaIds = NULL;
                                     const char *hotSpotAcct = NULL;
                                     const char *hotSpotAudioUrl = NULL;
+                                    const char *hotSpotPollId = NULL;
                                     BOOL hotSpotFavourited = FALSE;
                                     BOOL hotSpotFollowing = FALSE;
                                     BOOL hotSpotReblogged = FALSE;
@@ -2680,6 +2777,9 @@ int main(int argc, char **argv)
 
                                     ptag = FindTagItem(TTIMELINE_LastHotSpotQuotable, msg);
                                     if(ptag) hotSpotQuotable = (BOOL)ptag->ti_Data;
+
+                                    ptag = FindTagItem(TTIMELINE_LastHotSpotPollId, msg);
+                                    if(ptag) hotSpotPollId = (const char *)ptag->ti_Data;
 
 
                                     switch (hotSpotType)
@@ -2795,6 +2895,104 @@ int main(int argc, char **argv)
                                              * menu entry, same reasoning
                                              * as Action_ToggleFavorite. */
                                             Action_ToggleFollow(app, app->searchProfileAccountId, hotSpotFollowing);
+                                            break;
+
+                                        case TTL_HOT_UNBLOCK:
+                                            /* Unlike TTL_HOT_FOLLOW, no
+                                             * current-state read needed --
+                                             * this button only ever shows
+                                             * when already blocked (see
+                                             * TTLProfileHeaderSetup.blocked),
+                                             * so it's unconditionally an
+                                             * unblock (Action_ToggleBlock's
+                                             * currentlyBlocked=TRUE). Confirm
+                                             * first, same "leftmost gadget =
+                                             * go ahead" convention as
+                                             * TTL_HOT_DELETE -- the User
+                                             * menu's own Block/Unblock
+                                             * entries (fs3eaction.c) share
+                                             * this same Action_ToggleBlock
+                                             * but skip the confirm, same
+                                             * "deliberate menu navigation
+                                             * needs no extra confirm" reasoning
+                                             * Follow/Unfollow's menu entries
+                                             * already follow. Reply/UI update
+                                             * happens once the server
+                                             * confirms -- see the
+                                             * FS3ENETQ_UNBLOCK reply handler,
+                                             * which sends
+                                             * TTIMELINE_UpdateProfileBlocked. */
+                                            if (app->searchProfileAccountId &&
+                                                app->accountAccessToken)
+                                            {
+                                                LONG choice = FS3ERequester_Show(CurrentMainWindow,
+                                                    "FriendSh3ep - Unblock User",
+                                                    "Unblock this user?",
+                                                    "Unblock|Cancel", FS3EREQ_QUESTION);
+                                                ExpungeMessages();
+                                                if (choice)
+                                                    Action_ToggleBlock(app, app->searchProfileAccountId, TRUE);
+                                            }
+                                            break;
+
+                                        case TTL_HOT_BLOCK_SERVER:
+                                            /* Toggle, unlike TTL_HOT_UNBLOCK --
+                                             * reads app->searchInstanceBlocked
+                                             * (kept in sync by the
+                                             * FS3ENETQ_DOMAIN_BLOCK_STATE/
+                                             * TOGGLE reply handlers) to decide
+                                             * which direction. Block gets the
+                                             * stronger WARNING styling (you
+                                             * stop seeing posts from an entire
+                                             * server), Unblock the plain
+                                             * QUESTION styling TTL_HOT_UNBLOCK
+                                             * itself uses. Reply/UI update
+                                             * happens once the server confirms
+                                             * -- see the
+                                             * FS3ENETQ_DOMAIN_BLOCK_TOGGLE
+                                             * reply handler, which sends
+                                             * TTIMELINE_UpdateInstanceBlocked. */
+                                            if (app->searchInstanceDomain &&
+                                                app->accountAccessToken)
+                                            {
+                                                BOOL wantBlock = !app->searchInstanceBlocked;
+                                                LONG choice = FS3ERequester_Show(CurrentMainWindow,
+                                                    wantBlock ? "FriendSh3ep - Block Server"
+                                                              : "FriendSh3ep - Unblock Server",
+                                                    wantBlock ? "Block this server?\nYou will no longer see posts from it."
+                                                              : "Unblock this server?",
+                                                    wantBlock ? "Block|Cancel" : "Unblock|Cancel",
+                                                    wantBlock ? FS3EREQ_WARNING : FS3EREQ_QUESTION);
+                                                ExpungeMessages();
+                                                if (choice) {
+                                                    FS3ENetDomainBlockToggleReq *req =
+                                                        FS3ENetDomainBlockToggleReq_Alloc(
+                                                            app->accountApiBaseUrl,
+                                                            app->accountAccessToken,
+                                                            app->searchInstanceDomain,
+                                                            wantBlock);
+                                                    if (req)
+                                                        FS3EApp_NetSend(FS3ENETQ_DOMAIN_BLOCK_TOGGLE, req, sizeof(*req));
+                                                }
+                                            }
+                                            break;
+
+                                        case TTL_HOT_DOMAIN:
+                                            /* Blocked-servers list row --
+                                             * hotSpotString is the domain
+                                             * text itself (see TTL_HOT_DOMAIN's
+                                             * doc comment). Opens that
+                                             * domain's own "about this
+                                             * server" page, same flow as
+                                             * typing it into the Server
+                                             * search box -- its Block/Unblock
+                                             * button (TTL_HOT_BLOCK_SERVER)
+                                             * will reflect its current
+                                             * (still blocked) state once the
+                                             * FS3ENETQ_DOMAIN_BLOCK_STATE
+                                             * check lands. */
+                                            if (hotSpotString && hotSpotString[0])
+                                                FS3EApp_SearchInstance(hotSpotString);
                                             break;
 
                                         case TTL_HOT_TRANSLATE:
@@ -3158,6 +3356,55 @@ int main(int argc, char **argv)
                                             }
                                             break;
 
+                                        case TTL_HOT_POLL_VOTE:
+                                            /* hotSpotId is the status carrying
+                                             * the poll (targetId), hotSpotPollId
+                                             * the poll's OWN id (needed for the
+                                             * vote endpoint, distinct from the
+                                             * status id), hotSpotString the
+                                             * 1-based option number as an ASCII
+                                             * digit -- see TTL_HOT_POLL_VOTE's
+                                             * own comment in fs3etoottimeline.h.
+                                             * Confirm first, same "leftmost
+                                             * gadget = go ahead" convention as
+                                             * TTL_HOT_DELETE above. The actual
+                                             * server-confirmed result (new vote
+                                             * counts, voted=TRUE) doesn't land
+                                             * until the FS3ENETQ_VOTE_POLL reply
+                                             * fires a single-status re-fetch --
+                                             * see fs3erequests.c. */
+
+                                            if (hotSpotId && hotSpotId[0] &&
+                                                hotSpotPollId && hotSpotPollId[0] &&
+                                                hotSpotString && hotSpotString[0] &&
+                                                app->accountAccessToken)
+                                            {
+                                                char body[64];
+                                                LONG choice;
+
+                                                snprintf(body, sizeof(body),
+                                                    "Vote entry %s?", hotSpotString);
+                                                choice = FS3ERequester_Show(CurrentMainWindow,
+                                                    "FriendSh3ep - Vote", body,
+                                                    "OK|Cancel", FS3EREQ_QUESTION);
+                                                ExpungeMessages();
+                                                if (choice) {
+                                                    /* hotSpotString is 1-based
+                                                     * (what the user sees);
+                                                     * Mastodon's choices[] is
+                                                     * 0-based. */
+                                                    ULONG choiceIndex = (ULONG)(atoi(hotSpotString) - 1);
+                                                    FS3ENetVotePollReq *req =
+                                                        FS3ENetVotePollReq_Alloc(
+                                                            app->accountApiBaseUrl,
+                                                            app->accountAccessToken,
+                                                            hotSpotPollId, hotSpotId,
+                                                            choiceIndex);
+                                                    FS3EApp_NetSend(FS3ENETQ_VOTE_POLL, req, sizeof(*req));
+                                                }
+                                            }
+                                            break;
+
                                         case TTL_HOT_REPLY:
                                             /* hotSpotId is the status being
                                              * replied to, hotSpotString its
@@ -3438,6 +3685,7 @@ void exitclose(void)
         if (app->searchProfileAcct)      { FreeVec(app->searchProfileAcct);      app->searchProfileAcct      = NULL; }
         if (app->searchProfileAccountId) { FreeVec(app->searchProfileAccountId); app->searchProfileAccountId = NULL; }
         if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
+        if (app->searchInstanceDomain)   { FreeVec(app->searchInstanceDomain);   app->searchInstanceDomain   = NULL; }
         if (app->searchLastQueryText)    { FreeVec(app->searchLastQueryText);    app->searchLastQueryText    = NULL; }
         if (app->pendingTootBody)        { FreeVec(app->pendingTootBody);        app->pendingTootBody        = NULL; }
         FS3EApp_SearchStackClear();

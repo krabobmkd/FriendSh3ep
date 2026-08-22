@@ -213,6 +213,17 @@ void FS3EMastodon_UrlEncode(const char *src, char *dst, ULONG dstSize);
  * same "don't send an empty key" reasoning as quotedStatusId -- an omitted
  * language lets the server fall back to its own guess/the account's default,
  * which an explicit empty string would not.
+ * pollOptions/pollOptionCount/pollExpiresIn/pollMultiple, if
+ * pollOptionCount>0, attach a poll to the new status: a nested "poll"
+ * object with an "options" array, "expires_in" (seconds) and "multiple"
+ * (Mastodon's poll[multiple], TRUE = voters may pick more than one
+ * option), same shape whether sent as JSON (this function's own request
+ * body) or form-encoded (Mastodon accepts both). Omitted entirely when
+ * pollOptionCount==0 -- same "don't send an empty key" reasoning as
+ * quotedStatusId/language above. Caller (friendsh3ep.c's
+ * GID_TOOT_SEND_BUTTON) is responsible for never setting both this and
+ * mediaCount>0 -- Mastodon itself rejects a status carrying both a poll and
+ * attached media, this function doesn't re-check it.
  */
 BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *statusText, const char *visibility,
@@ -222,6 +233,8 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *quotedStatusId,
                             const char *const *mediaIds, ULONG mediaCount,
                             const char *language,
+                            const char *const *pollOptions, ULONG pollOptionCount,
+                            ULONG pollExpiresIn, BOOL pollMultiple,
                             char *outStatusId, ULONG outStatusIdSize);
 
 /*
@@ -348,6 +361,19 @@ BOOL FS3EMastodon_Bookmark(const char *apiBaseUrl, const char *accessToken,
                            BOOL *outBookmarked, char **outRawStatusJson);
 
 /*
+ * POST /api/v1/polls/:id/votes -- casts a vote. choiceIndex is the 0-based
+ * option index; sent as a single-element JSON array ("choices":[N]), since
+ * this app's poll UI is single-choice only (see FS3ENetVotePollReq's own
+ * doc comment in fs3enet.h). Success = the server responded 200 OK -- the
+ * returned updated Poll object isn't parsed here at all (the caller
+ * re-fetches the whole status instead, see FS3ENetVotePollReply), so
+ * unlike Favourite/Reblog/Bookmark above this doesn't need to pull
+ * anything out of the response body.
+ */
+BOOL FS3EMastodon_VotePoll(const char *apiBaseUrl, const char *accessToken,
+                           const char *pollId, ULONG choiceIndex);
+
+/*
  * GET /api/v1/accounts/lookup?acct=<acct> -- resolves an acct string
  * ("user" or "user@instance", no leading '@') to a full account. The entry
  * point for opening a profile view: nothing else carries an account id,
@@ -363,14 +389,18 @@ BOOL FS3EMastodon_LookupAccount(const char *apiBaseUrl, const char *accessToken,
                                 const char *acct, FS3EMastodonAccount *outAccount);
 
 /*
- * GET /api/v1/accounts/relationships?id[]=<accountId> -- only the
- * connected user's own "following" state is needed (profile view's
- * Follow/Unfollow button label); the rest of the Relationship object
- * (blocking, muting, ...) isn't used yet. See FS3EMastodon_GetRelationships
- * (plural) below for the batch form, which also reads followed_by.
+ * GET /api/v1/accounts/relationships?id[]=<accountId> -- the connected
+ * user's own "following" state (profile view's Follow/Unfollow button
+ * label) and "blocking" state (profile view's Unblock button, see
+ * TTL_HOT_UNBLOCK) for one account. The rest of the Relationship object
+ * (muting, ...) isn't used yet. See FS3EMastodon_GetRelationships
+ * (plural) below for the batch form, which also reads followed_by (but
+ * not blocking -- that batch form only ever badges account-row list
+ * items with a "Follows you" label, never an Unblock button).
  */
 BOOL FS3EMastodon_GetRelationship(const char *apiBaseUrl, const char *accessToken,
-                                  const char *accountId, BOOL *outFollowing);
+                                  const char *accountId, BOOL *outFollowing,
+                                  BOOL *outBlocking);
 
 /*
  * GET /api/v1/accounts/relationships?id[]=<id>&id[]=<id>... -- batch form
@@ -396,6 +426,54 @@ BOOL FS3EMastodon_GetRelationships(const char *apiBaseUrl, const char *accessTok
 BOOL FS3EMastodon_Follow(const char *apiBaseUrl, const char *accessToken,
                          const char *accountId, BOOL follow,
                          BOOL *outFollowing);
+
+/*
+ * POST /api/v1/accounts/:id/block -- from the User menu's "Block user" item
+ * (see Action_UserBlock/Action_ToggleBlock). On success fills
+ * outFollowing/outBlocking from the server's response (a Relationship
+ * object) -- Mastodon auto-unfollows both directions on block, so
+ * outFollowing lets the caller correctly clear a still-showing "Following"
+ * state too (see the FS3ENETQ_BLOCK reply handler), same "only the
+ * confirmed booleans" rule as FS3EMastodon_Follow.
+ */
+BOOL FS3EMastodon_Block(const char *apiBaseUrl, const char *accessToken,
+                        const char *accountId,
+                        BOOL *outFollowing, BOOL *outBlocking);
+
+/*
+ * POST /api/v1/accounts/:id/unblock -- lifts a block, from the profile
+ * header's "Unblock" button (see TTL_HOT_UNBLOCK) or the User menu's
+ * "Unblock user" item (Action_UserUnblock/Action_ToggleBlock). No state to
+ * echo back beyond success/failure -- the caller already knows the
+ * resulting state is "not blocked" (and unblocking never restores a
+ * following relationship block already severed, so there's nothing to
+ * re-derive for a following flag either, unlike FS3EMastodon_Block above).
+ */
+BOOL FS3EMastodon_Unblock(const char *apiBaseUrl, const char *accessToken,
+                          const char *accountId);
+
+/*
+ * GET /api/v1/domain_blocks -- checks whether the connected account
+ * currently blocks one specific domain, for the "about this server" page's
+ * Block/Unblock button (see TTL_HOT_BLOCK_SERVER). There is no per-domain
+ * lookup endpoint, so this fetches the same first page
+ * FS3ENET_ACCLIST_BLOCKS/FS3ENetDomainBlocksReq already does and scans it
+ * for a match -- same single-page limitation that request's own doc
+ * comment already documents (a block beyond the first page/~200 entries
+ * simply won't be detected here either).
+ */
+BOOL FS3EMastodon_IsDomainBlocked(const char *apiBaseUrl, const char *accessToken,
+                                  const char *domain, BOOL *outBlocked);
+
+/*
+ * POST /api/v1/domain_blocks?domain=<domain> (block=TRUE) or
+ * DELETE /api/v1/domain_blocks?domain=<domain> (block=FALSE), from the
+ * instance header's Block/Unblock server button. Same "toggle direction
+ * chosen by the caller, nothing to echo back beyond success/failure" shape
+ * as FS3EMastodon_Unblock -- Mastodon returns an empty {} either way.
+ */
+BOOL FS3EMastodon_ToggleDomainBlock(const char *apiBaseUrl, const char *accessToken,
+                                    const char *domain, BOOL block);
 
 /*
  * POST /api/v1/statuses/:id/translate (Mastodon 4.0+) -- asks the SERVER to

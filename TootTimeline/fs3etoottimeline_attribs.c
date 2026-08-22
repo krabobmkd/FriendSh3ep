@@ -152,6 +152,8 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                             post = ttl_list_title_alloc(setup);
                         else if (setup->isAccountRow)
                             post = ttl_account_row_alloc(setup);
+                        else if (setup->isDomainRow)
+                            post = ttl_domain_row_alloc(setup);
                         else if (setup->isNewsCard)
                             post = ttl_news_card_alloc(setup);
                         else if (setup->notifType == TTL_NOTIF_FOLLOW ||
@@ -177,12 +179,14 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                             channel->postCount++;
                             /* Pin the "look for something new" / "load
                              * more…" rows around real content -- but NOT
-                             * for a search-list row (account row or its
-                             * title): those are single-page, non-paginated
-                             * fetches (see FS3ENetAccountsListReq's own doc
-                             * comment), so both rows would be misleading
-                             * pinned above/below a flat search/followers/
-                             * following list. News DOES paginate (see
+                             * for a search-list row (account row, domain
+                             * row, or its title): those are single-page,
+                             * non-paginated fetches (see
+                             * FS3ENetAccountsListReq/FS3ENetDomainBlocksReq's
+                             * own doc comments), so both rows would be
+                             * misleading pinned above/below a flat search/
+                             * followers/following/blocked-users/blocked-
+                             * servers list. News DOES paginate (see
                              * FS3ENetNewsReq's own doc comment) and gets
                              * both rows too, same as a normal timeline --
                              * "load more" (TTL_HOT_LOAD_OLDER) drives its
@@ -190,7 +194,8 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                              * has no real OLDER/NEWER-style effect for News
                              * (see FS3EApp_FetchTimelinePage's own News
                              * branch) but is otherwise harmless to show. */
-                            if (!setup->isAccountRow && !setup->isListTitle)
+                            if (!setup->isAccountRow && !setup->isListTitle &&
+                                !setup->isDomainRow)
                                 ttl_channel_add_boundaries(inst, channel);
                         } else {
                             /* Prepend: new post goes above the current top
@@ -688,29 +693,46 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                          * profile's own toots correctly take the normal
                          * ttl_channel_insert_bottom path below instead of
                          * re-bootstrapping on top of the header. Also
-                         * means ttl_channel_add_boundaries() (which would
-                         * add a "look for something new" row we don't
-                         * want here -- see the header comment) never
-                         * runs for this channel; the pagination row is
-                         * added explicitly below instead. */
+                         * means ttl_channel_add_boundaries() never runs for
+                         * this channel -- it assumes a non-empty list (see
+                         * its own doc comment), which doesn't hold here
+                         * (the header is never a channel->posts member, see
+                         * above), so both boundary rows are bootstrapped by
+                         * hand below instead, bare AddHead/AddTail same as
+                         * TIMELINE_AddPost's very-first-real-post case. */
                         channel->postCount = 1;
 
-                        /* Pagination row only ("look for something new"
-                         * doesn't apply to a single profile's toot
-                         * history). channel->posts is genuinely empty at
-                         * this point (the header is deliberately never a
-                         * member of it -- see above), so this is a bare
-                         * AddTail, the exact same bootstrap pattern
-                         * TIMELINE_AddPost's very-first-real-post case
-                         * uses: ttl_channel_insert_bottom's own doc
-                         * comment requires a non-empty list as a
-                         * precondition (it reads mlh_TailPred->cls, which
-                         * on a genuinely empty MinList doesn't point at a
-                         * TTLPost at all). Once this lands, the list is
-                         * non-empty and every subsequent real toot page
-                         * correctly goes through the ordinary
-                         * ttl_channel_insert_bottom below (unmodified),
-                         * gluing above this LoadOlder tail as usual. */
+                        /* "Look for something new" -- first (topmost)
+                         * channel->posts member, right after the header.
+                         * Once this lands, any later NEWER-page reply for
+                         * this channel (TTIMELINE_AddPost, prepend) takes
+                         * ttl_channel_insert_top's ordinary
+                         * "head->cls == &TTLLoadNewer_Class" path exactly
+                         * like every other channel, gluing the new post
+                         * between the header and this row -- see
+                         * FS3EApp_RefreshVisibleToots (F5) and
+                         * TTL_HOT_LOAD_NEWER (this row's own click), both of
+                         * which fire that fetch for whichever channel is
+                         * active, profile channels included. */
+                        {
+                            TTLPost *loadNewer = ttl_pseudo_post_alloc(&TTLLoadNewer_Class,
+                                "Look for something new");
+                            if (loadNewer) {
+                                if (loadNewer->cls && loadNewer->cls->layout)
+                                    loadNewer->cls->layout(inst, loadNewer);
+                                loadNewer->timelineY = channel->contentTopY;
+                                AddHead((struct List *)&channel->posts, (struct Node *)&loadNewer->node);
+                                channel->contentBottomY += loadNewer->height;
+                            }
+                        }
+
+                        /* "Load more…" -- last (bottommost) member, glued
+                         * below the loadNewer row above (and, once real
+                         * toots arrive, below all of them too -- every
+                         * subsequent real toot page goes through the
+                         * ordinary ttl_channel_insert_bottom below,
+                         * unmodified, which detects this tail and glues
+                         * above it, same as any other channel). */
                         loadOlder = ttl_pseudo_post_alloc(&TTLLoadOlder_Class,
                             "Load more\xE2\x80\xA6" /* "Load more…" */);
                         if (loadOlder) {
@@ -794,6 +816,54 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                         }
                         header->dirty         = TRUE;
                         header->hotSpotsDirty = TRUE;
+
+                        if (upd->channel == inst->viewMode)
+                            ttl_tiles_invalidate_range(inst,
+                                header->timelineY, header->timelineY + header->height);
+                        redraw = TRUE;
+                    }
+                }
+                used = 1;
+                break;
+            }
+
+            case TTIMELINE_UpdateProfileBlocked: {
+                const TTLProfileBlockedUpdate *upd = (const TTLProfileBlockedUpdate *)tag->ti_Data;
+                if (upd && upd->channel < TTIMELINE_NUM_VIEWMODES) {
+                    TTLChannel *channel = &inst->channels[upd->channel];
+                    if (upd->accountId && channel->headerPost &&
+                        channel->headerPost->postId &&
+                        strcmp(channel->headerPost->postId, upd->accountId) == 0)
+                    {
+                        TTLPost *header = channel->headerPost;
+
+                        header->blocked        = upd->blocked;
+                        header->dirty          = TRUE;
+                        header->hotSpotsDirty  = TRUE;
+
+                        if (upd->channel == inst->viewMode)
+                            ttl_tiles_invalidate_range(inst,
+                                header->timelineY, header->timelineY + header->height);
+                        redraw = TRUE;
+                    }
+                }
+                used = 1;
+                break;
+            }
+
+            case TTIMELINE_UpdateInstanceBlocked: {
+                const TTLInstanceBlockedUpdate *upd = (const TTLInstanceBlockedUpdate *)tag->ti_Data;
+                if (upd && upd->channel < TTIMELINE_NUM_VIEWMODES) {
+                    TTLChannel *channel = &inst->channels[upd->channel];
+                    if (upd->domain && channel->headerPost &&
+                        channel->headerPost->username &&
+                        strcmp(channel->headerPost->username, upd->domain) == 0)
+                    {
+                        TTLPost *header = channel->headerPost;
+
+                        header->blocked        = upd->blocked;
+                        header->dirty          = TRUE;
+                        header->hotSpotsDirty  = TRUE;
 
                         if (upd->channel == inst->viewMode)
                             ttl_tiles_invalidate_range(inst,
@@ -1209,6 +1279,53 @@ ULONG TTL_OnGet(Class *cl, Object *o, struct opGet *msg)
             }
             ReleaseSemaphore(&inst->listSem);
             *msg->opg_Storage = inst->lastOldestPostId[0] ? (ULONG)inst->lastOldestPostId : 0;
+            return 1;
+        }
+        case TTIMELINE_SelectedPostId: {
+            /* Same "selected" concept TTIMELINE_CopySelectedText's SET
+             * handler resolves for the body/name/acct -- if a click has
+             * already happened (selectedText non-NULL), the id was already
+             * resolved and gated on cls==&TTLToot_Class at that same
+             * button-down (see TTL_OnGoActive) -- just return the buffer it
+             * filled, whether that's a real id or empty (a non-toot row was
+             * clicked). Otherwise (no click yet) re-derive the topmost
+             * visible ROW fresh here, same "first onscreen item" walk
+             * TTIMELINE_CopySelectedText's own fallback uses, but skipping
+             * the header outright (a profile/instance header's postId is
+             * an account id or nothing, never a status id) and gating on
+             * cls==&TTLToot_Class same as the click-time capture, for the
+             * same reason. Locked, same "can run concurrently with a
+             * GM_HANDLEINPUT hit-test" reasoning TTIMELINE_NewestPostId/
+             * OldestPostId already document. */
+            if (!inst->selectedText || !inst->selectedText[0]) {
+                TTLChannel *active = ttl_active(inst);
+                const char *found = NULL;
+
+                ObtainSemaphore(&inst->listSem);
+                if (!(active->headerPost &&
+                      active->headerPost->timelineY + active->headerPost->height > active->scrollY))
+                {
+                    TTLPost *p;
+                    for (p = (TTLPost *)active->posts.mlh_Head;
+                         p->node.mln_Succ;
+                         p = (TTLPost *)p->node.mln_Succ)
+                    {
+                        if (p->timelineY + p->height > active->scrollY) {
+                            if (p->cls == &TTLToot_Class)
+                                found = (p->targetId && p->targetId[0]) ? p->targetId : p->postId;
+                            break;
+                        }
+                    }
+                }
+                if (found && found[0]) {
+                    strncpy(inst->lastSelectedPostId, found, sizeof(inst->lastSelectedPostId) - 1);
+                    inst->lastSelectedPostId[sizeof(inst->lastSelectedPostId) - 1] = '\0';
+                } else {
+                    inst->lastSelectedPostId[0] = '\0';
+                }
+                ReleaseSemaphore(&inst->listSem);
+            }
+            *msg->opg_Storage = inst->lastSelectedPostId[0] ? (ULONG)inst->lastSelectedPostId : 0;
             return 1;
         }
         default:

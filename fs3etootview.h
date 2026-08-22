@@ -97,6 +97,15 @@ typedef enum FS3ETootKind {
 #define FS3ETOOT_NUM_POLL_EXPIRATIONS 10
 #define FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX 6
 
+/* Poll type chooser ("Single choice"/"Multiple choice", Mastodon's
+ * poll[multiple]) -- same row as the expiration chooser above (see
+ * fs3etootview.c's FS3ETootView_Create). Index
+ * FS3ETOOT_POLL_TYPE_DEFAULT_IDX ("Single choice") is what
+ * FS3ETootView_SetComposeContext resets the chooser to every time it
+ * configures poll mode, same convention as the expiration chooser. */
+#define FS3ETOOT_NUM_POLL_TYPES 2
+#define FS3ETOOT_POLL_TYPE_DEFAULT_IDX 0
+
 /* Extra data for FS3ETootView_SetComposeContext; which fields matter
  * depends on kind (see FS3ETootKind). Pass params NULL for
  * FS3ETOOT_KIND_NEW/FS3ETOOT_KIND_POLL. */
@@ -227,14 +236,21 @@ typedef struct FS3ETootView {
      * charCountText below for charCountLabel). */
     char    pollOptionLabelText[FS3ETOOT_NUM_POLL_OPTIONS][16];
 
-    /* Poll expiration row, pollExtrasLayout's last row -- "Expiration
-     * time" label + popup chooser (fs3etootview.c's fs3eTootPollExpirations
-     * table). Read directly via CHOOSER_Active, same convention as
-     * visibilityChooser/quotePolicyChooser -- no separate copy kept here. */
+    /* Poll expiration + type row, pollExtrasLayout's last row -- two
+     * [label][popup chooser] pairs side by side in their own horizontal
+     * sub-layout (see FS3ETootView_Create's pollExpirationRow): expiration
+     * (fs3etootview.c's fs3eTootPollExpirations table) and single-vs-
+     * multiple-choice (fs3eTootPollTypes table). Both read directly via
+     * CHOOSER_Active, same convention as visibilityChooser/
+     * quotePolicyChooser -- no separate copy kept here. */
     Object       *pollExpirationLabel;
     struct List   pollExpirationList;
     struct Node  *pollExpirationNodes[FS3ETOOT_NUM_POLL_EXPIRATIONS];
     Object       *pollExpirationChooser;
+    Object       *pollMultipleLabel;
+    struct List   pollMultipleList;
+    struct Node  *pollMultipleNodes[FS3ETOOT_NUM_POLL_TYPES];
+    Object       *pollMultipleChooser;
 
     /* "Sensitive content" checkbox, bottomBar, right before tootBtn --
      * Mastodon's `sensitive` flag applies to the whole status (and every
@@ -330,6 +346,26 @@ BOOL FS3ETootView_GetSensitive(FS3ETootView *tv);
  * Returns a pointer into a static table, never AllocVec'd -- caller must
  * NOT FreeVec() it (unlike FS3ETootView_GetUTF8Body). */
 const char *FS3ETootView_GetLanguage(FS3ETootView *tv);
+
+/* UTF-8 text of poll answer row `index` (0..FS3ETOOT_NUM_POLL_OPTIONS-1),
+ * or NULL if index is out of range or the editor is empty (UTED_Text
+ * returns NULL for an empty editor -- see FS3ETootView_GetUTF8Body's own
+ * "" vs NULL note). WATCH OUT: same as FS3ETootView_GetUTF8Body, if
+ * non-NULL the result must be FreeVec()'ed by the caller. Only meaningful
+ * for FS3ETOOT_KIND_POLL, called at send time by GID_TOOT_SEND_BUTTON
+ * (friendsh3ep.c). */
+const char *FS3ETootView_GetPollOption(FS3ETootView *tv, ULONG index);
+
+/* Seconds until the poll closes, per the currently selected
+ * pollExpirationChooser entry (fs3etootview.c's fs3eTootPollExpirations/
+ * fs3eTootPollExpirationSeconds tables) -- e.g. 259200 for the "3 days"
+ * default. Only meaningful for FS3ETOOT_KIND_POLL. */
+ULONG FS3ETootView_GetPollExpiresInSeconds(FS3ETootView *tv);
+
+/* TRUE if the poll type chooser is set to "Multiple choice" (Mastodon's
+ * poll[multiple]), FALSE for "Single choice" (the default). Only
+ * meaningful for FS3ETOOT_KIND_POLL. */
+BOOL FS3ETootView_GetPollMultiple(FS3ETootView *tv);
 
 /* FS3ETootView_CheckAttachment()'s result -- see its doc comment. */
 typedef enum FS3ETootAttachStatus {

@@ -33,7 +33,7 @@
 
 
 /* Maximum tag entries in the queue */
-#define BOOPSIDELAY_QUEUE_SIZE 256
+#define BOOPSIDELAY_QUEUE_SIZE 512
 
 /*
  * Double-buffered queue - instance data of TargetModelClass.
@@ -98,6 +98,7 @@ BoopsiDelayQueue *DelayQueue   = NULL;
 extern struct Task *myTask;
 
 /* Attributes we delay from OM_NOTIFY. */
+ #ifdef USE_ATTRIB_FILTER
 static ULONG delayedAttribs[] = {
     GA_Selected,
 
@@ -150,6 +151,13 @@ static ULONG delayedAttribs[] = {
      * unbookmark one -- see this file's own comment at the top for why
      * every new TTIMELINE_LastHotSpotXxx tag must be added here too. */
     TTIMELINE_LastHotSpotBookmarked,
+    /* Same silent-drop trap yet again -- friendsh3ep.c's TTL_HOT_POLL_VOTE
+     * case reads this tag for the poll's own id (distinct from the status
+     * id TTIMELINE_LastHotSpotPostId already carries), needed to POST
+     * /api/v1/polls/:id/votes. Without allowlisting it here it never
+     * arrived, so hotSpotPollId was always NULL and every poll-vote click
+     * silently did nothing past the confirm requester. */
+    TTIMELINE_LastHotSpotPollId,
     TTIMELINE_ScrollStarted,
 
     TDECK_Mode,
@@ -162,7 +170,7 @@ static ULONG delayedAttribs[] = {
 };
 
 #define NB_DELAYED_ATTRIBS ((ULONG)(sizeof(delayedAttribs) / sizeof(ULONG)))
-
+#endif
 typedef ULONG (*REHOOKFUNC)();
 
 /* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
@@ -210,7 +218,7 @@ static ULONG ASM SAVEDS TargetModelDispatch(
                 ObtainSemaphore(&DelayQueue->sem);
 
                 BoopsiDelay_BeginMessage(DelayQueue, sender_ID);
-
+ #ifdef USE_ATTRIB_FILTER
                 for (i = 0; i < NB_DELAYED_ATTRIBS; i++) {
                     ptag = FindTagItem(delayedAttribs[i],
                                        M->opUpdate.opu_AttrList);
@@ -220,7 +228,14 @@ static ULONG ASM SAVEDS TargetModelDispatch(
                                            ptag->ti_Data);
                     }
                 }
-
+#else
+            ptag =  M->opUpdate.opu_AttrList;
+            while(ptag && ptag->ti_Tag != 0)
+            {
+                BoopsiDelay_AddTag(DelayQueue,ptag->ti_Tag, ptag->ti_Data);
+                ptag++;
+            }
+#endif
                 BoopsiDelay_EndMessage(DelayQueue);
 
                 ReleaseSemaphore(&DelayQueue->sem);
