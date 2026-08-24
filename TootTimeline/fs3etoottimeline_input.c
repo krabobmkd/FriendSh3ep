@@ -255,8 +255,8 @@ static void ttl_activate_hotspot(TTLData *inst, Class *cl, Object *o,
 
     ttl_notify_hotspot(cl, o, gi, hs->type, hs->data, hs->dataLen, targetId,
                         post->favourited, post->following, post->reblogged,
-                        post->quotable, post->mediaIdsJoined, post->acct,
-                        audioUrl);
+                        post->bookmarked, post->quotable, post->mediaIdsJoined,
+                        post->acct, audioUrl, post->pollId);
 
     if (post->cls && post->cls->activate)
         post->cls->activate(inst, cl, o, gi, post, hs);
@@ -403,6 +403,39 @@ ULONG TTL_OnGoActive(Class *cl, Object *o, struct gpInput *msg)
                 inst->selectedAuthorName = dup_str(hitPost->username);
                 if (inst->selectedAuthorAcct) FreeVec(inst->selectedAuthorAcct);
                 inst->selectedAuthorAcct = dup_str(hitPost->acct);
+
+                /* Status id for TTIMELINE_SelectedPostId -- targetId (the
+                 * ORIGINAL status for a reblog-wrapper post) if set, else
+                 * postId, same fallback ttl_activate_hotspot's own targetId
+                 * derivation uses. Bounded copy into the fixed buffer, see
+                 * lastSelectedPostId's own doc comment in
+                 * fs3etoottimeline_private.h. Gated on cls==&TTLToot_Class
+                 * specifically (unlike selectedText/Author* above, which
+                 * don't care what kind of row this is) -- every other row
+                 * kind (account row, domain row, list title, load-more/
+                 * newer, notif-follow) repurposes postId for something
+                 * that ISN'T a status id (an account id, a bare domain
+                 * string, or nothing at all), and would otherwise look
+                 * like a perfectly plausible but wrong status id to POST a
+                 * favourited_by/reblogged_by request against. Empty (no
+                 * real status) leaves the buffer cleared -- TTL_OnGet's
+                 * TTIMELINE_SelectedPostId case returns NULL then, same
+                 * "nothing to fetch" reasoning TTIMELINE_SelectedPostId's
+                 * own doc comment documents. */
+                {
+                    const char *sid = (hitPost->cls == &TTLToot_Class)
+                                     ? ((hitPost->targetId && hitPost->targetId[0])
+                                        ? hitPost->targetId : hitPost->postId)
+                                     : NULL;
+                    if (sid && sid[0]) {
+                        ULONG n = (ULONG)strlen(sid);
+                        if (n >= sizeof(inst->lastSelectedPostId)) n = sizeof(inst->lastSelectedPostId) - 1;
+                        CopyMem((APTR)sid, inst->lastSelectedPostId, n);
+                        inst->lastSelectedPostId[n] = '\0';
+                    } else {
+                        inst->lastSelectedPostId[0] = '\0';
+                    }
+                }
             }
         }
         ReleaseSemaphore(&inst->listSem);
@@ -514,7 +547,7 @@ ULONG TTL_OnHandleInput(Class *cl, Object *o, struct gpInput *msg)
         }
     } else if (ie->ie_Class == IECLASS_RAWKEY)
     {
-bdbprintf("ttl input c:%08x\n",ie->ie_Code);
+//bdbprintf("ttl input c:%08x\n",ie->ie_Code);
     }
 
     return GMR_MEACTIVE;

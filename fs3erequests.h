@@ -36,8 +36,28 @@ void FS3EApp_OpenDiscussion(const char *statusId, BOOL includeAncestors);
 
 /* F5 "refresh visible toots" -- re-fetches, one at a time, every toot
  * currently on screen in the active TootTimeline channel and patches its
- * data in place (see TTIMELINE_GetVisiblePosts/RefreshPost). */
+ * data in place (see TTIMELINE_GetVisiblePosts/RefreshPost), AND checks for
+ * anything posted since the channel's current top (same FS3ENETPAGE_NEWER
+ * fetch the pinned "Look for something new" row fires) so a brand new toot
+ * (e.g. one you just posted yourself) actually appears on F5 instead of
+ * only updating what was already shown. */
 void FS3EApp_RefreshVisibleToots(void);
+
+/* Clears and re-fetches VIEWMODE_Bookmarks from scratch (local cache page 0
+ * + a fresh server backfill sync) -- unlike every other channel, Bookmarks
+ * doesn't just fetch once per session: bookmarking a toot is a purely local
+ * action (see FS3ENETQ_BOOKMARK's own cache write), so re-entering the tab
+ * or hitting F5 while on it should always pick up anything bookmarked since
+ * the channel was last loaded, not silently stay stale for the rest of the
+ * session. Called from fs3e_setViewMode (switching INTO Bookmarks) and
+ * FS3EApp_RefreshVisibleToots (F5 while already on it). Safe no-op if
+ * app->tootTimeline doesn't exist yet. */
+void FS3EApp_ReloadBookmarks(void);
+
+/* TTL_HOT_TRANSLATE click ("not cached yet" branch) -- fires
+ * FS3ENETQ_TRANSLATE_STATUS for postId, targeting the OS's own preferred
+ * language (FS3EOSLocale_LanguageCode()). See fs3erequests.c. */
+void FS3EApp_TranslateStatus(const char *postId);
 
 /* Word/hashtag search in the Search channel. */
 void FS3EApp_SearchWord(const char *query);
@@ -47,12 +67,31 @@ void FS3EApp_SearchWord(const char *query);
  * doc comment in fs3enet.h. */
 void FS3EApp_SearchAccount(const char *query);
 
+/* "Tell me about this server" lookup in the Search channel -- domainOrUrl
+ * may be a bare domain ("mastodon.social") or a full "https://..." URL;
+ * works for ANY reachable Mastodon-API-compatible server, not just the
+ * connected account's own (no access token needed, see
+ * FS3ENETQ_INSTANCE_DETAILS' doc comment in fs3enet.h). See fs3erequests.c
+ * for the full doc comment. */
+void FS3EApp_SearchInstance(const char *domainOrUrl);
+
 /* Show app->searchProfileAccountId's followers/following list in the Search
  * channel, same flat account-row list as FS3EApp_SearchAccount -- called
  * from clicking "N Followers"/"N Following" in an open profile view. No-op
  * if no profile is currently open. */
 void FS3EApp_ShowFollowers(void);
 void FS3EApp_ShowFollowing(void);
+
+/* Show the connected account's own GET /api/v1/blocks in the Search
+ * channel, same flat account-row list as FS3EApp_ShowFollowers/Following
+ * above but with no profile involved (there's no single "whose list" to
+ * name -- it's always your own) -- called from the FriendSh3ep menu's
+ * "Blocked Users..." (Action_ShowBlockedUsers, fs3eaction.c), not a
+ * profile-header button. No-op if not logged in with a real account. */
+void FS3EApp_ShowBlockedUsers(void);
+void FS3EApp_ShowBlockedServers(void);
+void FS3EApp_ShowFavouritedBy(const char *statusId);
+void FS3EApp_ShowRebloggedBy(const char *statusId);
 
 /* GID_SEARCH_BACK_BUTTON / Delete key -- pops and restores the most
  * recently pushed Search view configuration (see App.searchStack in

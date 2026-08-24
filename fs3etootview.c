@@ -51,6 +51,7 @@
 #include "fs3eboopsimessage.h"
 #include "fs3egadgetid.h"
 #include "fs3elocale.h"
+#include "fs3enetworkhelper.h"
 
 #include "friendsh3ep.h"
 #include "network_fs3e/fs3enet.h"
@@ -190,6 +191,115 @@ static const ULONG quotePolicyMeaningMsgIds[FS3ETOOT_NUM_QUOTEPOLICIES] = {
     MSG_TOOT_QUOTEPOLICY_MEANING_NOBODY
 };
 
+/* languageChooser's entries -- code is the ISO 639 code sent as Mastodon's
+ * `language` status field (see FS3EMastodon_PostStatus), name is what the
+ * chooser/popup shows. Plain static English names, NOT run through
+ * LOC()/fs3elocale.c: chooser.gadget/label.image are classic AmigaOS3
+ * gadgets with no UTF-8 decoding of their own (unlike bodyEditor's
+ * UniTextEditor or a toot's own utf8rastport-rendered content), so native-
+ * script names (Cyrillic/CJK/Arabic/Devanagari/...) would risk rendering as
+ * tofu/garbage here even where they render fine elsewhere in this app --
+ * ASCII English names sidestep that entirely, same reasoning
+ * searchWordTypeChooser's/visibilityChooser's own plain-ASCII labels
+ * already follow. code[0]=='\0' (index 0, "(Unspecified)") means "don't
+ * send a language field at all" -- see FS3ETootView_GetLanguage and
+ * FS3EMastodon_PostStatus's own "omit rather than send empty" convention
+ * for in_reply_to_id/quoted_status_id. Ordering: unspecified first, then
+ * roughly by how many Mastodon users each language sees. */
+static const struct { const char *code; const char *name; } fs3eTootLanguages[FS3ETOOT_NUM_LANGUAGES] = {
+    { "",   "(Unspecified)" },
+    { "en", "English" },
+    { "fr", "French" },
+    { "de", "German" },
+    { "es", "Spanish" },
+    { "it", "Italian" },
+    { "pt", "Portuguese" },
+    { "nl", "Dutch" },
+    { "pl", "Polish" },
+    { "ru", "Russian" },
+    { "uk", "Ukrainian" },
+    { "ja", "Japanese" },
+    { "zh", "Chinese" },
+    { "ko", "Korean" },
+    { "ar", "Arabic" },
+    { "tr", "Turkish" },
+    { "sv", "Swedish" },
+    { "no", "Norwegian" },
+    { "da", "Danish" },
+    { "fi", "Finnish" },
+    { "cs", "Czech" },
+    { "el", "Greek" },
+    { "he", "Hebrew" },
+    { "hi", "Hindi" },
+    { "id", "Indonesian" },
+    { "vi", "Vietnamese" },
+    { "th", "Thai" },
+    { "ro", "Romanian" },
+    { "hu", "Hungarian" },
+    { "bg", "Bulgarian" },
+    { "hr", "Croatian" },
+    { "sk", "Slovak" },
+    { "sl", "Slovenian" },
+    { "sr", "Serbian" },
+    { "lt", "Lithuanian" },
+    { "lv", "Latvian" },
+    { "et", "Estonian" },
+    { "ca", "Catalan" },
+    { "eu", "Basque" },
+    { "gl", "Galician" },
+    { "eo", "Esperanto" },
+    { "ga", "Irish" },
+    { "is", "Icelandic" },
+    { "cy", "Welsh" },
+    { "fa", "Persian" },
+    { "ur", "Urdu" },
+    { "bn", "Bengali" },
+    { "ta", "Tamil" },
+    { "te", "Telugu" },
+    { "ml", "Malayalam" },
+    { "mr", "Marathi" },
+    { "gu", "Gujarati" },
+    { "kn", "Kannada" },
+    { "pa", "Punjabi" },
+    { "sw", "Swahili" },
+    { "af", "Afrikaans" },
+    { "sq", "Albanian" },
+    { "az", "Azerbaijani" },
+    { "be", "Belarusian" },
+    { "bs", "Bosnian" },
+    { "ka", "Georgian" },
+    { "hy", "Armenian" },
+    { "kk", "Kazakh" },
+};
+
+/* pollExpirationChooser's entries -- plain ASCII, not run through LOC(),
+ * same "many-item technical value list, no translation needed" reasoning as
+ * fs3eTootLanguages above. Index FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX
+ * ("3 days") is what FS3ETootView_SetComposeContext resets the chooser to
+ * every time it configures poll mode. */
+static const char *fs3eTootPollExpirations[FS3ETOOT_NUM_POLL_EXPIRATIONS] = {
+    "30 minutes", "1 hour", "3 hours", "5 hours", "1 day",
+    "2 days", "3 days", "5 days", "7 days", "14 days"
+};
+
+/* Seconds equivalent of each fs3eTootPollExpirations entry, same order --
+ * what FS3ETootView_GetPollExpiresInSeconds actually sends as Mastodon's
+ * poll[expires_in]. */
+static const ULONG fs3eTootPollExpirationSeconds[FS3ETOOT_NUM_POLL_EXPIRATIONS] = {
+    1800, 3600, 10800, 18000, 86400,
+    172800, 259200, 432000, 604800, 1209600
+};
+
+/* pollMultipleChooser's entries -- index FS3ETOOT_POLL_TYPE_DEFAULT_IDX
+ * ("Single choice") is what FS3ETootView_SetComposeContext resets the
+ * chooser to every time it configures poll mode, same convention as
+ * fs3eTootPollExpirations above. Plain ASCII/LOC()'d either would do here
+ * (only 2 short entries, unlike the technical-value lists above) -- kept
+ * as a locale string since it's ordinary UI copy, not a value table. */
+static const ULONG fs3eTootPollTypeMsgIds[FS3ETOOT_NUM_POLL_TYPES] = {
+    MSG_TOOT_POLL_TYPE_SINGLE, MSG_TOOT_POLL_TYPE_MULTIPLE
+};
+
 /* Defined below FS3ETootKindConfig/tootKindConfig (needs both); forward-
  * declared here since it's called from FS3ETootView_HandleInput, which
  * comes first in the file. */
@@ -226,7 +336,10 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
     Object *attachMediaLabel;
     Object *attachMediaRow2;
     Object *attachMediaLabel2;
+    Object *pollExpirationRow;
     Object *sensitiveLabel;
+    Object *languageLabel;
+    Object *sensitiveLanguageCol;
 
     int i;
 
@@ -309,6 +422,15 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         TAG_END);
     if (!tv->attachMediaClearBtn) return FALSE;
 
+    /* attachMediaLabel is NOT added as a child of attachMediaRow itself --
+     * label.image (LABEL_GetClass()) is an IMAGECLASS object, not a
+     * gadgetclass one, so LAYOUT_AddChild (which expects a real BOOPSI
+     * gadget) can't render it. It's attached instead via CHILD_Label where
+     * attachMediaRow itself is added to tootExtrasLayout below -- the
+     * documented, correct way to pair a label with a gadget (or, as here,
+     * a whole sub-layout standing in for one), which also aligns every
+     * row's label into one column automatically since tootExtrasLayout is
+     * a vertical group. */
     attachMediaLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_TOOT_ATTACH_MEDIA), TAG_END);
 
@@ -347,6 +469,7 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         TAG_END);
     if (!tv->attachMedia2ClearBtn) return FALSE;
 
+    /* Same CHILD_Label-at-the-parent reasoning as attachMediaLabel above. */
     attachMediaLabel2 = (Object *)NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_TOOT_ATTACH_MEDIA), TAG_END);
 
@@ -362,6 +485,194 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         CHILD_WeightedHeight, 0,
         TAG_END);
     if (!attachMediaRow2) return FALSE;
+
+    /* ------------------------------------------------------------------ */
+    /* Poll-answer editors, one per possible answer -- each is added        */
+    /* directly to tv->pollExtrasLayout below with CHILD_Label attached      */
+    /* (same reasoning as attachMediaLabel above: label.image isn't a       */
+    /* gadget, so it can't be a LAYOUT_AddChild sibling). No per-row wrapper */
+    /* layout needed here, unlike the attach-media rows above -- a poll     */
+    /* answer is just the one editor gadget, nothing else to pack beside it.*/
+    /* Layout-only for now (see fs3etootview.h's pollOptionEditor comment). */
+    /* ------------------------------------------------------------------ */
+    {
+        static const ULONG pollOptionGadId[FS3ETOOT_NUM_POLL_OPTIONS] = {
+            GID_TOOT_POLL_OPTION1, GID_TOOT_POLL_OPTION2,
+            GID_TOOT_POLL_OPTION3, GID_TOOT_POLL_OPTION4
+        };
+        int p;
+
+        for (p = 0; p < FS3ETOOT_NUM_POLL_OPTIONS; p++) {
+            snprintf(tv->pollOptionLabelText[p], sizeof(tv->pollOptionLabelText[p]),
+                     LOC(MSG_TOOT_POLL_OPTION_FORMAT), p + 1);
+
+            tv->pollOptionLabel[p] = (Object *)NewObject(LABEL_GetClass(), NULL,
+                LABEL_Text, (ULONG)tv->pollOptionLabelText[p], TAG_END);
+            if (!tv->pollOptionLabel[p]) return FALSE;
+
+            tv->pollOptionEditor[p] = (Object *)NewObject(UNITEXTEDITOR_GetClass(), NULL,
+                GA_ID,                  (ULONG)pollOptionGadId[p],
+                ICA_TARGET,             (ULONG)TargetInstance,
+                UTED_InternalRawKey_SendBack,TRUE,
+                UTED_KeyMessageMode,    UKM_Internal,
+                UTED_BevelStyle,        BVS_FIELD,
+                UTED_URPDrawContext,    (ULONG)textDC,
+                UTED_TextPen,           1UL,
+                UTED_BgPen,             0UL,
+                UTED_MaxDisplayLines,   1UL,
+                UTED_NoLineFeed,        TRUE,
+                UTED_WordWrap,          TRUE,
+                UTED_LeftMargin,        2,
+                UTED_TopMargin,         3,
+                UTED_BottomMargin,      1,
+                UTED_LineSpacing,       0,
+                TAG_END);
+            if (!tv->pollOptionEditor[p]) return FALSE;
+        }
+    }
+
+    /* ------------------------------------------------------------------ */
+    /* Poll expiration + type row -- last pollExtrasLayout row, two         */
+    /* [label][popup chooser] pairs side by side in their own horizontal    */
+    /* sub-layout (same [label][gadget]-pair-per-child shape attachMediaRow */
+    /* uses, just with two pairs instead of one gadget + clear button).     */
+    /* Expiration options in fs3eTootPollExpirations; default reset to      */
+    /* FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX ("3 days") every time            */
+    /* FS3ETootView_SetComposeContext configures poll mode (see below).     */
+    /* Type ("Single choice"/"Multiple choice" -- Mastodon's poll[multiple]) */
+    /* defaults to FS3ETOOT_POLL_TYPE_DEFAULT_IDX ("Single choice") the      */
+    /* same way. ------------------------------------------------------- */
+    NewList(&tv->pollExpirationList);
+    for (i = 0; i < FS3ETOOT_NUM_POLL_EXPIRATIONS; i++) {
+        struct Node *node = NULL;
+        if (ChooserBase)
+            node = AllocChooserNode(CNA_Text, (ULONG)fs3eTootPollExpirations[i], TAG_END);
+        tv->pollExpirationNodes[i] = node;
+        if (node) AddTail(&tv->pollExpirationList, node);
+    }
+
+    tv->pollExpirationLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_TOOT_POLL_EXPIRATION), TAG_END);
+
+    tv->pollExpirationChooser = (Object *)NewObject(CHOOSER_GetClass(), NULL,
+        GA_ID,          (ULONG)GID_TOOT_POLL_EXPIRATION,
+        GA_RelVerify,   TRUE,
+        ICA_TARGET,     (ULONG)TargetInstance,
+        CHOOSER_PopUp,  TRUE,
+        CHOOSER_Labels, (ULONG)&tv->pollExpirationList,
+        CHOOSER_Active, (ULONG)FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX,
+        TAG_END);
+    if (!tv->pollExpirationChooser) return FALSE;
+
+    NewList(&tv->pollMultipleList);
+    for (i = 0; i < FS3ETOOT_NUM_POLL_TYPES; i++) {
+        struct Node *node = NULL;
+        if (ChooserBase)
+            node = AllocChooserNode(CNA_Text, (ULONG)LOC(fs3eTootPollTypeMsgIds[i]), TAG_END);
+        tv->pollMultipleNodes[i] = node;
+        if (node) AddTail(&tv->pollMultipleList, node);
+    }
+
+    tv->pollMultipleLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_TOOT_POLL_TYPE), TAG_END);
+
+    tv->pollMultipleChooser = (Object *)NewObject(CHOOSER_GetClass(), NULL,
+        GA_ID,          (ULONG)GID_TOOT_POLL_TYPE,
+        GA_RelVerify,   TRUE,
+        ICA_TARGET,     (ULONG)TargetInstance,
+        CHOOSER_PopUp,  TRUE,
+        CHOOSER_Labels, (ULONG)&tv->pollMultipleList,
+        CHOOSER_Active, (ULONG)FS3ETOOT_POLL_TYPE_DEFAULT_IDX,
+        TAG_END);
+    if (!tv->pollMultipleChooser) return FALSE;
+
+    pollExpirationRow = (Object *)NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation,   LAYOUT_ORIENT_HORIZ,
+        LAYOUT_BevelStyle,    BVS_NONE,
+        LAYOUT_SpaceInner,    FALSE,
+        LAYOUT_AddChild,      (ULONG)tv->pollExpirationChooser,
+            CHILD_Label,          (ULONG)tv->pollExpirationLabel,
+            CHILD_WeightedWidth,  1,
+        LAYOUT_AddChild,      (ULONG)tv->pollMultipleChooser,
+            CHILD_Label,          (ULONG)tv->pollMultipleLabel,
+            CHILD_WeightedWidth,  1,
+        TAG_END);
+    if (!pollExpirationRow) return FALSE;
+
+    /* ------------------------------------------------------------------ */
+    /* tootExtrasLayout/pollExtrasLayout: two independent, ordinary vertical */
+    /* layout.gadget sub-groups -- one holds the two attach-media rows, the */
+    /* other the four poll-answer editors plus the expiration chooser, each */
+    /* paired with its label via CHILD_Label -- the documented way to      */
+    /* attach a label.image to a gadget, and what aligns every row's label  */
+    /* into one column since these are vertical groups. Only one of the two */
+    /* groups is ever attached to tv->extrasLayout (the "slot", see below)  */
+    /* at a time; the other sits detached, kept alive solely by tv's own    */
+    /* pointer to it. Both are built with CHILD_NoDispose (see below where  */
+    /* each is added to the slot) so layout.gadget never auto-disposes      */
+    /* either one on removal or on the window's own teardown --             */
+    /* FS3ETootView_Dispose explicitly DisposeObject()s both.               */
+    /* ------------------------------------------------------------------ */
+    tv->tootExtrasLayout = (Object *)NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation, LAYOUT_ORIENT_VERT,
+        LAYOUT_BevelStyle,  BVS_NONE,
+        LAYOUT_SpaceOuter,  FALSE,
+        LAYOUT_SpaceInner,  FALSE,
+        LAYOUT_AddChild,    (ULONG)attachMediaRow,
+            CHILD_Label,          (ULONG)attachMediaLabel,
+            CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,    (ULONG)attachMediaRow2,
+            CHILD_Label,          (ULONG)attachMediaLabel2,
+            CHILD_WeightedHeight, 0,
+        TAG_END);
+    if (!tv->tootExtrasLayout) return FALSE;
+
+    tv->pollExtrasLayout = (Object *)NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation, LAYOUT_ORIENT_VERT,
+        LAYOUT_BevelStyle,  BVS_NONE,
+        LAYOUT_SpaceOuter,  FALSE,
+        LAYOUT_SpaceInner,  FALSE,
+        LAYOUT_AddChild,    (ULONG)tv->pollOptionEditor[0],
+            CHILD_Label,          (ULONG)tv->pollOptionLabel[0],
+            CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,    (ULONG)tv->pollOptionEditor[1],
+            CHILD_Label,          (ULONG)tv->pollOptionLabel[1],
+            CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,    (ULONG)tv->pollOptionEditor[2],
+            CHILD_Label,          (ULONG)tv->pollOptionLabel[2],
+            CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,    (ULONG)tv->pollOptionEditor[3],
+            CHILD_Label,          (ULONG)tv->pollOptionLabel[3],
+            CHILD_WeightedHeight, 0,
+        LAYOUT_AddChild,    (ULONG)pollExpirationRow,
+            CHILD_WeightedHeight, 0,
+        TAG_END);
+    if (!tv->pollExtrasLayout) return FALSE;
+
+    /* tv->extrasLayout: the fixed "slot" sitting between bodyEditor and    */
+    /* bottomBar in the outer layout below -- an ordinary layout.gadget     */
+    /* that holds exactly one child at a time (tootExtrasLayout or          */
+    /* pollExtrasLayout), swapped via LAYOUT_RemoveChild/LAYOUT_AddChild in */
+    /* FS3ETootView_SetComposeContext. Keeping this slot itself as a        */
+    /* permanent, never-swapped child of the outer layout is what keeps the */
+    /* outer layout's own child order (contextMessage/bodyEditor/slot/      */
+    /* bottomBar/visibilityMeaning) stable -- LAYOUT_AddChild only ever     */
+    /* appends, so swapping directly at the outer layout's level would push */
+    /* whichever group got re-added after bottomBar/visibilityMeaning.      */
+    /* tootExtrasLayout starts attached (toot mode is the default compose   */
+    /* kind); the CHILD_NoDispose here is what FS3ETootView_Dispose relies  */
+    /* on to be allowed to free both groups itself, see above. */
+    tv->extrasLayout = (Object *)NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation, LAYOUT_ORIENT_VERT,
+        LAYOUT_BevelStyle,  BVS_NONE,
+        LAYOUT_SpaceOuter,  FALSE,
+        LAYOUT_SpaceInner,  FALSE,
+        LAYOUT_AddChild,    (ULONG)tv->tootExtrasLayout,
+            CHILD_WeightedHeight, 0,
+            CHILD_NoDispose,      TRUE,
+        TAG_END);
+    if (!tv->extrasLayout) return FALSE;
+    tv->currentExtras = tv->tootExtrasLayout;
 
     /* ------------------------------------------------------------------ */
     /* Bottom bar: visibility chooser, char count, emoji buttons, Toot     */
@@ -404,6 +715,25 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
         TAG_END);
     if (!tv->quotePolicyChooser) return FALSE;
 
+    NewList(&tv->languageList);
+    for (i = 0; i < FS3ETOOT_NUM_LANGUAGES; i++) {
+        struct Node *node = NULL;
+        if (ChooserBase)
+            node = AllocChooserNode(CNA_Text, (ULONG)fs3eTootLanguages[i].name, TAG_END);
+        tv->languageNodes[i] = node;
+        if (node) AddTail(&tv->languageList, node);
+    }
+
+    tv->languageChooser = (Object *)NewObject(CHOOSER_GetClass(), NULL,
+        GA_ID,          (ULONG)GID_TOOT_LANGUAGE,
+        GA_RelVerify,   TRUE,
+        ICA_TARGET,     (ULONG)TargetInstance,
+        CHOOSER_PopUp,  TRUE,
+        CHOOSER_Labels, (ULONG)&tv->languageList,
+        CHOOSER_Active, 0UL,
+        TAG_END);
+    if (!tv->languageChooser) return FALSE;
+
     {
         char maxBuf[16];
         FormatMaxChars(app->accountMaxChars, maxBuf, sizeof(maxBuf));
@@ -442,6 +772,22 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
     sensitiveLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_TOOT_SENSITIVE), TAG_END);
 
+    languageLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_TOOT_LANGUAGE), TAG_END);
+
+    /* Language chooser + "Sensitive content" checkbox stacked vertically in
+     * their own sub-column, same "stack instead of widening bottomBar"
+     * reasoning as choosersCol above -- this replaces sensitiveCheck's old
+     * standalone bottomBar slot. */
+    sensitiveLanguageCol = (Object *)NewObject(LAYOUT_GetClass(), NULL,
+        LAYOUT_Orientation,  LAYOUT_ORIENT_VERT,
+        LAYOUT_AddChild,     (ULONG)tv->languageChooser,
+            CHILD_Label,         (ULONG)languageLabel,
+        LAYOUT_AddChild,     (ULONG)tv->sensitiveCheck,
+            CHILD_Label,         (ULONG)sensitiveLabel,
+        TAG_END);
+    if (!sensitiveLanguageCol) return FALSE;
+
     tv->tootBtn = (Object *)NewObject(BUTTON_GetClass(), NULL,
         GA_ID,        (ULONG)GID_TOOT_SEND_BUTTON,
         GA_RelVerify, TRUE,
@@ -478,9 +824,8 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
             CHILD_WeightedWidth, 0,
         LAYOUT_AddChild,     (ULONG)Spacer(),
             CHILD_WeightedWidth, 1,
-        LAYOUT_AddChild,     (ULONG)tv->sensitiveCheck,
+        LAYOUT_AddChild,     (ULONG)sensitiveLanguageCol,
             CHILD_WeightedWidth, 0,
-            CHILD_Label,         (ULONG)sensitiveLabel,
         LAYOUT_AddChild,     (ULONG)tv->tootBtn,
             CHILD_WeightedWidth, 0,
         TAG_END);
@@ -496,12 +841,8 @@ BOOL FS3ETootView_Create(FS3ETootView *tv, struct URPDrawContext *textDC)
             CHILD_WeightedHeight, 0,
         LAYOUT_AddChild,    (ULONG)tv->bodyEditor,
             CHILD_WeightedHeight, 1,
-        LAYOUT_AddChild,    (ULONG)attachMediaRow,
+        LAYOUT_AddChild,    (ULONG)tv->extrasLayout,
             CHILD_WeightedHeight, 0,
-            CHILD_Label,          (ULONG)attachMediaLabel,
-        LAYOUT_AddChild,    (ULONG)attachMediaRow2,
-            CHILD_WeightedHeight, 0,
-            CHILD_Label,          (ULONG)attachMediaLabel2,
         LAYOUT_AddChild,    (ULONG)bottomBar,
             CHILD_WeightedHeight, 0,
         LAYOUT_AddChild,    (ULONG)tv->visibilityMeaning,
@@ -554,6 +895,21 @@ void FS3ETootView_Dispose(FS3ETootView *tv)
         FS3ETootView_Close(tv);
         DisposeObject(tv->windowObj);
         tv->windowObj = NULL;
+
+        /* Both were added to tv->extrasLayout (now gone, cascaded from
+         * windowObj above) with CHILD_NoDispose TRUE -- see the "slot"
+         * design comment in FS3ETootView_Create -- so neither was destroyed
+         * by that cascade, whether or not it was the one still attached.
+         * They're entirely tv's own responsibility to free. */
+        if (tv->tootExtrasLayout) {
+            DisposeObject(tv->tootExtrasLayout);
+            tv->tootExtrasLayout = NULL;
+        }
+        if (tv->pollExtrasLayout) {
+            DisposeObject(tv->pollExtrasLayout);
+            tv->pollExtrasLayout = NULL;
+        }
+        tv->currentExtras = NULL;
     }
 
     if (ChooserBase) {
@@ -567,6 +923,24 @@ void FS3ETootView_Dispose(FS3ETootView *tv)
             if (tv->quotePolicyNodes[i]) {
                 FreeChooserNode(tv->quotePolicyNodes[i]);
                 tv->quotePolicyNodes[i] = NULL;
+            }
+        }
+        for (i = 0; i < FS3ETOOT_NUM_LANGUAGES; i++) {
+            if (tv->languageNodes[i]) {
+                FreeChooserNode(tv->languageNodes[i]);
+                tv->languageNodes[i] = NULL;
+            }
+        }
+        for (i = 0; i < FS3ETOOT_NUM_POLL_EXPIRATIONS; i++) {
+            if (tv->pollExpirationNodes[i]) {
+                FreeChooserNode(tv->pollExpirationNodes[i]);
+                tv->pollExpirationNodes[i] = NULL;
+            }
+        }
+        for (i = 0; i < FS3ETOOT_NUM_POLL_TYPES; i++) {
+            if (tv->pollMultipleNodes[i]) {
+                FreeChooserNode(tv->pollMultipleNodes[i]);
+                tv->pollMultipleNodes[i] = NULL;
             }
         }
     }
@@ -597,6 +971,25 @@ void FS3ETootView_Open(FS3ETootView *tv)
         SetAttrs(tv->quotePolicyChooser, CHOOSER_Active, 0UL, TAG_END);
         FS3ETootView_UpdateVisibilityMeaning(tv);
     }
+    /* Unlike visibility/quote-policy above, the language pick is NOT reset
+     * to "(Unspecified)" here -- it's restored from app->settings.tootLanguage
+     * (persisted across sessions, see FS3EApp_SubmitToot's own comment on
+     * where that gets updated), so a user who always toots in the same
+     * language doesn't have to reselect it on every single compose. Falls
+     * back to index 0 if the saved code isn't found in fs3eTootLanguages
+     * (empty/unset, or a code this build's table doesn't carry). */
+    if (tv->languageChooser) {
+        ULONG idx = 0, i;
+        if (app->settings.tootLanguage && app->settings.tootLanguage[0]) {
+            for (i = 0; i < FS3ETOOT_NUM_LANGUAGES; i++) {
+                if (strcmp(fs3eTootLanguages[i].code, app->settings.tootLanguage) == 0) {
+                    idx = i;
+                    break;
+                }
+            }
+        }
+        SetAttrs(tv->languageChooser, CHOOSER_Active, idx, TAG_END);
+    }
     /* Same reasoning again: a leftover attachment from a previous, unrelated
      * toot shouldn't silently carry over into this one. */
     if (tv->attachMediaGF) {
@@ -614,6 +1007,15 @@ void FS3ETootView_Open(FS3ETootView *tv)
     /* Same reasoning again: don't carry over a previous toot's flag. */
     if (tv->sensitiveCheck) {
         SetAttrs(tv->sensitiveCheck, GA_Selected, FALSE, TAG_END);
+    }
+    /* Same reasoning again: a leftover poll answer from a previous, unrelated
+     * poll shouldn't silently carry over into this one. */
+    {
+        int p;
+        for (p = 0; p < FS3ETOOT_NUM_POLL_OPTIONS; p++) {
+            if (tv->pollOptionEditor[p])
+                SetAttrs(tv->pollOptionEditor[p], UTED_Text, (ULONG)"", TAG_END);
+        }
     }
 
     if (CurrentMainScreen) {
@@ -720,6 +1122,17 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                  * fs3eloginview.c's urlInstructLabel, same reasoning). */
                 if (tv->bodyEditor)
                     RefreshGList((struct Gadget *)tv->bodyEditor, tv->window, NULL, 1);
+                {
+                    int i;
+                    for( i=0 ; i<FS3ETOOT_NUM_POLL_OPTIONS ;i++)
+                    {
+                        if( tv->pollOptionEditor[i] )
+                        {
+                            RefreshGList((struct Gadget *)tv->pollOptionEditor[i], tv->window, NULL, 1);
+                        }
+                    }
+                }
+
                 break;
 
             case WMHI_GADGETUP:
@@ -745,6 +1158,21 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                                    GETFILE_File,   (ULONG)"",
                                    GETFILE_Drawer, (ULONG)"",
                                    TAG_DONE);
+                } else if( gadId == GID_TOOT_LANGUAGE)
+                {
+                    /* Sync app->settings.tootLanguage the instant the
+                     * chooser selection changes, not only when a toot is
+                     * actually sent -- see that field's doc comment in
+                     * fs3esettings.h. Persisted to disk at the next
+                     * FS3ESettings_Save() call (app quit, or any other
+                     * settings save). */
+                    const char *language = FS3ETootView_GetLanguage(tv);
+                    if (!app->settings.tootLanguage ||
+                        strcmp(app->settings.tootLanguage, language) != 0)
+                    {
+                        if (app->settings.tootLanguage) FreeVec(app->settings.tootLanguage);
+                        app->settings.tootLanguage = NetStrDup(language);
+                    }
                 }
 
                 BoopsiDelay_BeginMessage(DelayQueue, gadId);
@@ -991,16 +1419,20 @@ typedef struct FS3ETootKindConfig {
     BOOL  visibilityEditable; /* FALSE disables visibilityChooser -- Mastodon's
                                 * edit endpoint silently ignores visibility
                                 * changes, so MODIFY shouldn't imply it works */
+    BOOL  pollMode;           /* TRUE swaps tv->extrasLayout's child to pollExtrasLayout
+                                * (four poll-answer rows + expiration row) instead of
+                                * tootExtrasLayout (the two attach-media rows) -- see
+                                * FS3ETootView_SetComposeContext */
 } FS3ETootKindConfig;
 
 static const FS3ETootKindConfig tootKindConfig[] = {
-    /* FS3ETOOT_KIND_NEW     */ { MSG_TOOT_CONTEXT_NEW,    MSG_TOOT_SEND,       FALSE, TRUE  },
-    /* FS3ETOOT_KIND_MODIFY  */ { MSG_TOOT_CONTEXT_MODIFY, MSG_TOOT_SEND_MODIFY, TRUE, FALSE },
-    /* FS3ETOOT_KIND_POLL    */ { MSG_TOOT_CONTEXT_POLL,   MSG_TOOT_SEND,       FALSE, TRUE  },
-    /* FS3ETOOT_KIND_REPLY   */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_REPLY, TRUE, TRUE },
-    /* FS3ETOOT_KIND_QUOTE   */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_QUOTE, FALSE, TRUE },
-    /* FS3ETOOT_KIND_MESSAGE */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND,       TRUE, TRUE },
-    /* FS3ETOOT_KIND_MODIFY_BIO */ { MSG_TOOT_CONTEXT_MODIFY_BIO, MSG_TOOT_SEND_MODIFY, TRUE, FALSE },
+    /* FS3ETOOT_KIND_NEW     */ { MSG_TOOT_CONTEXT_NEW,    MSG_TOOT_SEND,       FALSE, TRUE,  FALSE },
+    /* FS3ETOOT_KIND_MODIFY  */ { MSG_TOOT_CONTEXT_MODIFY, MSG_TOOT_SEND_MODIFY, TRUE, FALSE, FALSE },
+    /* FS3ETOOT_KIND_POLL    */ { MSG_TOOT_CONTEXT_POLL,   MSG_TOOT_SEND,       FALSE, TRUE,  TRUE  },
+    /* FS3ETOOT_KIND_REPLY   */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_REPLY, TRUE, TRUE, FALSE },
+    /* FS3ETOOT_KIND_QUOTE   */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND_QUOTE, FALSE, TRUE, FALSE },
+    /* FS3ETOOT_KIND_MESSAGE */ { MSG_TOOT_CONTEXT_NEW /* unused, see above */, MSG_TOOT_SEND,       TRUE, TRUE, FALSE },
+    /* FS3ETOOT_KIND_MODIFY_BIO */ { MSG_TOOT_CONTEXT_MODIFY_BIO, MSG_TOOT_SEND_MODIFY, TRUE, FALSE, FALSE },
 };
 
 /* Updates tv->visibilityMeaning's text -- blank for kinds whose
@@ -1142,6 +1574,70 @@ void FS3ETootView_SetComposeContext(FS3ETootView *tv, FS3ETootKind kind,
             SetAttrs(tv->visibilityChooser, GA_Disabled, (ULONG)!cfg->visibilityEditable, TAG_END);
     }
 
+    /* Swap tv->extrasLayout's (the slot's) one child between
+     * tootExtrasLayout (the two attach-media rows) and pollExtrasLayout
+     * (the four poll-answer rows + expiration row) -- see the "slot" design
+     * comment above tv->extrasLayout's construction in FS3ETootView_Create.
+     * Both groups were added there with CHILD_NoDispose TRUE, so removing
+     * one here only detaches it (it stays alive, owned by tv->tootExtras/
+     * pollExtrasLayout) rather than destroying it.
+     *
+     * A plain RethinkLayout on the slot isn't enough here: bodyEditor (the
+     * slot's sibling, weighted height 1) needs to grow/shrink to absorb
+     * whatever height the swap frees up or consumes, and that
+     * redistribution only happens if the *outer* layout (tv->layout, the
+     * slot's parent) is what gets relayouted, not the slot itself.
+     * WM_RETHINK on the whole window is the simplest way to guarantee that,
+     * same as every other structural change in this window
+     * (FS3ETootView_Open already ends on one). */
+    if (tv->extrasLayout && tv->tootExtrasLayout && tv->pollExtrasLayout) {
+        Object *want = cfg->pollMode ? tv->pollExtrasLayout : tv->tootExtrasLayout;
+
+        if (tv->currentExtras != want) {
+            if (tv->window) {
+                SetGadgetAttrs((struct Gadget *)tv->extrasLayout, tv->window, NULL,
+                               LAYOUT_RemoveChild, (ULONG)tv->currentExtras, TAG_DONE);
+                SetGadgetAttrs((struct Gadget *)tv->extrasLayout, tv->window, NULL,
+                               LAYOUT_AddChild,    (ULONG)want,
+                               CHILD_WeightedHeight, 0,
+                               CHILD_NoDispose,      TRUE,
+                               TAG_DONE);
+                DoMethod(tv->windowObj, WM_RETHINK, NULL);
+            } else {
+                SetAttrs(tv->extrasLayout, LAYOUT_RemoveChild, (ULONG)tv->currentExtras, TAG_END);
+                SetAttrs(tv->extrasLayout,
+                         LAYOUT_AddChild,      (ULONG)want,
+                         CHILD_WeightedHeight, 0,
+                         CHILD_NoDispose,      TRUE,
+                         TAG_END);
+            }
+            tv->currentExtras = want;
+        }
+    }
+
+    /* Every time poll mode is (re)configured, the expiration and type
+     * choosers go back to their defaults ("3 days" / "Single choice") --
+     * same "don't carry over a leftover pick from whatever was open
+     * before" reasoning as FS3ETootView_Open's visibility/quote-policy
+     * chooser resets, just triggered from SetComposeContext instead since
+     * that's the point poll mode is actually (re)entered. */
+    if (tv->pollExpirationChooser && cfg->pollMode) {
+        if (tv->window)
+            SetGadgetAttrs((struct Gadget *)tv->pollExpirationChooser, tv->window, NULL,
+                           CHOOSER_Active, (ULONG)FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX, TAG_DONE);
+        else
+            SetAttrs(tv->pollExpirationChooser,
+                     CHOOSER_Active, (ULONG)FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX, TAG_END);
+    }
+    if (tv->pollMultipleChooser && cfg->pollMode) {
+        if (tv->window)
+            SetGadgetAttrs((struct Gadget *)tv->pollMultipleChooser, tv->window, NULL,
+                           CHOOSER_Active, (ULONG)FS3ETOOT_POLL_TYPE_DEFAULT_IDX, TAG_DONE);
+        else
+            SetAttrs(tv->pollMultipleChooser,
+                     CHOOSER_Active, (ULONG)FS3ETOOT_POLL_TYPE_DEFAULT_IDX, TAG_END);
+    }
+
     FS3ETootView_UpdateVisibilityMeaning(tv);
 
     /* Prefill the body -- only for kinds that declare it, every other kind
@@ -1220,6 +1716,51 @@ BOOL FS3ETootView_GetSensitive(FS3ETootView *tv)
 
     GetAttr(GA_Selected, tv->sensitiveCheck, &selected);
     return selected ? TRUE : FALSE;
+}
+
+const char *FS3ETootView_GetLanguage(FS3ETootView *tv)
+{
+    ULONG active = 0;
+
+    if (!tv || !tv->languageChooser) return "";
+
+    GetAttr(CHOOSER_Active, tv->languageChooser, &active);
+    if (active >= FS3ETOOT_NUM_LANGUAGES) return "";
+    return fs3eTootLanguages[active].code;
+}
+
+const char *FS3ETootView_GetPollOption(FS3ETootView *tv, ULONG index)
+{
+    const char *p = NULL;
+
+    if (!tv || index >= FS3ETOOT_NUM_POLL_OPTIONS || !tv->pollOptionEditor[index])
+        return NULL;
+
+    GetAttr(UTED_Text, tv->pollOptionEditor[index], (ULONG *)&p);
+    return p;
+}
+
+ULONG FS3ETootView_GetPollExpiresInSeconds(FS3ETootView *tv)
+{
+    ULONG active = 0;
+
+    if (!tv || !tv->pollExpirationChooser)
+        return fs3eTootPollExpirationSeconds[FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX];
+
+    GetAttr(CHOOSER_Active, tv->pollExpirationChooser, &active);
+    if (active >= FS3ETOOT_NUM_POLL_EXPIRATIONS)
+        return fs3eTootPollExpirationSeconds[FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX];
+    return fs3eTootPollExpirationSeconds[active];
+}
+
+BOOL FS3ETootView_GetPollMultiple(FS3ETootView *tv)
+{
+    ULONG active = 0;
+
+    if (!tv || !tv->pollMultipleChooser) return FALSE;
+
+    GetAttr(CHOOSER_Active, tv->pollMultipleChooser, &active);
+    return (active == 1) ? TRUE : FALSE;
 }
 
 /* Case-insensitive full-string match -- avoids a Stricmp()/UtilityBase

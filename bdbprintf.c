@@ -67,7 +67,11 @@ void flushbdbprint(void)
 {
     if (bdb_position > 0) {
         bdb_buffer[bdb_position] = '\0';
-        Printf(bdb_buffer);
+        /* bdb_buffer holds arbitrary logged text (URLs, etc.) -- never pass
+         * it as Printf()'s own format string, or a stray '%' in logged data
+         * makes Printf() read nonexistent varargs off the stack (format-
+         * string bug, easy Address Error trigger on m68k). */
+        Printf("%s", bdb_buffer);
         fflush(stdout);
         bdb_position = 0;
         bdb_buffer[0] = '\0';

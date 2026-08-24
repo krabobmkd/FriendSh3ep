@@ -31,7 +31,7 @@
 #include "fs3esettings.h"
 #include "avatarimages.h"
 
-#define FRIENDSH3EP_VERSION "0.8.2"
+#define FRIENDSH3EP_VERSION "1.0"
 
 /* Login two-phase OAuth state machine */
 typedef enum {
@@ -70,15 +70,48 @@ typedef enum {
                              * flat list of TTLAccountRow_Class rows, no profile header */
     FS3ESEARCH_FOLLOWERS,  /* see FS3EApp_ShowFollowers(); searchProfileAccountId's
                              * followers, same flat account-row list */
-    FS3ESEARCH_FOLLOWING   /* see FS3EApp_ShowFollowing(); same, but following */
+    FS3ESEARCH_FOLLOWING,  /* see FS3EApp_ShowFollowing(); same, but following */
+    FS3ESEARCH_INSTANCE,   /* see FS3EApp_SearchInstance(); "tell me about this
+                             * server" lookup -- a pinned TTLInstanceHeaderSetup
+                             * header (TTIMELINE_ShowInstanceInfo), no post list
+                             * below it, same "no toots to page" reasoning as
+                             * FS3ESEARCH_DISCUSSION has none either (that one
+                             * DOES have a post list though; this one has none
+                             * at all) */
+    FS3ESEARCH_BLOCKED_USERS,   /* see FS3EApp_ShowBlockedUsers() -- the connected
+                             * account's own GET /api/v1/blocks, same flat
+                             * account-row list as FOLLOWERS/FOLLOWING above,
+                             * no profile header (there's no single "whose
+                             * list" to name -- it's always your own), pinned
+                             * "Blocked users" title row instead of "Followers
+                             * for @user". Menu-triggered (FriendSh3ep menu),
+                             * not a profile-header button. */
+    FS3ESEARCH_BLOCKED_SERVERS, /* see FS3EApp_ShowBlockedServers() -- the connected
+                             * account's own GET /api/v1/domain_blocks, a flat
+                             * list of TTLDomainRow_Class rows (plain domain
+                             * strings, not accounts) instead. Same menu-
+                             * triggered, no-profile-header shape as
+                             * FS3ESEARCH_BLOCKED_USERS above. */
+    FS3ESEARCH_FAVOURITED_BY, /* see FS3EApp_ShowFavouritedBy() -- who
+                             * favourited the "selected" toot (Timeline menu's
+                             * "Who Faved that Toot", see
+                             * TTIMELINE_SelectedPostId), same flat account-row
+                             * list as FOLLOWERS/FOLLOWING/BLOCKED_USERS, no
+                             * profile header, pinned "Favourited by" title
+                             * (there's no single @user to name -- this is
+                             * about a TOOT, not a profile). */
+    FS3ESEARCH_REBLOGGED_BY   /* see FS3EApp_ShowRebloggedBy() -- same, but who
+                             * boosted it ("Who Boosted that Toot"), pinned
+                             * "Boosted by" title. */
 } FS3ESearchMode;
 
-/* searchWordTypeChooser's two entries (CHOOSER_Active), read by
- * StartSearchFromLine() to decide whether Return dispatches a word search
- * or an account search. */
+/* searchWordTypeChooser's three entries (CHOOSER_Active), read by
+ * StartSearchFromLine() to decide whether Return dispatches a word search,
+ * an account search, or a server lookup. */
 typedef enum {
     FS3ESEARCHTYPE_WORD = 0,
-    FS3ESEARCHTYPE_PEOPLE
+    FS3ESEARCHTYPE_PEOPLE,
+    FS3ESEARCHTYPE_SERVER
 } FS3ESearchTypeChoice;
 
 /* One saved "search view configuration" for the Back-navigation stack
@@ -181,7 +214,7 @@ struct App {
     int     searchWordEditor_activateNextRound;
     Object *searchWordTypeChooser;
     struct List   searchWordTypeList;
-    struct Node  *searchWordTypeNodes[2]; /* 0="Word", 1="People" -- see FS3ESearchTypeChoice */
+    struct Node  *searchWordTypeNodes[3]; /* 0="Word", 1="People", 2="Server" -- see FS3ESearchTypeChoice */
     Object *searchBackButton;
     Object *tootTimeline;
 
@@ -253,6 +286,11 @@ struct App {
     LONG   pendingTootVisibility;
     LONG   pendingTootQuotePolicy;
     BOOL   pendingTootSensitive;
+    char   pendingTootLanguage[8]; /* ISO 639 code copy (see FS3ETootView_GetLanguage) --
+                                     * fixed buffer, not AllocVec'd: codes are a handful
+                                     * of bytes at most, same "small enough to just copy"
+                                     * reasoning as pendingTootMedia2Path's mime type isn't
+                                     * but this is even smaller. "" = unspecified. */
 
     /* Second attach-media row (FS3ETootView.attachMedia2GF) queued behind
      * the first -- Mastodon's media endpoint takes one file per request, so
@@ -316,6 +354,17 @@ struct App {
      * FS3ENetInstanceInfoReply with fs3eii_Known TRUE.
      * See FS3EMastodon_GetInstanceInfo in network_fs3e/fs3enet_mastodon.h. */
     ULONG  accountMaxChars;
+
+    /* Whether the CONNECTED account's own server offers server-side toot
+     * translation (see FS3ENETQ_INSTANCE_INFO's fs3eii_TranslationEnabled/
+     * Known) -- drives whether TootTimeline offers a "Translate" hot-spot
+     * at all (see FS3EApp_MapStatusToPostSetup's canTranslate computation).
+     * accountTranslationEnabled is meaningless (FALSE) unless
+     * accountTranslationKnown is TRUE -- same "unknown isn't a confirmed
+     * no" rule as accountMaxChars/fs3eii_Known. Both reset FALSE on every
+     * real account change, same as accountMaxChars. */
+    BOOL   accountTranslationEnabled;
+    BOOL   accountTranslationKnown;
 
     /* VIEWMODE_User's own profile header (bio, follower/following counts --
      * see TTIMELINE_ShowProfile) -- fetched once per real account via
@@ -408,6 +457,23 @@ struct App {
     ULONG  olderPageInFlightMask;
     ULONG  newerPageInFlightMask;
 
+    /* VIEWMODE_News's own pagination cursor -- trends/links has no
+     * status-id concept to page by (see FS3ENetNewsReq's doc comment), so
+     * unlike every other channel's max_id/min_id-driven OldestPostId/
+     * NewestPostId, "how many items already loaded" is tracked here by
+     * hand and sent back as the next page's ?offset=. Reset to 0 wherever
+     * channelPopulatedMask/timelineFetchedMask are reset (account switch/
+     * login), so a fresh account starts News over from offset 0 too. */
+    ULONG  newsLoadedCount;
+
+    /* VIEWMODE_Bookmarks's own local-cache pagination cursor -- mirrors
+     * newsLoadedCount above, but counts entries already shown from the
+     * on-disk offline-bookmarks cache (see FS3ENETQ_BOOKMARKS_LOCAL's own
+     * doc comment in fs3enet.h), not a server page. Reset to 0 wherever
+     * newsLoadedCount is (account switch/login) and at the start of every
+     * fresh VIEWMODE_Bookmarks session (see FS3EApp_FetchTimeline). */
+    ULONG  bookmarksLoadedCount;
+
     /* Avatar bitmap cache — one scaled BmImage per @user@instance */
     struct AvatarImages *avatarImages;
 
@@ -416,6 +482,22 @@ struct App {
 
     /* enum fs3eViewMode */
     ULONG     viewMode;
+
+    /* enum fs3eViewMode -- whichever channel was active the moment Search
+     * was last entered FROM a non-Search channel (Home/Local/Fed/Notifs/
+     * Bookmarks/News/User), captured once, centrally, in fs3e_setViewMode
+     * itself (the "unique entry to manage changing viewmode" per its own
+     * comment) rather than at each of the many FS3EApp_OpenProfile/
+     * OpenDiscussion/SearchWord/Account/Instance/ShowAccountsList/
+     * ShowBlockedServers call sites that switch into VIEWMODE_Search --
+     * see FS3EApp_SearchGoBack's own comment for why this exists: the
+     * search-history stack (searchStack/searchStackDepth) only remembers
+     * navigation WITHIN Search, so once it's exhausted, Back needs
+     * somewhere else to go rather than just going inert. Naturally
+     * refreshed every time Search is genuinely re-entered from elsewhere;
+     * never explicitly reset otherwise (harmless if stale -- it's only
+     * ever read while still inside Search, right before leaving it). */
+    ULONG     searchOriginViewMode;
 
     /* Search channel (VIEWMODE_Search) profile-view state -- see
      * FS3ESearchMode and FS3EApp_OpenProfile(). searchProfileAcct is set
@@ -448,6 +530,23 @@ struct App {
      * FS3EApp_OpenDiscussion(). Set the moment a discussion is requested,
      * same "before either reply lands" timing as searchProfileAcct above. */
     char  *searchDiscussionStatusId;
+
+    /* Search channel (VIEWMODE_Search) "about this server" state -- see
+     * FS3EApp_SearchInstance()/TTIMELINE_ShowInstanceInfo. searchInstanceDomain
+     * is set once the FS3ENETQ_INSTANCE_DETAILS reply resolves the real
+     * domain (unlike searchProfileAcct above, there's nothing meaningful to
+     * set before that reply lands -- what the user typed may be a full URL,
+     * not the bare domain the block/unblock endpoints need), so an
+     * FS3ENETQ_DOMAIN_BLOCK_STATE/TOGGLE reply can be checked against it and
+     * discarded if stale, same reasoning as searchProfileAccountId.
+     * searchInstanceBlocked mirrors it: unknown/FALSE until the
+     * FS3ENETQ_DOMAIN_BLOCK_STATE reply lands, kept in sync afterwards by
+     * FS3ENETQ_DOMAIN_BLOCK_TOGGLE's own reply -- read by TTL_HOT_BLOCK_SERVER's
+     * click handler to decide which direction to toggle, same "app-side
+     * state instead of a hot-spot notify tag" convention TTL_HOT_UNBLOCK
+     * already uses for the profile header's Unblock button. */
+    char  *searchInstanceDomain;
+    BOOL   searchInstanceBlocked;
 
     /* Back-navigation history for the Search channel -- see
      * FS3EApp_SearchGoBack()/searchStackPush() in fs3erequests.c. A plain

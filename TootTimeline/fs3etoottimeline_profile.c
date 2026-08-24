@@ -139,6 +139,7 @@ TTLPost *ttl_profile_header_alloc(const TTLProfileHeaderSetup *setup)
         post->followersCount = setup->followersCount;
         post->followingCount = setup->followingCount;
         post->following       = setup->following;
+        post->blocked         = setup->blocked;
         /* setup->showFollow isn't stored -- .buildHotspots and .render
          * both need it, so it's cheaper to just derive "should we show
          * a Follow control" from postId being set (self-profiles pass
@@ -419,7 +420,9 @@ static void ttl_profile_header_render(TTLData *inst, struct RastPort *rp,
      * whatever .layout actually left space for. Message shares Follow/
      * Unfollow's visibility condition (post->mediaCount != 0, i.e. hidden
      * on a self-profile -- see ttl_profile_header_alloc) since messaging
-     * yourself isn't a useful action either. ---- */
+     * yourself isn't a useful action either. An "Unblock" button (see
+     * TTL_HOT_UNBLOCK) can also appear between Follow/Unfollow and Message
+     * when post->blocked -- see below. ---- */
     if ((post->mediaCount != 0 || post->isOwn) && inst->style && inst->style->dcNormal) {
         struct URPDrawContext *dc = inst->style->dcNormal;
         WORD  boxH = ttl_profile_button_row_height(inst);
@@ -427,6 +430,7 @@ static void ttl_profile_header_render(TTLData *inst, struct RastPort *rp,
         struct URPTextPos    pos;
 
         if (post->mediaCount != 0) {
+        WORD followBoxX = 0, followBoxW = 0;
         /* Follow/Unfollow */
         {
             const char *label = post->following ? "Following" : "Follow";
@@ -439,6 +443,8 @@ static void ttl_profile_header_render(TTLData *inst, struct RastPort *rp,
             URPDC_TextSizeUTF8(dc, label, nc, &m);
             boxW = (WORD)(m.width + TTL_PROFILE_BUTTON_PADX * 2);
             boxX = textX;
+            followBoxX = boxX;
+            followBoxW = boxW;
 
             SetAPen(rp, (LONG)FS3E_PEN(inst->style,
                 post->following ? FS3E_COLOR_BUTTON_SELECTED_BG : FS3E_COLOR_BUTTON_BG));
@@ -448,6 +454,33 @@ static void ttl_profile_header_render(TTLData *inst, struct RastPort *rp,
                 (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT),
                 (LONG)FS3E_PEN(inst->style,
                     post->following ? FS3E_COLOR_BUTTON_SELECTED_BG : FS3E_COLOR_BUTTON_BG));
+            pos.x = (WORD)(boxX + TTL_PROFILE_BUTTON_PADX);
+            pos.y = (WORD)(boxY + TTL_PROFILE_BUTTON_PADY + inst->lineAscent);
+            URPDrawTextUTF8(rp, dc, &pos, label, (ULONG)nc);
+        }
+
+        /* Unblock -- right of Follow/Unfollow, same row, only when this
+         * account is currently blocked (see TTLProfileHeaderSetup.blocked).
+         * Uses followBoxX/followBoxW captured above so it never drifts from
+         * whatever Follow/Unfollow's own label width actually drew, same
+         * "one shared measurement" rule ttl_profile_counts_box_layout's own
+         * comment already explains for the counts buttons. */
+        if (post->blocked) {
+            const char *label = "Unblock";
+            struct URPTextMetric m;
+            LONG  nc = utf8_codepoints_range(label, label + strlen(label));
+            WORD  boxW, boxX;
+
+            URPDC_TextSizeUTF8(dc, label, nc, &m);
+            boxW = (WORD)(m.width + TTL_PROFILE_BUTTON_PADX * 2);
+            boxX = (WORD)(followBoxX + followBoxW + TTL_PROFILE_BUTTON_GAP);
+
+            SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_BUTTON_BG));
+            RectFill(rp, boxX, boxY, (WORD)(boxX + boxW - 1), (WORD)(boxY + boxH - 1));
+
+            URPDC_SetDrawColorFromPen(dc, inst->screen,
+                (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACTION_TEXT),
+                (LONG)FS3E_PEN(inst->style, FS3E_COLOR_BUTTON_BG));
             pos.x = (WORD)(boxX + TTL_PROFILE_BUTTON_PADX);
             pos.y = (WORD)(boxY + TTL_PROFILE_BUTTON_PADY + inst->lineAscent);
             URPDrawTextUTF8(rp, dc, &pos, label, (ULONG)nc);
@@ -559,6 +592,7 @@ static void ttl_profile_header_build_hotspots(TTLData *inst, TTLPost *post)
         WORD boxY = (WORD)(post->height - 1 - TTL_POST_PAD_BOT - boxH);
 
         if (post->mediaCount != 0) {
+        WORD followBoxX = 0, followBoxW = 0;
         {
             const char *label = post->following ? "Following" : "Follow";
             struct URPTextMetric m;
@@ -568,8 +602,23 @@ static void ttl_profile_header_build_hotspots(TTLData *inst, TTLPost *post)
             URPDC_TextSizeUTF8(inst->style->dcNormal, label, nc, &m);
             boxW = (WORD)(m.width + TTL_PROFILE_BUTTON_PADX * 2);
             boxX = textX;
+            followBoxX = boxX;
+            followBoxW = boxW;
 
             ttl_hs_add(post, TTL_HOT_FOLLOW, boxX, boxY, boxW, boxH, NULL, 0);
+        }
+
+        if (post->blocked) {
+            const char *label = "Unblock";
+            struct URPTextMetric m;
+            LONG  nc = utf8_codepoints_range(label, label + strlen(label));
+            WORD  boxW, boxX;
+
+            URPDC_TextSizeUTF8(inst->style->dcNormal, label, nc, &m);
+            boxW = (WORD)(m.width + TTL_PROFILE_BUTTON_PADX * 2);
+            boxX = (WORD)(followBoxX + followBoxW + TTL_PROFILE_BUTTON_GAP);
+
+            ttl_hs_add(post, TTL_HOT_UNBLOCK, boxX, boxY, boxW, boxH, NULL, 0);
         }
 
         {

@@ -40,6 +40,14 @@
  * ("public"/"followers"/"nobody"), added server-side in Mastodon 4.5. */
 #define FS3ETOOT_NUM_QUOTEPOLICIES 3
 
+/* Language picker -- Mastodon's `language` status field (ISO 639-1, a few
+ * ISO 639-2/3 codes for languages with none), sent so the server (and
+ * other clients) know what language this toot is written in rather than
+ * guessing. Entry 0 is "(Unspecified)" -- see fs3etootLanguages' own
+ * comment in fs3etootview.c for why that means "send no language field at
+ * all", not an empty string sent to the server. */
+#define FS3ETOOT_NUM_LANGUAGES 63
+
 /* What FS3ETootView_SetComposeContext configures the window to submit when
  * "Toot" is pressed. The contextMessage title text is derived from this +
  * the accompanying FS3ETootComposeParams internally -- callers pick a kind
@@ -75,6 +83,28 @@ typedef enum FS3ETootKind {
  * kept as its own define since this header doesn't depend on either
  * module). */
 #define FS3ETOOT_MAX_MEDIA 4
+
+/* Poll-answer rows -- how many pollOptionEditor/pollOptionLabel gadgets
+ * pollExtrasLayout holds (see below). Poll UI is layout-only for now --
+ * see pollOptionEditor's comment below. */
+#define FS3ETOOT_NUM_POLL_OPTIONS 4
+
+/* Poll expiration chooser, fifth poll row ("Expiration time" + combobox) --
+ * see fs3etootview.c's fs3eTootPollExpirations table for the option labels.
+ * Index FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX ("3 days") is what
+ * FS3ETootView_SetComposeContext resets the chooser to every time it
+ * configures poll mode. */
+#define FS3ETOOT_NUM_POLL_EXPIRATIONS 10
+#define FS3ETOOT_POLL_EXPIRATION_DEFAULT_IDX 6
+
+/* Poll type chooser ("Single choice"/"Multiple choice", Mastodon's
+ * poll[multiple]) -- same row as the expiration chooser above (see
+ * fs3etootview.c's FS3ETootView_Create). Index
+ * FS3ETOOT_POLL_TYPE_DEFAULT_IDX ("Single choice") is what
+ * FS3ETootView_SetComposeContext resets the chooser to every time it
+ * configures poll mode, same convention as the expiration chooser. */
+#define FS3ETOOT_NUM_POLL_TYPES 2
+#define FS3ETOOT_POLL_TYPE_DEFAULT_IDX 0
 
 /* Extra data for FS3ETootView_SetComposeContext; which fields matter
  * depends on kind (see FS3ETootKind). Pass params NULL for
@@ -138,6 +168,17 @@ typedef struct FS3ETootView {
     struct Node  *quotePolicyNodes[FS3ETOOT_NUM_QUOTEPOLICIES];
     Object       *quotePolicyChooser;
 
+    /* Language picker, same column as sensitiveCheck below (see
+     * FS3ETootView_Create's sensitiveLanguageCol) -- always editable
+     * (Mastodon's edit endpoint doesn't take it either way, so unlike
+     * visibilityChooser there's no MODIFY-specific gating to speak of).
+     * Read directly via FS3ETootView_GetLanguage() at send time, same "no
+     * separate copy kept here" convention as visibilityChooser/
+     * quotePolicyChooser. */
+    struct List   languageList;
+    struct Node  *languageNodes[FS3ETOOT_NUM_LANGUAGES];
+    Object       *languageChooser;
+
     Object *charCountLabel;
     char    charCountText[32];
 
@@ -158,6 +199,58 @@ typedef struct FS3ETootView {
      * as attachMediaGF above applies here too. */
     Object *attachMedia2GF;
     Object *attachMedia2ClearBtn;
+
+    /* extrasLayout is a plain layout.gadget "slot" sitting between
+     * bodyEditor and bottomBar in tv->layout below -- it holds exactly one
+     * child at a time, either tootExtrasLayout (the two attach-media rows)
+     * or pollExtrasLayout (the four poll-answer rows + expiration row),
+     * swapped via LAYOUT_RemoveChild/LAYOUT_AddChild in
+     * FS3ETootView_SetComposeContext depending on composeKind. Both groups
+     * are added to the slot with CHILD_NoDispose TRUE, so removing one only
+     * detaches it -- it stays alive, owned by tv->tootExtrasLayout/
+     * pollExtrasLayout, until FS3ETootView_Dispose explicitly
+     * DisposeObject()s both (see there and FS3ETootView_Create's "slot"
+     * design comment for why: layout.gadget's own AddChild always appends,
+     * so swapping groups directly at tv->layout's level -- instead of
+     * inside this always-present, never-swapped slot -- would push
+     * whichever group got re-added after bottomBar/visibilityMeaning).
+     * attachMediaRow/attachMediaRow2 and the poll rows themselves are
+     * locals inside FS3ETootView_Create, not kept here (nothing outside
+     * that function touches a row directly, only the gadgets inside each
+     * row, e.g. attachMediaGF/attachMediaClearBtn above). */
+    Object *extrasLayout;
+    Object *tootExtrasLayout;
+    Object *pollExtrasLayout;
+    Object *currentExtras; /* whichever of the two above is presently extrasLayout's child */
+
+    /* Poll-answer rows, one one-line
+     * UniTextEditor per possible answer, "Option N" label to its left.
+     * Layout-only for now: nothing reads these yet (actually submitting a
+     * poll is future work), but the gadgets exist and mode-switch correctly
+     * with composeKind already. */
+    Object *pollOptionEditor[FS3ETOOT_NUM_POLL_OPTIONS];
+    Object *pollOptionLabel[FS3ETOOT_NUM_POLL_OPTIONS];
+    /* "Option 1".."Option 4", formatted once at creation from
+     * MSG_TOOT_POLL_OPTION_FORMAT -- LABEL_Text keeps a pointer, not a
+     * copy, so this must outlive the label object (same convention as
+     * charCountText below for charCountLabel). */
+    char    pollOptionLabelText[FS3ETOOT_NUM_POLL_OPTIONS][16];
+
+    /* Poll expiration + type row, pollExtrasLayout's last row -- two
+     * [label][popup chooser] pairs side by side in their own horizontal
+     * sub-layout (see FS3ETootView_Create's pollExpirationRow): expiration
+     * (fs3etootview.c's fs3eTootPollExpirations table) and single-vs-
+     * multiple-choice (fs3eTootPollTypes table). Both read directly via
+     * CHOOSER_Active, same convention as visibilityChooser/
+     * quotePolicyChooser -- no separate copy kept here. */
+    Object       *pollExpirationLabel;
+    struct List   pollExpirationList;
+    struct Node  *pollExpirationNodes[FS3ETOOT_NUM_POLL_EXPIRATIONS];
+    Object       *pollExpirationChooser;
+    Object       *pollMultipleLabel;
+    struct List   pollMultipleList;
+    struct Node  *pollMultipleNodes[FS3ETOOT_NUM_POLL_TYPES];
+    Object       *pollMultipleChooser;
 
     /* "Sensitive content" checkbox, bottomBar, right before tootBtn --
      * Mastodon's `sensitive` flag applies to the whole status (and every
@@ -247,6 +340,32 @@ LONG FS3ETootView_GetQuotePolicy(FS3ETootView *tv);
  * Mastodon's status-level `sensitive` field, see sensitiveCheck's comment
  * above. */
 BOOL FS3ETootView_GetSensitive(FS3ETootView *tv);
+
+/* ISO 639 code of the currently selected language (e.g. "en", "fr"), or ""
+ * for the "(Unspecified)" first entry -- see languageChooser's comment.
+ * Returns a pointer into a static table, never AllocVec'd -- caller must
+ * NOT FreeVec() it (unlike FS3ETootView_GetUTF8Body). */
+const char *FS3ETootView_GetLanguage(FS3ETootView *tv);
+
+/* UTF-8 text of poll answer row `index` (0..FS3ETOOT_NUM_POLL_OPTIONS-1),
+ * or NULL if index is out of range or the editor is empty (UTED_Text
+ * returns NULL for an empty editor -- see FS3ETootView_GetUTF8Body's own
+ * "" vs NULL note). WATCH OUT: same as FS3ETootView_GetUTF8Body, if
+ * non-NULL the result must be FreeVec()'ed by the caller. Only meaningful
+ * for FS3ETOOT_KIND_POLL, called at send time by GID_TOOT_SEND_BUTTON
+ * (friendsh3ep.c). */
+const char *FS3ETootView_GetPollOption(FS3ETootView *tv, ULONG index);
+
+/* Seconds until the poll closes, per the currently selected
+ * pollExpirationChooser entry (fs3etootview.c's fs3eTootPollExpirations/
+ * fs3eTootPollExpirationSeconds tables) -- e.g. 259200 for the "3 days"
+ * default. Only meaningful for FS3ETOOT_KIND_POLL. */
+ULONG FS3ETootView_GetPollExpiresInSeconds(FS3ETootView *tv);
+
+/* TRUE if the poll type chooser is set to "Multiple choice" (Mastodon's
+ * poll[multiple]), FALSE for "Single choice" (the default). Only
+ * meaningful for FS3ETOOT_KIND_POLL. */
+BOOL FS3ETootView_GetPollMultiple(FS3ETootView *tv);
 
 /* FS3ETootView_CheckAttachment()'s result -- see its doc comment. */
 typedef enum FS3ETootAttachStatus {

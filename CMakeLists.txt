@@ -24,7 +24,7 @@ add_subdirectory(network_fs3e)
 # later phases.
 
 set(FRIENDSH3EP_SOURCES
-	bdbprintf.c
+#	bdbprintf.c
     avatarimages.c
     bmimage.c
     fs3etextwrap.c
@@ -52,6 +52,7 @@ set(FRIENDSH3EP_SOURCES
     fs3enetworkview.c
     fs3emediaview.c
     fs3elocale.c
+    fs3eoslocale.c
     fs3emenu.c
     fs3eaction.c
     fs3esettings.c
@@ -84,6 +85,8 @@ set(FRIENDSH3EP_SOURCES
     TootTimeline/fs3etoottimeline_profile.c
     TootTimeline/fs3etoottimeline_notif.c
     TootTimeline/fs3etoottimeline_accountrow.c
+    TootTimeline/fs3etoottimeline_instance.c
+    TootTimeline/fs3etoottimeline_news.c
 )
 
 # Listed so IDEs (Qt Creator, etc.) show them in the project tree.
@@ -138,4 +141,4 @@ target_compile_options(FriendSh3ep PRIVATE
 install(TARGETS FriendSh3ep ARCHIVE DESTINATION bin)
 
 
-target_compile_definitions(FriendSh3ep PRIVATE USE_DEBUG_BDBPRINT=1)
+# target_compile_definitions(FriendSh3ep PRIVATE USE_DEBUG_BDBPRINT=1)

@@ -42,7 +42,16 @@ enum {
     MSG_TOOT_CONTEXT_MESSAGE_FORMAT, /* FS3ETOOT_KIND_MESSAGE contextMessage format: "Messaging %s" */
     MSG_TOOT_ATTACH_MEDIA, /* "Attach Media" -- label above the attachMediaGF/attachMediaClearBtn row,
                              * reused as-is for the attachMedia2GF/attachMedia2ClearBtn row below it */
+    MSG_TOOT_POLL_OPTION_FORMAT, /* format: "Option %d" -- label beside each of the four
+                                   * poll-answer rows in fs3etootview.c's pollExtrasLayout */
+    MSG_TOOT_POLL_EXPIRATION, /* "Expiration time" -- label beside pollExpirationChooser,
+                                * pollExtrasLayout's last row */
+    MSG_TOOT_POLL_TYPE,       /* "Type" -- label beside pollMultipleChooser, same row as
+                                * pollExpirationChooser (fs3etootview.c's pollExpirationRow) */
+    MSG_TOOT_POLL_TYPE_SINGLE,   /* pollMultipleChooser entry 0: "Single choice" */
+    MSG_TOOT_POLL_TYPE_MULTIPLE, /* pollMultipleChooser entry 1: "Multiple choice" */
     MSG_TOOT_SENSITIVE,    /* "Sensitive content" -- label next to sensitiveCheck in bottomBar */
+    MSG_TOOT_LANGUAGE,     /* "Language" -- label next to languageChooser, same column as sensitiveCheck */
     MSG_TOOT_VISIBILITY_PUBLIC,
     MSG_TOOT_VISIBILITY_UNLISTED,
     MSG_TOOT_VISIBILITY_PRIVATE,
@@ -90,6 +99,10 @@ enum {
     MSG_MENU_FRIENDSH3EP,
     MSG_MENU_ACCOUNTS,
     MSG_MENU_NEW_TOOT,
+    MSG_MENU_NEW_POLL, /* opens the toot window pre-configured in poll mode
+                         * (FS3ETOOT_KIND_POLL) -- see Action_NewPoll */
+    MSG_MENU_BLOCKED_USERS,   /* "Blocked Users..." -- see Action_ShowBlockedUsers */
+    MSG_MENU_BLOCKED_SERVERS, /* "Blocked Servers..." -- see Action_ShowBlockedServers */
     MSG_MENU_ABOUT,
     MSG_MENU_QUIT,
 
@@ -107,6 +120,17 @@ enum {
     MSG_VIEW_NEWS,
 
     MSG_VIEW_REFRESH,
+    MSG_MENU_ABOUT_SERVER, /* "About This Server" -- see FS3EACTION_VIEW_ABOUT_SERVER */
+
+    /* News channel (VIEWMODE_News) pinned header row, added via
+     * TTLPostSetup.isListTitle same as the followers/following list's own
+     * "Followers for @user" row -- see fs3erequests.c's FS3ENETQ_NEWS reply
+     * handler. Explains what GET /api/v1/trends/links actually shows:
+     * Mastodon collates trends from every public status the server is
+     * aware of via federation, not just ones posted locally, so this is
+     * genuinely "this server and its federated neighbourhood", not just
+     * the local server alone. */
+    MSG_NEWS_HEADER,
 
     /* Menu: Timeline -- navigation/action shortcuts for whichever toot
      * list is currently on screen (see FS3EACTION_TIMELINE_* in
@@ -122,6 +146,8 @@ enum {
     MSG_TIMELINE_AUTOSCROLL_PLAY,
     MSG_TIMELINE_AUTOSCROLL_STOP,
     MSG_TIMELINE_COPY_TEXT,
+    MSG_TIMELINE_WHO_FAVED,
+    MSG_TIMELINE_WHO_BOOSTED,
 
     /* Menu: User -- actions on whichever profile is currently open in the
      * Search view's FS3ESEARCH_USER_PROFILE sub-mode (see
@@ -133,8 +159,6 @@ enum {
     MSG_USER_COPY_URL,
     MSG_USER_FOLLOW,
     MSG_USER_UNFOLLOW,
-    MSG_USER_MASK,
-    MSG_USER_UNMASK,
     MSG_USER_BLOCK,
     MSG_USER_UNBLOCK,
     MSG_USER_BLOCK_SERVER,
@@ -232,6 +256,7 @@ enum {
      * same order as FS3ESearchTypeChoice. */
     MSG_SEARCH_TYPE_WORD,
     MSG_SEARCH_TYPE_PEOPLE,
+    MSG_SEARCH_TYPE_SERVER,
 
     /* Network downloads window (fs3enetworkview.c) */
     MSG_NETWORKV_TITLE,          /* window title, and Settings menu entry */

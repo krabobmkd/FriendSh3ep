@@ -51,8 +51,20 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Messaging %s",
     /* MSG_TOOT_ATTACH_MEDIA */
     "Attach Media",
+    /* MSG_TOOT_POLL_OPTION_FORMAT */
+    "Option %d",
+    /* MSG_TOOT_POLL_EXPIRATION */
+    "Expiration time",
+    /* MSG_TOOT_POLL_TYPE */
+    "Type",
+    /* MSG_TOOT_POLL_TYPE_SINGLE */
+    "Single choice",
+    /* MSG_TOOT_POLL_TYPE_MULTIPLE */
+    "Multiple choice",
     /* MSG_TOOT_SENSITIVE */
     "Sensitive content",
+    /* MSG_TOOT_LANGUAGE */
+    "Language",
     /* MSG_TOOT_VISIBILITY_PUBLIC */
     "Public",
     /* MSG_TOOT_VISIBILITY_UNLISTED -- API value "unlisted", shown with the
@@ -116,6 +128,12 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Accounts...",
     /* MSG_MENU_NEW_TOOT */
     "New Toot...",
+    /* MSG_MENU_NEW_POLL */
+    "New poll...",
+    /* MSG_MENU_BLOCKED_USERS */
+    "Blocked Users...",
+    /* MSG_MENU_BLOCKED_SERVERS */
+    "Blocked Servers...",
     /* MSG_MENU_ABOUT */
     "About...",
     /* MSG_MENU_QUIT */
@@ -138,6 +156,11 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Bookmarks",
     "News",
     "Refresh",
+    /* MSG_MENU_ABOUT_SERVER */
+    "About This Server",
+
+    /* MSG_NEWS_HEADER */
+    "\xF0\x9F\x93\xB0 Trending news shared in federation",
 
     /* MSG_MENU_TIMELINE */
     "Timeline",
@@ -151,6 +174,10 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Autoscroll Stop",
     /* MSG_TIMELINE_COPY_TEXT */
     "Copy Toot Text (UTF-8)",
+    /* MSG_TIMELINE_WHO_FAVED */
+    "Who Faved that Toot",
+    /* MSG_TIMELINE_WHO_BOOSTED */
+    "Who Boosted that Toot",
 
     /* MSG_MENU_USER */
     "User",
@@ -160,10 +187,6 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Follow",
     /* MSG_USER_UNFOLLOW */
     "Unfollow",
-    /* MSG_USER_MASK */
-    "Mask user toots",
-    /* MSG_USER_UNMASK */
-    "Unmask user toots",
     /* MSG_USER_BLOCK */
     "Block user",
     /* MSG_USER_UNBLOCK */
@@ -307,6 +330,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Word",
     /* MSG_SEARCH_TYPE_PEOPLE */
     "People",
+    /* MSG_SEARCH_TYPE_SERVER */
+    "Server",
 
     /* MSG_NETWORKV_TITLE */
     "Network",

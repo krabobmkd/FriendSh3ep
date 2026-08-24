@@ -157,3 +157,104 @@ void FS3ETBDefaultBtn_Dispose(struct Image *out[FS3ESTYLE_TBBUTTON_COUNT])
         }
     }
 }
+
+/* playMode: a play triangle */
+static const UBYTE playModeNormalData[] = {
+    TBGLYPH_HDR,
+    1,0,0,0,0,0,
+    1,1,0,0,0,0,
+    1,1,1,0,0,0,
+    1,1,1,1,0,0,
+    1,1,0,0,0,0,
+    1,0,0,0,0,0,
+};
+static const UBYTE playModeSelectedData[] = {
+    TBGLYPH_HDR,
+    2,0,0,0,0,0,
+    2,2,0,0,0,0,
+    2,2,2,0,0,0,
+    2,2,2,2,0,0,
+    2,2,0,0,0,0,
+    2,0,0,0,0,0,
+};
+
+/* scrollUp: an upward chevron/arrow ("scroll to top") */
+static const UBYTE scrollUpNormalData[] = {
+    TBGLYPH_HDR,
+    0,0,1,1,0,0,
+    0,1,1,1,1,0,
+    1,1,1,1,1,1,
+    0,0,1,1,0,0,
+    0,0,1,1,0,0,
+    0,0,1,1,0,0,
+};
+static const UBYTE scrollUpSelectedData[] = {
+    TBGLYPH_HDR,
+    0,0,2,2,0,0,
+    0,2,2,2,2,0,
+    2,2,2,2,2,2,
+    0,0,2,2,0,0,
+    0,0,2,2,0,0,
+    0,0,2,2,0,0,
+};
+
+/* networkLed: a filled dot (status indicator) */
+static const UBYTE networkLedNormalData[] = {
+    TBGLYPH_HDR,
+    0,0,1,1,0,0,
+    0,1,1,1,1,0,
+    1,1,1,1,1,1,
+    1,1,1,1,1,1,
+    0,1,1,1,1,0,
+    0,0,1,1,0,0,
+};
+static const UBYTE networkLedSelectedData[] = {
+    TBGLYPH_HDR,
+    0,0,2,2,0,0,
+    0,2,2,2,2,0,
+    2,2,2,2,2,2,
+    2,2,2,2,2,2,
+    0,2,2,2,2,0,
+    0,0,2,2,0,0,
+};
+
+/* Same order as FS3ESTYLE_BTDECK_PLAYMODE/SCROLLUP/NETWORKLED -- see
+ * FS3ESTYLE_BTDECK_COUNT and FS3EStyle_SyncTitleBarDeckButtons. */
+static const FS3ETBGlyph tbDeckGlyphs[FS3ESTYLE_BTDECK_COUNT] = {
+    { playModeNormalData,   playModeSelectedData },
+    { scrollUpNormalData,   scrollUpSelectedData },
+    { networkLedNormalData, networkLedSelectedData },
+};
+
+void FS3ETBDefaultBtn_CreateDeck(struct Image *out[FS3ESTYLE_BTDECK_COUNT], struct Screen *scr)
+{
+    int i;
+
+    if (!PenMapBase || !scr || !out) return;
+
+    for (i = 0; i < FS3ESTYLE_BTDECK_COUNT; i++) {
+        if (out[i]) continue; /* already built -- persistent, keep it */
+
+        out[i] = (struct Image *)NewObject(PENMAP_GetClass(), NULL,
+            PENMAP_RenderData,  (ULONG)tbDeckGlyphs[i].normal,
+            PENMAP_SelectData,  (ULONG)tbDeckGlyphs[i].selected,
+            PENMAP_Palette,     (ULONG)tbGlyphPalette,
+            PENMAP_Screen,      (ULONG)scr,
+            PENMAP_ColorMap,    (ULONG)scr->ViewPort.ColorMap,
+            PENMAP_Transparent, TRUE,
+            PENMAP_MaskBlit,    TRUE,
+            TAG_END);
+    }
+}
+
+void FS3ETBDefaultBtn_DisposeDeck(struct Image *out[FS3ESTYLE_BTDECK_COUNT])
+{
+    int i;
+    if (!out) return;
+    for (i = 0; i < FS3ESTYLE_BTDECK_COUNT; i++) {
+        if (out[i]) {
+            DisposeObject((Object *)out[i]);
+            out[i] = NULL;
+        }
+    }
+}

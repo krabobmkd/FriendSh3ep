@@ -266,7 +266,8 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
     return ok;
 }
 
-BOOL FS3EMastodon_GetInstanceInfo(const char *apiBaseUrl, ULONG *outMaxChars)
+BOOL FS3EMastodon_GetInstanceInfo(const char *apiBaseUrl, ULONG *outMaxChars,
+                                  BOOL *outTranslationEnabled, BOOL *outTranslationKnown)
 {
     char url[256];
     FS3EHttpHeader headers[1];
@@ -275,26 +276,38 @@ BOOL FS3EMastodon_GetInstanceInfo(const char *apiBaseUrl, ULONG *outMaxChars)
     BOOL ok = FALSE;
 
     *outMaxChars = FS3EMASTODON_DEFAULT_MAX_CHARS;
+    *outTranslationEnabled = FALSE;
+    *outTranslationKnown   = FALSE;
 
     headers[0].fhh_Name  = NULL;
     headers[0].fhh_Value = NULL;
 
     /* v2 first: configuration.statuses.max_characters -- current Mastodon
-     * and most compatible forks. */
+     * and most compatible forks. Also reads configuration.translation.enabled
+     * from this SAME response (Mastodon 4.0+) -- no extra request needed;
+     * v1 (the fallback below) has no equivalent field, so translation stays
+     * unknown when only that fallback succeeds. */
     snprintf(url, sizeof(url), "%s/api/v2/instance", apiBaseUrl);
     if (FS3EHttp_Get(url, headers, &resp))
     {
         json = cJSON_Parse((char *)resp.fhr_Body);
         if (json)
         {
-            const cJSON *config   = cJSON_GetObjectItemCaseSensitive(json, "configuration");
-            const cJSON *statuses = config ? cJSON_GetObjectItemCaseSensitive(config, "statuses") : NULL;
-            const cJSON *maxChars = statuses ? cJSON_GetObjectItemCaseSensitive(statuses, "max_characters") : NULL;
+            const cJSON *config      = cJSON_GetObjectItemCaseSensitive(json, "configuration");
+            const cJSON *statuses    = config ? cJSON_GetObjectItemCaseSensitive(config, "statuses") : NULL;
+            const cJSON *maxChars    = statuses ? cJSON_GetObjectItemCaseSensitive(statuses, "max_characters") : NULL;
+            const cJSON *translation = config ? cJSON_GetObjectItemCaseSensitive(config, "translation") : NULL;
+            const cJSON *transEnabled = translation ? cJSON_GetObjectItemCaseSensitive(translation, "enabled") : NULL;
 
             if (maxChars && cJSON_IsNumber(maxChars) && maxChars->valueint > 0)
             {
                 *outMaxChars = (ULONG)maxChars->valueint;
                 ok = TRUE;
+            }
+            if (transEnabled && cJSON_IsBool(transEnabled))
+            {
+                *outTranslationEnabled = cJSON_IsTrue(transEnabled) ? TRUE : FALSE;
+                *outTranslationKnown   = TRUE;
             }
             cJSON_Delete(json);
         }
@@ -325,6 +338,249 @@ BOOL FS3EMastodon_GetInstanceInfo(const char *apiBaseUrl, ULONG *outMaxChars)
     }
 
     return ok;
+}
+
+void FS3EMastodonInstanceDetails_Free(FS3EMastodonInstanceDetails *details)
+{
+    ULONG i;
+    if (!details) return;
+    if (details->fmid_Domain)         { FreeVec(details->fmid_Domain);         details->fmid_Domain         = NULL; }
+    if (details->fmid_Title)          { FreeVec(details->fmid_Title);          details->fmid_Title          = NULL; }
+    if (details->fmid_Version)        { FreeVec(details->fmid_Version);        details->fmid_Version        = NULL; }
+    if (details->fmid_Description)    { FreeVec(details->fmid_Description);    details->fmid_Description    = NULL; }
+    if (details->fmid_ContactEmail)   { FreeVec(details->fmid_ContactEmail);   details->fmid_ContactEmail   = NULL; }
+    if (details->fmid_ContactAccount) { FreeVec(details->fmid_ContactAccount); details->fmid_ContactAccount = NULL; }
+    for (i = 0; i < details->fmid_RuleCount; i++)
+        if (details->fmid_Rules[i]) { FreeVec(details->fmid_Rules[i]); details->fmid_Rules[i] = NULL; }
+}
+
+/* rules[] is {"id":"...", "text":"..."} objects on both v1 and v2 -- shared
+ * by FS3EMastodon_FillInstanceV2/V1 below. Capped at FS3E_MASTODON_MAX_RULES,
+ * same "fixed pool, not unbounded" reasoning TTL_POST_MAX_MEDIA etc already
+ * use -- a real instance's own rule list is realistically a handful of
+ * short lines, never anywhere near this cap. */
+static void FS3EMastodon_FillRules(const cJSON *json, FS3EMastodonInstanceDetails *out)
+{
+    const cJSON *rules = cJSON_GetObjectItemCaseSensitive(json, "rules");
+    const cJSON *r;
+
+    if (!rules || !cJSON_IsArray(rules)) return;
+
+    cJSON_ArrayForEach(r, rules)
+    {
+        const cJSON *text;
+        if (out->fmid_RuleCount >= FS3E_MASTODON_MAX_RULES) break;
+        text = cJSON_GetObjectItemCaseSensitive(r, "text");
+        if (text && cJSON_IsString(text) && text->valuestring && text->valuestring[0])
+            out->fmid_Rules[out->fmid_RuleCount++] = FS3EMastodon_DupJsonString(r, "text");
+    }
+}
+
+/* GET /api/v2/instance's shape -- see FS3EMastodon_GetInstanceDetails. */
+static void FS3EMastodon_FillInstanceV2(const cJSON *json, FS3EMastodonInstanceDetails *out)
+{
+    const cJSON *v;
+    const cJSON *config, *statuses, *media, *polls, *translation;
+    const cJSON *usage, *users;
+    const cJSON *registrations, *contact, *contactAccount;
+
+    out->fmid_Domain      = FS3EMastodon_DupJsonString(json, "domain");
+    out->fmid_Title       = FS3EMastodon_DupJsonString(json, "title");
+    out->fmid_Version     = FS3EMastodon_DupJsonString(json, "version");
+    out->fmid_Description = FS3EMastodon_DupJsonString(json, "description");
+
+    usage = cJSON_GetObjectItemCaseSensitive(json, "usage");
+    users = usage ? cJSON_GetObjectItemCaseSensitive(usage, "users") : NULL;
+    v = users ? cJSON_GetObjectItemCaseSensitive(users, "active_month") : NULL;
+    if (v && cJSON_IsNumber(v)) {
+        out->fmid_ActiveMonthUsers      = (ULONG)v->valueint;
+        out->fmid_ActiveMonthUsersKnown = TRUE;
+    }
+
+    config   = cJSON_GetObjectItemCaseSensitive(json, "configuration");
+    statuses = config ? cJSON_GetObjectItemCaseSensitive(config, "statuses") : NULL;
+
+    v = statuses ? cJSON_GetObjectItemCaseSensitive(statuses, "max_characters") : NULL;
+    if (v && cJSON_IsNumber(v) && v->valueint > 0) {
+        out->fmid_MaxChars      = (ULONG)v->valueint;
+        out->fmid_MaxCharsKnown = TRUE;
+    }
+    v = statuses ? cJSON_GetObjectItemCaseSensitive(statuses, "max_media_attachments") : NULL;
+    if (v && cJSON_IsNumber(v)) out->fmid_MaxMediaAttachments = (ULONG)v->valueint;
+
+    media = config ? cJSON_GetObjectItemCaseSensitive(config, "media_attachments") : NULL;
+    v = media ? cJSON_GetObjectItemCaseSensitive(media, "image_size_limit") : NULL;
+    if (v && cJSON_IsNumber(v)) out->fmid_ImageSizeLimit = (ULONG)v->valueint;
+    v = media ? cJSON_GetObjectItemCaseSensitive(media, "video_size_limit") : NULL;
+    if (v && cJSON_IsNumber(v)) out->fmid_VideoSizeLimit = (ULONG)v->valueint;
+
+    polls = config ? cJSON_GetObjectItemCaseSensitive(config, "polls") : NULL;
+    v = polls ? cJSON_GetObjectItemCaseSensitive(polls, "max_options") : NULL;
+    if (v && cJSON_IsNumber(v)) out->fmid_PollMaxOptions = (ULONG)v->valueint;
+    v = polls ? cJSON_GetObjectItemCaseSensitive(polls, "max_expiration") : NULL;
+    if (v && cJSON_IsNumber(v)) out->fmid_PollMaxExpirationSecs = (ULONG)v->valueint;
+
+    translation = config ? cJSON_GetObjectItemCaseSensitive(config, "translation") : NULL;
+    v = translation ? cJSON_GetObjectItemCaseSensitive(translation, "enabled") : NULL;
+    if (v && cJSON_IsBool(v)) {
+        out->fmid_TranslationEnabled = cJSON_IsTrue(v) ? TRUE : FALSE;
+        out->fmid_TranslationKnown   = TRUE;
+    }
+
+    registrations = cJSON_GetObjectItemCaseSensitive(json, "registrations");
+    v = registrations ? cJSON_GetObjectItemCaseSensitive(registrations, "enabled") : NULL;
+    if (v && cJSON_IsBool(v)) {
+        out->fmid_RegistrationsEnabled = cJSON_IsTrue(v) ? TRUE : FALSE;
+        out->fmid_RegistrationsKnown   = TRUE;
+    }
+    v = registrations ? cJSON_GetObjectItemCaseSensitive(registrations, "approval_required") : NULL;
+    if (v && cJSON_IsBool(v)) out->fmid_ApprovalRequired = cJSON_IsTrue(v) ? TRUE : FALSE;
+
+    contact = cJSON_GetObjectItemCaseSensitive(json, "contact");
+    if (contact) {
+        out->fmid_ContactEmail = FS3EMastodon_DupJsonString(contact, "email");
+        contactAccount = cJSON_GetObjectItemCaseSensitive(contact, "account");
+        if (contactAccount)
+            out->fmid_ContactAccount = FS3EMastodon_DupJsonString(contactAccount, "acct");
+    }
+
+    FS3EMastodon_FillRules(json, out);
+}
+
+/* GET /api/v1/instance's (older, flatter) shape -- only reached when v2 is
+ * totally unreachable/unparseable, so this fills as much of the same
+ * FS3EMastodonInstanceDetails as v1's shape carries. */
+static void FS3EMastodon_FillInstanceV1(const cJSON *json, FS3EMastodonInstanceDetails *out)
+{
+    const cJSON *v, *stats, *contactAccount;
+
+    out->fmid_Title = FS3EMastodon_DupJsonString(json, "title");
+    out->fmid_Version = FS3EMastodon_DupJsonString(json, "version");
+    /* v1's "description" is HTML, unlike v2's plain-text field -- left
+     * unstripped here (this file has no HTML stripper; that lives GUI-side
+     * in fs3enet.c, same as a toot's own content) since this fallback only
+     * fires for old/uncommon servers that don't answer v2 at all. */
+    out->fmid_Description = FS3EMastodon_DupJsonString(json, "description");
+
+    v = cJSON_GetObjectItemCaseSensitive(json, "max_toot_chars");
+    if (v && cJSON_IsNumber(v) && v->valueint > 0) {
+        out->fmid_MaxChars      = (ULONG)v->valueint;
+        out->fmid_MaxCharsKnown = TRUE;
+    }
+
+    stats = cJSON_GetObjectItemCaseSensitive(json, "stats");
+    if (stats) {
+        v = cJSON_GetObjectItemCaseSensitive(stats, "user_count");
+        if (v && cJSON_IsNumber(v)) {
+            out->fmid_UserCount      = (ULONG)v->valueint;
+            out->fmid_UserCountKnown = TRUE;
+        }
+        v = cJSON_GetObjectItemCaseSensitive(stats, "status_count");
+        if (v && cJSON_IsNumber(v)) {
+            out->fmid_StatusCount      = (ULONG)v->valueint;
+            out->fmid_StatusCountKnown = TRUE;
+        }
+    }
+
+    v = cJSON_GetObjectItemCaseSensitive(json, "email");
+    if (v && cJSON_IsString(v) && v->valuestring && v->valuestring[0])
+        out->fmid_ContactEmail = FS3EMastodon_DupJsonString(json, "email");
+
+    contactAccount = cJSON_GetObjectItemCaseSensitive(json, "contact_account");
+    if (contactAccount)
+        out->fmid_ContactAccount = FS3EMastodon_DupJsonString(contactAccount, "acct");
+
+    FS3EMastodon_FillRules(json, out);
+}
+
+/* Supplemental fetch used when v2 DID succeed -- see
+ * FS3EMastodon_GetInstanceDetails' comment on why user/status totals still
+ * need a v1 round-trip. Only touches the stats fields, nothing else. */
+static void FS3EMastodon_FillInstanceStatsV1(const cJSON *json, FS3EMastodonInstanceDetails *out)
+{
+    const cJSON *stats = cJSON_GetObjectItemCaseSensitive(json, "stats");
+    const cJSON *v;
+
+    if (!stats) return;
+
+    v = cJSON_GetObjectItemCaseSensitive(stats, "user_count");
+    if (v && cJSON_IsNumber(v)) {
+        out->fmid_UserCount      = (ULONG)v->valueint;
+        out->fmid_UserCountKnown = TRUE;
+    }
+    v = cJSON_GetObjectItemCaseSensitive(stats, "status_count");
+    if (v && cJSON_IsNumber(v)) {
+        out->fmid_StatusCount      = (ULONG)v->valueint;
+        out->fmid_StatusCountKnown = TRUE;
+    }
+}
+
+BOOL FS3EMastodon_GetInstanceDetails(const char *apiBaseUrl, FS3EMastodonInstanceDetails *out)
+{
+    char url[256];
+    FS3EHttpHeader headers[1];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL gotAny = FALSE;
+
+    memset(out, 0, sizeof(*out));
+
+    headers[0].fhh_Name  = NULL;
+    headers[0].fhh_Value = NULL;
+
+    snprintf(url, sizeof(url), "%s/api/v2/instance", apiBaseUrl);
+    if (FS3EHttp_Get(url, headers, &resp))
+    {
+        json = cJSON_Parse((char *)resp.fhr_Body);
+        if (json)
+        {
+            FS3EMastodon_FillInstanceV2(json, out);
+            gotAny = TRUE;
+            cJSON_Delete(json);
+        }
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    if (!gotAny)
+    {
+        /* v2 unreachable/unparseable -- full fallback to v1, same endpoint
+         * FS3EMastodon_GetInstanceInfo() already falls back to. */
+        snprintf(url, sizeof(url), "%s/api/v1/instance", apiBaseUrl);
+        if (FS3EHttp_Get(url, headers, &resp))
+        {
+            json = cJSON_Parse((char *)resp.fhr_Body);
+            if (json)
+            {
+                FS3EMastodon_FillInstanceV1(json, out);
+                gotAny = TRUE;
+                cJSON_Delete(json);
+            }
+            FS3EHttp_FreeResponse(&resp);
+        }
+    }
+    else
+    {
+        /* v2 succeeded but doesn't carry user/status totals -- best-effort
+         * supplemental v1 fetch just for those, see this function's header
+         * comment. A failure here doesn't downgrade gotAny -- v2 already
+         * gave us something real to show. */
+        snprintf(url, sizeof(url), "%s/api/v1/instance", apiBaseUrl);
+        if (FS3EHttp_Get(url, headers, &resp))
+        {
+            json = cJSON_Parse((char *)resp.fhr_Body);
+            if (json)
+            {
+                FS3EMastodon_FillInstanceStatsV1(json, out);
+                cJSON_Delete(json);
+            }
+            FS3EHttp_FreeResponse(&resp);
+        }
+    }
+
+    if (!out->fmid_MaxCharsKnown)
+        out->fmid_MaxChars = FS3EMASTODON_DEFAULT_MAX_CHARS;
+
+    return gotAny;
 }
 
 /* Mirrors enum FS3ENetTimelineShape from fs3enet.h as plain ints -- see
@@ -486,6 +742,9 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                             const char *quoteApprovalPolicy,
                             const char *quotedStatusId,
                             const char *const *mediaIds, ULONG mediaCount,
+                            const char *language,
+                            const char *const *pollOptions, ULONG pollOptionCount,
+                            ULONG pollExpiresIn, BOOL pollMultiple,
                             char *outStatusId, ULONG outStatusIdSize)
 {
     char url[256];
@@ -509,6 +768,8 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
         cJSON_AddStringToObject(reqJson, "in_reply_to_id", inReplyToId);
     if (quotedStatusId && quotedStatusId[0])
         cJSON_AddStringToObject(reqJson, "quoted_status_id", quotedStatusId);
+    if (language && language[0])
+        cJSON_AddStringToObject(reqJson, "language", language);
     if (mediaIds && mediaCount > 0)
     {
         cJSON *arr = cJSON_CreateArray();
@@ -519,6 +780,29 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
                 if (mediaIds[i] && mediaIds[i][0])
                     cJSON_AddItemToArray(arr, cJSON_CreateString(mediaIds[i]));
             cJSON_AddItemToObject(reqJson, "media_ids", arr);
+        }
+    }
+
+    /* Poll -- mutually exclusive with media_ids above (see this function's
+     * own doc comment); a nested object, not a flat "poll[options][]"-style
+     * key, since this whole request body is JSON, not form-encoded. */
+    if (pollOptions && pollOptionCount > 0)
+    {
+        cJSON *poll = cJSON_CreateObject();
+        if (poll)
+        {
+            cJSON *arr = cJSON_CreateArray();
+            if (arr)
+            {
+                ULONG i;
+                for (i = 0; i < pollOptionCount; i++)
+                    if (pollOptions[i] && pollOptions[i][0])
+                        cJSON_AddItemToArray(arr, cJSON_CreateString(pollOptions[i]));
+                cJSON_AddItemToObject(poll, "options", arr);
+            }
+            cJSON_AddNumberToObjectInt(poll, "expires_in", (int)pollExpiresIn);
+            cJSON_AddBoolToObject(poll, "multiple", pollMultiple);
+            cJSON_AddItemToObject(reqJson, "poll", poll);
         }
     }
 
@@ -960,6 +1244,104 @@ BOOL FS3EMastodon_Reblog(const char *apiBaseUrl, const char *accessToken,
     return ok;
 }
 
+BOOL FS3EMastodon_Bookmark(const char *apiBaseUrl, const char *accessToken,
+                           const char *statusId, BOOL bookmark,
+                           BOOL *outBookmarked, char **outRawStatusJson)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    *outBookmarked = FALSE;
+    if (outRawStatusJson) *outRawStatusJson = NULL;
+
+    snprintf(url, sizeof(url), "%s/api/v1/statuses/%s/%s", apiBaseUrl, statusId,
+             bookmark ? "bookmark" : "unbookmark");
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    /* Empty body -- Mastodon's bookmark/unbookmark endpoints take none,
+     * only the auth header and the :id in the URL. */
+    if (FS3EHttp_Post(url, headers, "application/json", "", 0, &resp))
+    {
+        json = cJSON_Parse((char *)resp.fhr_Body);
+        if (json)
+        {
+            const cJSON *v = cJSON_GetObjectItemCaseSensitive(json, "bookmarked");
+            *outBookmarked = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
+
+            ok = TRUE;
+            cJSON_Delete(json);
+        }
+
+        /* Steal fhr_Body rather than copy it -- FS3EHttp_FreeResponse()
+         * tolerates an already-NULL fhr_Body (see its own body), so this
+         * is a clean ownership handoff, not a use-after-free risk. */
+        if (ok && outRawStatusJson) {
+            *outRawStatusJson = (char *)resp.fhr_Body;
+            resp.fhr_Body = NULL;
+        }
+
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    return ok;
+}
+
+BOOL FS3EMastodon_VotePoll(const char *apiBaseUrl, const char *accessToken,
+                           const char *pollId, ULONG choiceIndex)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *reqJson, *arr;
+    char *reqBody;
+    BOOL ok = FALSE;
+
+    reqJson = cJSON_CreateObject();
+    if (!reqJson) return FALSE;
+
+    arr = cJSON_CreateArray();
+    if (arr) {
+        cJSON_AddItemToArray(arr, cJSON_CreateNumberInt((int)choiceIndex));
+        cJSON_AddItemToObject(reqJson, "choices", arr);
+    }
+
+    reqBody = cJSON_PrintUnformatted(reqJson);
+    cJSON_Delete(reqJson);
+    if (!reqBody) return FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/polls/%s/votes", apiBaseUrl, pollId);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    /* FS3EHttp_PostRaw(), not FS3EHttp_Post() -- same reasoning as
+     * FS3EMastodon_PostStatus above: a real request body to send, and a
+     * non-2xx response (e.g. 422 if the poll already closed, or 409 if
+     * already voted) is worth distinguishing from a network failure via
+     * the real status code rather than a discarded body. */
+    if (FS3EHttp_PostRaw(url, headers, "application/json", reqBody, strlen(reqBody), &resp))
+    {
+        ok = (resp.fhr_StatusCode >= 200 && resp.fhr_StatusCode < 300);
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    cJSON_free(reqBody);
+    return ok;
+}
+
 BOOL FS3EMastodon_LookupAccount(const char *apiBaseUrl, const char *accessToken,
                                 const char *acct, FS3EMastodonAccount *outAccount)
 {
@@ -1017,7 +1399,8 @@ BOOL FS3EMastodon_LookupAccount(const char *apiBaseUrl, const char *accessToken,
 }
 
 BOOL FS3EMastodon_GetRelationship(const char *apiBaseUrl, const char *accessToken,
-                                  const char *accountId, BOOL *outFollowing)
+                                  const char *accountId, BOOL *outFollowing,
+                                  BOOL *outBlocking)
 {
     char url[300];
     char authHeader[300];
@@ -1027,6 +1410,7 @@ BOOL FS3EMastodon_GetRelationship(const char *apiBaseUrl, const char *accessToke
     BOOL ok = FALSE;
 
     *outFollowing = FALSE;
+    *outBlocking  = FALSE;
 
     snprintf(url, sizeof(url), "%s/api/v1/accounts/relationships?id[]=%s", apiBaseUrl, accountId);
     FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
@@ -1046,7 +1430,9 @@ BOOL FS3EMastodon_GetRelationship(const char *apiBaseUrl, const char *accessToke
         if (item)
         {
             const cJSON *v = cJSON_GetObjectItemCaseSensitive(item, "following");
+            const cJSON *b = cJSON_GetObjectItemCaseSensitive(item, "blocking");
             *outFollowing = (v && cJSON_IsTrue(v)) ? TRUE : FALSE;
+            *outBlocking  = (b && cJSON_IsTrue(b)) ? TRUE : FALSE;
             ok = TRUE;
         }
     }
@@ -1157,6 +1543,242 @@ BOOL FS3EMastodon_Follow(const char *apiBaseUrl, const char *accessToken,
 
         FS3EHttp_FreeResponse(&resp);
     }
+
+    return ok;
+}
+
+BOOL FS3EMastodon_Block(const char *apiBaseUrl, const char *accessToken,
+                        const char *accountId,
+                        BOOL *outFollowing, BOOL *outBlocking)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    *outFollowing = FALSE;
+    *outBlocking  = FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/accounts/%s/block", apiBaseUrl, accountId);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    /* Empty body, same as Follow/Unfollow -- only the auth header and the
+     * :id in the URL. */
+    if (FS3EHttp_Post(url, headers, "application/json", "", 0, &resp))
+    {
+        json = cJSON_Parse((char *)resp.fhr_Body);
+        if (json)
+        {
+            const cJSON *f = cJSON_GetObjectItemCaseSensitive(json, "following");
+            const cJSON *b = cJSON_GetObjectItemCaseSensitive(json, "blocking");
+            *outFollowing = (f && cJSON_IsTrue(f)) ? TRUE : FALSE;
+            *outBlocking  = (b && cJSON_IsTrue(b)) ? TRUE : FALSE;
+
+            ok = TRUE;
+            cJSON_Delete(json);
+        }
+
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    return ok;
+}
+
+BOOL FS3EMastodon_Unblock(const char *apiBaseUrl, const char *accessToken,
+                          const char *accountId)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    BOOL ok = FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/accounts/%s/unblock", apiBaseUrl, accountId);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    /* Empty body, same as Follow/Unfollow -- only the auth header and the
+     * :id in the URL. */
+    if (FS3EHttp_Post(url, headers, "application/json", "", 0, &resp))
+    {
+        ok = TRUE;
+        FS3EHttp_FreeResponse(&resp);
+    }
+
+    return ok;
+}
+
+/* Case-insensitive full-string compare -- plain manual compare, not
+ * strcasecmp()/Stricmp(), same reasoning FS3ENet_UrlHasExt's own comment
+ * documents (this process doesn't open utility.library, and there's no
+ * guarantee libnix's own strcasecmp is pulled in on every target build). */
+static BOOL FS3EMastodon_DomainEquals(const char *a, const char *b)
+{
+    if (!a || !b) return FALSE;
+    while (*a && *b) {
+        char ca = *a, cb = *b;
+        if (ca >= 'A' && ca <= 'Z') ca = (char)(ca + 32);
+        if (cb >= 'A' && cb <= 'Z') cb = (char)(cb + 32);
+        if (ca != cb) return FALSE;
+        a++; b++;
+    }
+    return *a == '\0' && *b == '\0';
+}
+
+BOOL FS3EMastodon_IsDomainBlocked(const char *apiBaseUrl, const char *accessToken,
+                                  const char *domain, BOOL *outBlocked)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    *outBlocked = FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/domain_blocks", apiBaseUrl);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    if (!FS3EHttp_Get(url, headers, &resp))
+        return FALSE;
+
+    json = cJSON_Parse((char *)resp.fhr_Body);
+    if (json && cJSON_IsArray(json))
+    {
+        cJSON *item;
+        cJSON_ArrayForEach(item, json) {
+            if (cJSON_IsString(item) && item->valuestring &&
+                FS3EMastodon_DomainEquals(item->valuestring, domain))
+            {
+                *outBlocked = TRUE;
+                break;
+            }
+        }
+        ok = TRUE;
+    }
+    if (json) cJSON_Delete(json);
+
+    FS3EHttp_FreeResponse(&resp);
+
+    return ok;
+}
+
+BOOL FS3EMastodon_ToggleDomainBlock(const char *apiBaseUrl, const char *accessToken,
+                                    const char *domain, BOOL block)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    BOOL ok = FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/domain_blocks?domain=%s", apiBaseUrl, domain);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    if (block) {
+        if (FS3EHttp_Post(url, headers, "application/json", "", 0, &resp)) {
+            ok = TRUE;
+            FS3EHttp_FreeResponse(&resp);
+        }
+    } else {
+        if (FS3EHttp_Delete(url, headers, &resp)) {
+            ok = TRUE;
+            FS3EHttp_FreeResponse(&resp);
+        }
+    }
+
+    return ok;
+}
+
+BOOL FS3EMastodon_TranslateStatus(const char *apiBaseUrl, const char *accessToken,
+                                  const char *statusId, const char *targetLang,
+                                  char *outContent, ULONG outContentSize)
+{
+    char url[300];
+    char authHeader[300];
+    FS3EHttpHeader headers[2];
+    FS3EHttpResponse resp;
+    cJSON *reqJson, *json;
+    char *reqBody;
+    BOOL ok = FALSE;
+
+    reqJson = cJSON_CreateObject();
+    if (!reqJson)
+        return FALSE;
+
+    if (targetLang && targetLang[0])
+        cJSON_AddStringToObject(reqJson, "lang", targetLang);
+
+    reqBody = cJSON_PrintUnformatted(reqJson);
+    cJSON_Delete(reqJson);
+
+    if (!reqBody)
+        return FALSE;
+
+    snprintf(url, sizeof(url), "%s/api/v1/statuses/%s/translate", apiBaseUrl, statusId);
+    FS3EMastodon_BuildAuthHeader(authHeader, sizeof(authHeader), accessToken);
+
+    headers[0].fhh_Name  = "Authorization";
+    headers[0].fhh_Value = authHeader;
+    headers[1].fhh_Name  = NULL;
+    headers[1].fhh_Value = NULL;
+
+    /* FS3EHttp_PostRaw(), not FS3EHttp_Post() -- same reasoning as
+     * FS3EMastodon_PostStatus(): the server can answer with something
+     * other than 200 (422 if the target language is unsupported or the
+     * status is already in that language, 404 if translation isn't
+     * configured at all), and FS3EHttp_Post()'s OSSL_HTTP_transfer() path
+     * would discard that body and fail outright with no clue why. */
+    if (FS3EHttp_PostRaw(url, headers, "application/json", reqBody, strlen(reqBody), &resp))
+    {
+        if (resp.fhr_StatusCode >= 200 && resp.fhr_StatusCode < 300) {
+            json = cJSON_Parse((char *)resp.fhr_Body);
+            if (json)
+            {
+                FS3EMastodon_CopyJsonString(json, "content", outContent, outContentSize);
+                ok = (outContent[0] != '\0');
+                cJSON_Delete(json);
+            }
+        }
+        if (!ok) {
+            char preview[201];
+            ULONG plen = resp.fhr_BodyLen < 200 ? resp.fhr_BodyLen : 200;
+            if (resp.fhr_Body) CopyMem(resp.fhr_Body, preview, plen); else plen = 0;
+            preview[plen] = '\0';
+            bdbprintf_now("TranslateStatus: no content (statusId=%s status=%lu bodyLen=%lu) body=%s\n",
+                          statusId, resp.fhr_StatusCode, resp.fhr_BodyLen, preview);
+        }
+        FS3EHttp_FreeResponse(&resp);
+    }
+    else
+    {
+        bdbprintf_now("TranslateStatus: FS3EHttp_PostRaw failed outright (statusId=%s)\n", statusId);
+        FS3EHttp_PrintErrors();
+    }
+
+    cJSON_free(reqBody);
 
     return ok;
 }

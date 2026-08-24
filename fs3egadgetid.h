@@ -93,6 +93,16 @@
 #define GID_TOOT_SENSITIVE            220 /* "Sensitive content" checkbox, in bottomBar right before tootBtn */
 #define GID_TOOT_ATTACH_MEDIA2        221 /* second [getfile][X] attach-media row, below the first */
 #define GID_TOOT_ATTACH_MEDIA2_CLEAR  222
+#define GID_TOOT_LANGUAGE             223 /* language chooser, same column as GID_TOOT_SENSITIVE */
+
+/* Poll-answer rows (fs3etootview.c's pollExtrasLayout) -- one-line
+ * UniTextEditor per row, see fs3etootview.c's pollOptionEditor[]. */
+#define GID_TOOT_POLL_OPTION1         224
+#define GID_TOOT_POLL_OPTION2         225
+#define GID_TOOT_POLL_OPTION3         226
+#define GID_TOOT_POLL_OPTION4         227
+#define GID_TOOT_POLL_EXPIRATION      228 /* fifth poll row: expiration-time combobox chooser */
+#define GID_TOOT_POLL_TYPE            229 /* same row: single/multiple-choice combobox chooser */
 
 /* General settings window (fs3esettingsview.c) */
 #define GID_SETTINGSV_CACHE_PATH      300

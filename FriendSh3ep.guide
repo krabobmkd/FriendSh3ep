@@ -1,11 +1,11 @@
 @DATABASE FriendSh3ep.guide
-@$VER: FriendSh3ep.guide 0.8 (07.08.2026)
+@$VER: FriendSh3ep.guide 1.0 (22.08.2026)
 @AUTHOR krabobmkd
 @(C) 2026 krabobmkd
 @MASTER PROGDIR:FriendSh3ep.guide
 @NODE MAIN "FriendSh3ep - Mastodon client for AmigaOS3"
 
-@{b}FriendSh3ep v0.8@{ub}
+@{b}FriendSh3ep v1.0@{ub}
 A Mastodon / Fediverse client for AmigaOS 3.2.x (68k)
 
 @{i}Toots, timelines, images and emoji -- the Fediverse, Amiga style.@{ui}
@@ -37,7 +37,7 @@ Bug reports, feature requests, and love letters:
 
 @{b}Minimum system@{ub}
 
-FriendSh3ep runs on @{b}AmigaOS 3.2.x@{ub} or compatible, on a @{b}68030
+FriendSh3ep runs on @{b}AmigaOS 3.9 or 3.2.x@{ub} or compatible, on a @{b}68030
 50MHz@{ub} or better. A @{b}68060@{ub} (or a fast 68040) is recommended for
 a noticeably smoother experience -- fonts, emoji and images are all
 decoded live.
@@ -177,10 +177,14 @@ showing. Each one is its own independent, remembered scroll position.
     Favourites, boosts, replies, follows and mentions concerning you.
 
   @{b}Bookmarks@{ub}
-    Coming soon.
+    You'll find back the toots you bookmarked here. Note bookmarked
+    toots data are kept in a specual cache under the user directory,
+    per account, not in the volatile cache, and you can check them offline.
 
   @{b}News@{ub}
-    Coming soon.
+    Servers recollect the most shared news web pages from news sites,
+    from the last couple of days and sort them for you. This list 
+    changes on a daily basis.
 
 A @{b}Refresh@{ub} button next to the view buttons reloads the current view.
 

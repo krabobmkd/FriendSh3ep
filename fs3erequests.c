@@ -5,6 +5,7 @@
  */
 
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 
 #include <exec/types.h>
@@ -23,6 +24,8 @@
 #include "bdbprintf.h"
 
 #include "friendsh3ep.h"
+#include "fs3elocale.h"
+#include "fs3eoslocale.h"
 #include "fs3eboopsimainwindow.h"
 #include "fs3eloginview.h"
 #include "fs3etootview.h"
@@ -46,8 +49,10 @@ extern void  FS3EApp_CheckConnectionState(void);
 extern void  FS3EApp_UpdateUserIcon(void);
 extern void  FS3EApp_UpdateNetworkLed(void);
 extern void  FS3EApp_SubmitToot(const char *body, LONG visibility, LONG quotePolicy,
-                                 BOOL sensitive,
-                                 const char *const *newMediaIds, ULONG newMediaCount);
+                                 BOOL sensitive, const char *language,
+                                 const char *const *newMediaIds, ULONG newMediaCount,
+                                 const char *const *pollOptions, ULONG pollOptionCount,
+                                 ULONG pollExpiresIn, BOOL pollMultiple);
 
 /* Send a pre-allocated request block to the network process asynchronously.
  * On failure, frees data and returns FALSE.
@@ -129,9 +134,77 @@ static BOOL ViewModeTimeline(ULONG viewMode, char *buf, ULONG bufSize)
              * exactly the case that prompted making this explicit. */
             snprintf(buf, bufSize, "accounts/%s/statuses?limit=4&exclude_reblogs=false", app->searchProfileAccountId);
             return TRUE;
+        /* VIEWMODE_Notifs/News/Bookmarks have no case here -- none of the
+         * three are a plain /api/v1/-relative Status-array GET this
+         * function's own "?limit=4" shape fits. Notifs/News each have
+         * their own FS3ENETQ_ request type (see FS3EApp_FetchTimeline).
+         * Bookmarks is the odd one out: GET /api/v1/bookmarks DOES return
+         * plain Status objects, but real pagination for it needs an
+         * RFC5988 Link: header this codebase's HTTP layer doesn't parse
+         * (same limitation already documented on FS3ENETQ_ACCOUNTS_LIST in
+         * fs3enet.h) -- using the last shown status's own id as the next
+         * page's max_id silently returns the same first page forever,
+         * since bookmark order isn't status-id order. So it's served from
+         * a local on-disk cache instead (FS3ENETQ_BOOKMARKS_LOCAL/SYNC),
+         * which sidesteps that entirely -- see FS3EApp_FetchTimeline's own
+         * VIEWMODE_Bookmarks branch. */
         default:
             return FALSE;
     }
+}
+
+/* Fires one FS3ENETQ_BOOKMARKS_LOCAL page fetch for VIEWMODE_Bookmarks,
+ * reading app->bookmarksLoadedCount as the offset -- shared by the
+ * FS3ENETQ_BOOKMARKS_SYNC reply handler (which calls this once,
+ * unconditionally, right after the once-per-session backfill attempt --
+ * see FS3EApp_HandleNetReply) and FS3EApp_FetchTimelinePage's own
+ * VIEWMODE_Bookmarks branch (subsequent "Load more" pages, direction-gated
+ * to OLDER only there). initial selects TTIMELINE_AddPost vs AppendPost on
+ * the GUI side via the echoed fs3ebl_PageDirection -- see
+ * FS3ENETQ_BOOKMARKS_LOCAL's own reply handler. */
+static void FS3EApp_FetchBookmarksLocalPage(BOOL initial)
+{
+    FS3ENetBookmarksLocalReq *lreq;
+    char  cacheDir[400];
+    ULONG bit = (1UL << VIEWMODE_Bookmarks);
+
+    if (!FS3EApp_BookmarksCacheDir(cacheDir, sizeof(cacheDir))) return;
+    if (!initial && (app->olderPageInFlightMask & bit)) return;
+
+    lreq = FS3ENetBookmarksLocalReq_Alloc(
+               initial ? FS3ENETPAGE_INITIAL : FS3ENETPAGE_OLDER,
+               app->accountGeneration, app->bookmarksLoadedCount, 4, cacheDir);
+    if (!lreq) return;
+
+    if (FS3EApp_NetSend(FS3ENETQ_BOOKMARKS_LOCAL, lreq, sizeof(*lreq))) {
+        if (!initial) app->olderPageInFlightMask |= bit;
+    }
+}
+
+void FS3EApp_ReloadBookmarks(void)
+{
+    ULONG bit = (1UL << VIEWMODE_Bookmarks);
+
+    if (!app->tootTimeline) return;
+
+    /* Reset every bit of "already loaded" bookkeeping so
+     * FS3EApp_FetchTimeline's own VIEWMODE_Bookmarks branch treats this
+     * exactly like a brand-new session -- fresh sync, fresh local page 0. */
+    app->timelineFetchedMask   &= ~bit;
+    app->channelPopulatedMask  &= ~bit;
+    app->channelEmptyMask      &= ~bit;
+    app->olderPageInFlightMask &= ~bit;
+    app->bookmarksLoadedCount   = 0;
+
+    /* Drop whatever's currently shown first -- both call sites only ever
+     * invoke this while Bookmarks IS the active channel, so this always
+     * targets it; re-fetching without clearing first would just prepend
+     * duplicates of everything already there (AddPost never deduplicates
+     * against existing content). */
+    if (app->viewMode == VIEWMODE_Bookmarks)
+        SetAttrs(app->tootTimeline, TTIMELINE_ClearPosts, TRUE, TAG_DONE);
+
+    FS3EApp_FetchTimeline(VIEWMODE_Bookmarks);
 }
 
 /* Send an async TIMELINE request for viewMode if credentials are available
@@ -186,6 +259,65 @@ void FS3EApp_FetchTimeline(ULONG viewMode)
         if (!nreq) return;
 
         if (FS3EApp_NetSend(FS3ENETQ_NOTIFICATIONS, nreq, sizeof(*nreq))) {
+            app->timelineFetchedMask |= bit;
+            app->timelineErrorMask   &= ~bit;
+            FS3EApp_CheckConnectionState();
+        }
+        return;
+    }
+
+    /* News (trending links, Mastodon's "Explore" tab) is a bare array of
+     * PreviewCard-shaped entries, not Status objects, and has no /api/v1/-
+     * relative timeline path either -- FS3ENETQ_NEWS instead, same
+     * "reuse the generic bookkeeping" reasoning as Notifs above. Public
+     * endpoint (like Local/Fed below), so no token required -- an
+     * anonymous connection can browse trending links same as it can browse
+     * the public timelines. */
+    if (viewMode == VIEWMODE_News) {
+        FS3ENetNewsReq *nwreq;
+
+        if (!app->accountApiBaseUrl) return;
+        if (app->channelPopulatedMask & bit) return;
+        if (app->timelineFetchedMask & bit) return;
+
+        app->newsLoadedCount = 0; /* fresh INITIAL page -- see FS3EApp_FetchTimelinePage's own offset use */
+        nwreq = FS3ENetNewsReq_Alloc(FS3ENETPAGE_INITIAL, app->accountGeneration, 0,
+                    app->accountApiBaseUrl,
+                    app->accountAccessToken ? app->accountAccessToken : "");
+        if (!nwreq) return;
+
+        if (FS3EApp_NetSend(FS3ENETQ_NEWS, nwreq, sizeof(*nwreq))) {
+            app->timelineFetchedMask |= bit;
+            app->timelineErrorMask   &= ~bit;
+            FS3EApp_CheckConnectionState();
+        }
+        return;
+    }
+
+    /* Bookmarks: served entirely from the local offline-bookmarks cache
+     * (FS3ENETQ_BOOKMARKS_LOCAL), not a live server timeline fetch -- see
+     * ViewModeTimeline's own doc comment on why (Link-header pagination
+     * this codebase can't do). A one-shot FS3ENETQ_BOOKMARKS_SYNC fires
+     * first to backfill anything bookmarked elsewhere that isn't cached
+     * yet; its reply handler then fires the first
+     * FS3EApp_FetchBookmarksLocalPage(TRUE) regardless of whether the sync
+     * itself succeeded -- offline browsing should still show whatever's
+     * already on disk even with no network at all. Always requires a real
+     * token -- bookmarks are inherently private, never anonymous. */
+    if (viewMode == VIEWMODE_Bookmarks) {
+        FS3ENetBookmarksSyncReq *sreq;
+        char cacheDir[400];
+
+        if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
+        if (app->channelPopulatedMask & bit) return;
+        if (app->timelineFetchedMask & bit) return;
+        if (!FS3EApp_BookmarksCacheDir(cacheDir, sizeof(cacheDir))) return;
+
+        app->bookmarksLoadedCount = 0; /* fresh INITIAL page -- see FS3EApp_FetchBookmarksLocalPage's own offset use */
+        sreq = FS3ENetBookmarksSyncReq_Alloc(app->accountApiBaseUrl, app->accountAccessToken, cacheDir);
+        if (!sreq) return;
+
+        if (FS3EApp_NetSend(FS3ENETQ_BOOKMARKS_SYNC, sreq, sizeof(*sreq))) {
             app->timelineFetchedMask |= bit;
             app->timelineErrorMask   &= ~bit;
             FS3EApp_CheckConnectionState();
@@ -276,6 +408,40 @@ void FS3EApp_FetchTimelinePage(ULONG viewMode, ULONG direction)
         return;
     }
 
+    /* News: trending links aren't chronological and carry no status id to
+     * page by (see FS3ENetNewsReq's doc comment) -- OLDER-only, driven by
+     * newsLoadedCount (how many items already loaded) as the server's own
+     * ?offset= instead of a max_id/min_id. No NEWER equivalent -- the
+     * pinned "look for something new" row still exists above News content
+     * (ttl_channel_add_boundaries adds both unconditionally, same as every
+     * other paginated channel), but clicking it is a harmless no-op here. */
+    if (viewMode == VIEWMODE_News) {
+        FS3ENetNewsReq *nwreq;
+
+        if (direction != FS3ENETPAGE_OLDER) return;
+        if (!app->accountApiBaseUrl) return;
+
+        nwreq = FS3ENetNewsReq_Alloc(FS3ENETPAGE_OLDER, app->accountGeneration,
+                    app->newsLoadedCount, app->accountApiBaseUrl,
+                    app->accountAccessToken ? app->accountAccessToken : "");
+        if (!nwreq) return;
+
+        if (FS3EApp_NetSend(FS3ENETQ_NEWS, nwreq, sizeof(*nwreq)))
+            *inFlightMask |= bit;
+        return;
+    }
+
+    /* Bookmarks: OLDER only, same "no NEWER" reasoning as News above (see
+     * FS3ENetBookmarksLocalReq's own doc comment) -- served entirely from
+     * the local cache, so no fromId/TTIMELINE_OldestPostId lookup at all,
+     * unlike every id-paginated channel below; bookmarksLoadedCount is its
+     * own cursor (see FS3EApp_FetchBookmarksLocalPage). */
+    if (viewMode == VIEWMODE_Bookmarks) {
+        if (direction != FS3ENETPAGE_OLDER) return;
+        FS3EApp_FetchBookmarksLocalPage(FALSE);
+        return;
+    }
+
     if (viewMode == VIEWMODE_Home && !app->accountAccessToken) return;
 
     if (!ViewModeTimeline(viewMode, tl, sizeof(tl))) return;
@@ -346,15 +512,20 @@ static void searchStackPush(void)
             break;
         case FS3ESEARCH_WORD:
         case FS3ESEARCH_ACCOUNT:
+        case FS3ESEARCH_INSTANCE:
             /* app->searchLastQueryText, NOT a live read of searchWordEditor
              * -- see that field's own comment in friendsh3ep.h for why the
              * gadget can't be trusted here (it already shows the NEW query
              * by the time this push runs, when re-searching within the
              * same mode). Chooser selection is implied by the mode itself,
-             * not stored/read separately. */
+             * not stored/read separately. FS3ESEARCH_INSTANCE reuses these
+             * same two fields (the domain/URL typed, and the chooser
+             * position) rather than adding its own -- same shape of state
+             * as a word/account query. */
             entry.queryText    = NetStrDup(app->searchLastQueryText);
-            entry.queryChooser = (app->searchMode == FS3ESEARCH_ACCOUNT)
-                                ? FS3ESEARCHTYPE_PEOPLE : FS3ESEARCHTYPE_WORD;
+            entry.queryChooser = (app->searchMode == FS3ESEARCH_ACCOUNT)  ? FS3ESEARCHTYPE_PEOPLE
+                                : (app->searchMode == FS3ESEARCH_INSTANCE) ? FS3ESEARCHTYPE_SERVER
+                                : FS3ESEARCHTYPE_WORD;
             break;
         default:
             break;
@@ -407,16 +578,28 @@ static void searchApplyPendingScroll(void)
 /* Back button (GID_SEARCH_BACK_BUTTON) / Delete key -- pops the most
  * recently pushed search configuration and re-enters it by calling
  * straight back into whichever of the 6 entry points below made it, so
- * all the usual clearing/fetching/view-mode logic runs unchanged. A
- * no-op when the stack is empty (confirmed UX: Back is simply inert with
- * no history, it does not leave the Search view). Scroll restoration is
- * best-effort -- see searchApplyPendingScroll's comment -- "possibly,
- * nearly the same" position, not a guarantee. */
+ * all the usual clearing/fetching/view-mode logic runs unchanged. Once the
+ * stack itself is exhausted, falls back to leaving Search entirely for
+ * whichever channel (Home/Local/Fed/Notifs/Bookmarks/News/User) was active
+ * right before Search was last entered -- see searchOriginViewMode's own
+ * doc comment in friendsh3ep.h. That channel already has its own
+ * previously-fetched content (fs3e_setViewMode's normal "fetch once per
+ * session" logic), so this is a plain view switch, no re-fetch. A true
+ * no-op only if even that isn't available (searchOriginViewMode somehow
+ * still Search itself, e.g. never captured this session). Scroll
+ * restoration for the popped-stack case is best-effort -- see
+ * searchApplyPendingScroll's comment -- "possibly, nearly the same"
+ * position, not a guarantee; the origin-channel fallback restores no
+ * scroll position at all, same as any other plain tab switch. */
 void FS3EApp_SearchGoBack(void)
 {
     FS3ESearchStackEntry popped;
 
-    if (app->searchStackDepth == 0) return;
+    if (app->searchStackDepth == 0) {
+        if (app->searchOriginViewMode != VIEWMODE_Search)
+            fs3e_setViewMode(app->searchOriginViewMode);
+        return;
+    }
     popped = app->searchStack[--app->searchStackDepth];
 
     app->searchPendingScrollY = popped.scrollY;
@@ -436,12 +619,15 @@ void FS3EApp_SearchGoBack(void)
             break;
         case FS3ESEARCH_WORD:
         case FS3ESEARCH_ACCOUNT:
+        case FS3ESEARCH_INSTANCE:
             if (app->searchWordEditor)
                 SetGdAttrs(app->searchWordEditor, UTED_Text, (ULONG)popped.queryText, TAG_END);
             if (app->searchWordTypeChooser)
                 SetGdAttrs(app->searchWordTypeChooser, CHOOSER_Active, popped.queryChooser, TAG_END);
             if (popped.mode == FS3ESEARCH_ACCOUNT)
                 FS3EApp_SearchAccount(popped.queryText);
+            else if (popped.mode == FS3ESEARCH_INSTANCE)
+                FS3EApp_SearchInstance(popped.queryText);
             else
                 FS3EApp_SearchWord(popped.queryText);
             break;
@@ -668,13 +854,26 @@ void FS3EApp_OpenDiscussion(const char *statusId, BOOL includeAncestors)
  * (see FS3EApp_NetSend's comment) behind whatever's already in flight, and
  * its reply is patched into the timeline by FS3EApp_HandleNetReply's
  * FS3ENET_TLSHAPE_SINGLE_REFRESH branch -- this function never touches the
- * timeline itself, only fires the refetches. */
+ * timeline itself, only fires the refetches. Also fires a NEWER-page fetch
+ * (see the FS3EApp_FetchTimelinePage call at the end) so a toot posted
+ * since this channel was last loaded actually shows up on F5, not just the
+ * updated state of what was already visible. */
 void FS3EApp_RefreshVisibleToots(void)
 {
     TTLVisiblePosts vis;
     ULONG i;
 
     if (!app->tootTimeline || !app->accountApiBaseUrl) return;
+
+    /* Bookmarks has nothing the loop below can do for it: a newly
+     * bookmarked toot was never "visible" in this channel to begin with
+     * (see FS3EApp_ReloadBookmarks's own doc comment), so there's no
+     * SINGLE_REFRESH request that could ever surface it -- reload the
+     * whole channel from scratch instead, same as re-entering the tab. */
+    if (app->viewMode == VIEWMODE_Bookmarks) {
+        FS3EApp_ReloadBookmarks();
+        return;
+    }
 
     memset(&vis, 0, sizeof(vis));
     SetAttrs(app->tootTimeline, TTIMELINE_GetVisiblePosts, (ULONG)&vis, TAG_DONE);
@@ -697,6 +896,42 @@ void FS3EApp_RefreshVisibleToots(void)
         if (vis.entries[i].postId)   FreeVec(vis.entries[i].postId);
         if (vis.entries[i].statusId) FreeVec(vis.entries[i].statusId);
     }
+
+    /* Also check for anything newer than the current top of this channel --
+     * same FS3ENETPAGE_NEWER fetch the pinned "Look for something new" row
+     * (TTL_HOT_LOAD_NEWER) fires, reused here so F5 actually surfaces a
+     * toot posted since the channel was last loaded instead of only
+     * refreshing the state (favs/boosts/edits) of what's already on
+     * screen. FS3EApp_FetchTimelinePage already no-ops correctly per
+     * channel on its own (News: no NEWER concept; Search word/hashtag
+     * sub-mode: no timeline path; empty channel: no TTIMELINE_NewestPostId
+     * to page from yet; already in flight: newerPageInFlightMask), so no
+     * extra gating needed here. Bookmarks never reaches this line (see the
+     * early return above) -- FS3EApp_ReloadBookmarks already does a full
+     * reload, which covers the same "pick up anything new" need. */
+    FS3EApp_FetchTimelinePage(app->viewMode, FS3ENETPAGE_NEWER);
+}
+
+/* TTL_HOT_TRANSLATE click, "not cached yet" branch (see that hot-spot's own
+ * doc comment in fs3etoottimeline.h) -- fires FS3ENETQ_TRANSLATE_STATUS
+ * targeting the OS's own preferred language. The "already cached, just
+ * toggle" branch needs no network call at all -- see friendsh3ep.c's
+ * TTL_HOT_TRANSLATE case, which calls TIMELINE_ApplyTranslation directly
+ * instead of this function. postId is the status to translate (the
+ * hot-spot's own targetId, see ttl_notify_hotspot). */
+void FS3EApp_TranslateStatus(const char *postId)
+{
+    const char *osLang = FS3EOSLocale_LanguageCode();
+    FS3ENetTranslateStatusReq *req;
+
+    if (!postId || !postId[0]) return;
+    if (!app->accountApiBaseUrl || !app->accountAccessToken || !app->accountAccessToken[0]) return;
+
+    req = FS3ENetTranslateStatusReq_Alloc(app->accountApiBaseUrl, app->accountAccessToken,
+                                          postId, osLang);
+    if (!req) return;
+
+    FS3EApp_NetSend(FS3ENETQ_TRANSLATE_STATUS, req, sizeof(*req));
 }
 
 /* Index into the MSG_SEARCHV_WAIT1..4 rotation -- bumped once per search
@@ -734,6 +969,8 @@ void FS3EApp_SearchWord(const char *query)
     if (app->searchProfileAcct)        { FreeVec(app->searchProfileAcct);        app->searchProfileAcct        = NULL; }
     if (app->searchProfileAccountId)   { FreeVec(app->searchProfileAccountId);   app->searchProfileAccountId   = NULL; }
     if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
+    if (app->searchInstanceDomain)     { FreeVec(app->searchInstanceDomain);     app->searchInstanceDomain     = NULL; }
+    app->searchInstanceBlocked = FALSE;
     if (app->searchLastQueryText)      { FreeVec(app->searchLastQueryText);      app->searchLastQueryText      = NULL; }
     app->searchLastQueryText = NetStrDup(query);
     app->searchMode = FS3ESEARCH_WORD;
@@ -778,6 +1015,8 @@ void FS3EApp_SearchAccount(const char *query)
     if (app->searchProfileAcct)        { FreeVec(app->searchProfileAcct);        app->searchProfileAcct        = NULL; }
     if (app->searchProfileAccountId)   { FreeVec(app->searchProfileAccountId);   app->searchProfileAccountId   = NULL; }
     if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
+    if (app->searchInstanceDomain)     { FreeVec(app->searchInstanceDomain);     app->searchInstanceDomain     = NULL; }
+    app->searchInstanceBlocked = FALSE;
     if (app->searchLastQueryText)      { FreeVec(app->searchLastQueryText);      app->searchLastQueryText      = NULL; }
     app->searchLastQueryText = NetStrDup(query);
     app->searchMode = FS3ESEARCH_ACCOUNT;
@@ -798,18 +1037,221 @@ void FS3EApp_SearchAccount(const char *query)
     }
 }
 
+/* Strips a leading '@'/whitespace and a trailing slash/whitespace from
+ * user-typed server text, and adds the "https://" scheme if it's missing --
+ * the common case is a bare domain ("mastodon.social"), not a full URL.
+ * outUrl is a caller-owned buffer; truncates rather than overflows it (a
+ * domain long enough to matter here isn't realistic). Shared by
+ * FS3EApp_SearchInstance below. */
+static void FS3EInstance_NormalizeUrl(const char *raw, char *outUrl, ULONG outUrlSize)
+{
+    const char *s = raw;
+    ULONG len;
+
+    while (*s == ' ' || *s == '\t' || *s == '@') s++;
+    len = (ULONG)strlen(s);
+    while (len > 0 && (s[len - 1] == ' ' || s[len - 1] == '\t' || s[len - 1] == '/'))
+        len--;
+
+    if (strncmp(s, "https://", 8) == 0 || strncmp(s, "http://", 7) == 0)
+        snprintf(outUrl, outUrlSize, "%.*s", (int)len, s);
+    else
+        snprintf(outUrl, outUrlSize, "https://%.*s", (int)len, s);
+}
+
+/* Appends a formatted fragment at *p (bounded by end), same "cursor +
+ * remaining size" idiom snprintf-chaining elsewhere in this codebase uses,
+ * just varargs so FS3EInstance_BuildInfoText below doesn't need a
+ * strlen()+strncat() dance after every single field. Silently truncates
+ * (never overruns) if the info text somehow runs past bufSize -- see that
+ * function's own buffer size for how generous a margin that leaves in
+ * practice. */
+static void FS3EInstance_Appendf(char **p, char *end, const char *fmt, ...)
+{
+    va_list ap;
+    int n;
+
+    if (*p >= end) return;
+
+    va_start(ap, fmt);
+    n = vsnprintf(*p, (ULONG)(end - *p), fmt, ap);
+    va_end(ap);
+
+    if (n > 0) {
+        if (*p + n > end) *p = end;
+        else *p += n;
+    }
+}
+
+/* Formats every FS3ENetInstanceDetailsReply field worth showing into one
+ * plain-text blob for TTLInstanceHeaderSetup.body -- TootTimeline itself
+ * doesn't interpret any of this, it just word-wraps and draws it like a
+ * bio (see fs3etoottimeline_instance.c). Only server-CONFIRMED fields are
+ * shown (the *Known flags) -- a field the server didn't answer (e.g. an
+ * old server with no configuration.translation block) is simply omitted,
+ * never presented as a confirmed "no" (same rule FS3ENETQ_INSTANCE_INFO's
+ * own fs3eii_Known already follows for the char limit). */
+static void FS3EInstance_BuildInfoText(char *buf, ULONG bufSize,
+                                       const FS3ENetInstanceDetailsReply *r)
+{
+    char *p = buf;
+    char *end = buf + bufSize;
+    ULONG i;
+
+    *p = '\0';
+
+    if (r->fs3eid_Description && r->fs3eid_Description[0])
+        FS3EInstance_Appendf(&p, end, "%s\n\n", r->fs3eid_Description);
+
+    if (r->fs3eid_MaxCharsKnown)
+        FS3EInstance_Appendf(&p, end, "Max post length: %lu characters\n",
+                              (unsigned long)r->fs3eid_MaxChars);
+
+    if (r->fs3eid_MaxMediaAttachments > 0) {
+        FS3EInstance_Appendf(&p, end, "Attachments: up to %lu per post",
+                              (unsigned long)r->fs3eid_MaxMediaAttachments);
+        if (r->fs3eid_ImageSizeLimit > 0)
+            FS3EInstance_Appendf(&p, end, ", images up to %lu MB",
+                                  (unsigned long)(r->fs3eid_ImageSizeLimit / (1024UL * 1024UL)));
+        if (r->fs3eid_VideoSizeLimit > 0)
+            FS3EInstance_Appendf(&p, end, ", video up to %lu MB",
+                                  (unsigned long)(r->fs3eid_VideoSizeLimit / (1024UL * 1024UL)));
+        FS3EInstance_Appendf(&p, end, "\n");
+    }
+
+    if (r->fs3eid_PollMaxOptions > 0) {
+        FS3EInstance_Appendf(&p, end, "Polls: up to %lu options",
+                              (unsigned long)r->fs3eid_PollMaxOptions);
+        if (r->fs3eid_PollMaxExpirationSecs > 0)
+            FS3EInstance_Appendf(&p, end, ", up to %lu days",
+                                  (unsigned long)(r->fs3eid_PollMaxExpirationSecs / 86400UL));
+        FS3EInstance_Appendf(&p, end, "\n");
+    }
+
+    if (r->fs3eid_TranslationKnown)
+        FS3EInstance_Appendf(&p, end, "Translation: %s\n",
+                              r->fs3eid_TranslationEnabled ? "Supported" : "Not supported");
+
+    if (r->fs3eid_RegistrationsKnown) {
+        if (r->fs3eid_RegistrationsEnabled)
+            FS3EInstance_Appendf(&p, end, "Registrations: Open%s\n",
+                                  r->fs3eid_ApprovalRequired ? " (approval required)" : "");
+        else
+            FS3EInstance_Appendf(&p, end, "Registrations: Closed\n");
+    }
+
+    if (r->fs3eid_UserCountKnown || r->fs3eid_ActiveMonthUsersKnown) {
+        FS3EInstance_Appendf(&p, end, "Users:");
+        if (r->fs3eid_UserCountKnown)
+            FS3EInstance_Appendf(&p, end, " %lu total", (unsigned long)r->fs3eid_UserCount);
+        if (r->fs3eid_ActiveMonthUsersKnown)
+            FS3EInstance_Appendf(&p, end, "%s%lu active this month",
+                                  r->fs3eid_UserCountKnown ? ", " : " ",
+                                  (unsigned long)r->fs3eid_ActiveMonthUsers);
+        FS3EInstance_Appendf(&p, end, "\n");
+    }
+
+    if (r->fs3eid_StatusCountKnown)
+        FS3EInstance_Appendf(&p, end, "Statuses: %lu\n", (unsigned long)r->fs3eid_StatusCount);
+
+    if ((r->fs3eid_ContactEmail && r->fs3eid_ContactEmail[0]) ||
+        (r->fs3eid_ContactAccount && r->fs3eid_ContactAccount[0]))
+    {
+        FS3EInstance_Appendf(&p, end, "\nContact:");
+        if (r->fs3eid_ContactEmail && r->fs3eid_ContactEmail[0])
+            FS3EInstance_Appendf(&p, end, " %s", r->fs3eid_ContactEmail);
+        if (r->fs3eid_ContactAccount && r->fs3eid_ContactAccount[0])
+            FS3EInstance_Appendf(&p, end, "%s@%s",
+                                  (r->fs3eid_ContactEmail && r->fs3eid_ContactEmail[0]) ? "," : "",
+                                  r->fs3eid_ContactAccount);
+        FS3EInstance_Appendf(&p, end, "\n");
+    }
+
+    if (r->fs3eid_RuleCount > 0) {
+        FS3EInstance_Appendf(&p, end, "\nRules:\n");
+        for (i = 0; i < r->fs3eid_RuleCount; i++)
+            FS3EInstance_Appendf(&p, end, "%lu. %s\n", (unsigned long)(i + 1), r->fs3eid_Rules[i]);
+    }
+}
+
+/*
+ * "Tell me about this server" lookup -- typing a bare domain (or a full
+ * https://... URL) into the search bar with the "Server" chooser entry
+ * selected (see FS3ESEARCHTYPE_SERVER, friendsh3ep.c), or invoked directly
+ * for the connected account's own instance (see the "About This Server"
+ * menu item). Works for ANY reachable Mastodon-API-compatible server, not
+ * just the connected account's own -- FS3ENETQ_INSTANCE_DETAILS needs no
+ * access token (see its own doc comment in fs3enet.h), so this works even
+ * logged out.
+ *
+ * Mirrors FS3EApp_SearchWord/SearchAccount: pushes the search stack, clears
+ * the Search channel (so the waiting screen shows while the lookup is in
+ * flight, same as any other search mode), fires the request. The rest of
+ * the flow -- formatting the info text and applying
+ * TTIMELINE_ShowInstanceInfo -- happens in the FS3ENETQ_INSTANCE_DETAILS
+ * reply handler (FS3EApp_HandleNetReply) once the server has answered.
+ */
+void FS3EApp_SearchInstance(const char *domainOrUrl)
+{
+    char apiBaseUrl[256];
+    FS3ENetInstanceDetailsReq *req;
+
+    if (!domainOrUrl || !domainOrUrl[0]) return;
+
+    FS3EInstance_NormalizeUrl(domainOrUrl, apiBaseUrl, sizeof(apiBaseUrl));
+    if (!apiBaseUrl[0]) return;
+
+    searchStackPush();
+
+    if (app->searchProfileAcct)        { FreeVec(app->searchProfileAcct);        app->searchProfileAcct        = NULL; }
+    if (app->searchProfileAccountId)   { FreeVec(app->searchProfileAccountId);   app->searchProfileAccountId   = NULL; }
+    if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
+    if (app->searchInstanceDomain)     { FreeVec(app->searchInstanceDomain);     app->searchInstanceDomain     = NULL; }
+    app->searchInstanceBlocked = FALSE;
+    if (app->searchLastQueryText)      { FreeVec(app->searchLastQueryText);      app->searchLastQueryText      = NULL; }
+    app->searchLastQueryText = NetStrDup(domainOrUrl);
+    app->searchMode = FS3ESEARCH_INSTANCE;
+
+    fs3e_setViewMode(VIEWMODE_Search);
+
+    if (app->tootTimeline)
+        SetAttrs(app->tootTimeline, TTIMELINE_ClearPosts, TRUE, TAG_DONE);
+
+    req = FS3ENetInstanceDetailsReq_Alloc(apiBaseUrl);
+    if (req && FS3EApp_NetSend(FS3ENETQ_INSTANCE_DETAILS, req, sizeof(*req))) {
+        app->timelineFetchedMask |= (1UL << VIEWMODE_Search);
+        s_searchWaitMsgIdx++;
+        FS3EApp_CheckConnectionState();
+    }
+}
+
 /* Followers/following list for whichever profile is currently open in the
- * Search channel (app->searchProfileAccountId) -- called from clicking "N
- * Followers"/"N Following" there (TTL_HOT_FOLLOWERS_LIST/FOLLOWING_LIST, see
- * ttl_profile_header_build_hotspots). Unlike FS3EApp_SearchWord/SearchAccount/
- * OpenDiscussion, deliberately does NOT clear searchProfileAcct/AccountId --
+ * Search channel (app->searchProfileAccountId), OR the connected account's
+ * own block list (kind==FS3ENET_ACCLIST_BLOCKS, no profile involved --
+ * there's no single "whose list" to name, it's always your own, so
+ * searchProfileAccountId is neither required nor read for that kind).
+ * Called from clicking "N Followers"/"N Following" on a profile
+ * (TTL_HOT_FOLLOWERS_LIST/FOLLOWING_LIST, see
+ * ttl_profile_header_build_hotspots) or from the FriendSh3ep menu's
+ * "Blocked Users..." (Action_ShowBlockedUsers, fs3eaction.c). Unlike
+ * FS3EApp_SearchWord/SearchAccount/OpenDiscussion, deliberately does NOT
+ * clear searchProfileAcct/AccountId for the FOLLOWERS/FOLLOWING case --
  * both are still needed (to build this request, and because the user is
  * conceptually still "in" that profile, e.g. if they back out of the list). */
 static void FS3EApp_ShowAccountsList(ULONG kind, ULONG searchMode)
 {
     FS3ENetAccountsListReq *req;
+    const char *accountId = "";
 
-    if (!app->searchProfileAccountId || !app->searchProfileAccountId[0]) return;
+    if (kind == FS3ENET_ACCLIST_FOLLOWERS || kind == FS3ENET_ACCLIST_FOLLOWING) {
+        if (!app->searchProfileAccountId || !app->searchProfileAccountId[0]) return;
+        accountId = app->searchProfileAccountId;
+    } else if (kind == FS3ENET_ACCLIST_BLOCKS) {
+        /* Unlike a public followers/following list, GET /api/v1/blocks
+         * always needs real credentials -- there is no anonymous "someone
+         * else's blocks" to view. */
+        if (!app->accountAccessToken || !app->accountAccessToken[0]) return;
+    }
     if (!app->accountApiBaseUrl) return;
 
     searchStackPush();
@@ -824,7 +1266,7 @@ static void FS3EApp_ShowAccountsList(ULONG kind, ULONG searchMode)
     req = FS3ENetAccountsListReq_Alloc(kind,
               app->accountGeneration, app->accountApiBaseUrl,
               app->accountAccessToken ? app->accountAccessToken : "",
-              app->searchProfileAccountId, "");
+              accountId, "");
     if (req && FS3EApp_NetSend(FS3ENETQ_ACCOUNTS_LIST, req, sizeof(*req))) {
         app->timelineFetchedMask |= (1UL << VIEWMODE_Search);
         s_searchWaitMsgIdx++;
@@ -840,6 +1282,94 @@ void FS3EApp_ShowFollowers(void)
 void FS3EApp_ShowFollowing(void)
 {
     FS3EApp_ShowAccountsList(FS3ENET_ACCLIST_FOLLOWING, FS3ESEARCH_FOLLOWING);
+}
+
+void FS3EApp_ShowBlockedUsers(void)
+{
+    FS3EApp_ShowAccountsList(FS3ENET_ACCLIST_BLOCKS, FS3ESEARCH_BLOCKED_USERS);
+}
+
+/* Blocked servers -- unlike Blocked Users this is NOT an accounts list at
+ * all (GET /api/v1/domain_blocks returns a bare array of domain strings,
+ * not Account objects), so it can't go through FS3EApp_ShowAccountsList /
+ * FS3ENET_ACCLIST_* -- it fires FS3ENETQ_DOMAIN_BLOCKS directly instead,
+ * with its own reply handler below. */
+void FS3EApp_ShowBlockedServers(void)
+{
+    FS3ENetDomainBlocksReq *req;
+
+    if (!app->accountAccessToken || !app->accountAccessToken[0]) return;
+    if (!app->accountApiBaseUrl) return;
+
+    searchStackPush();
+
+    app->searchMode = FS3ESEARCH_BLOCKED_SERVERS;
+
+    fs3e_setViewMode(VIEWMODE_Search);
+
+    if (app->tootTimeline)
+        SetAttrs(app->tootTimeline, TTIMELINE_ClearPosts, TRUE, TAG_DONE);
+
+    req = FS3ENetDomainBlocksReq_Alloc(app->accountGeneration,
+              app->accountApiBaseUrl, app->accountAccessToken);
+    if (req && FS3EApp_NetSend(FS3ENETQ_DOMAIN_BLOCKS, req, sizeof(*req))) {
+        app->timelineFetchedMask |= (1UL << VIEWMODE_Search);
+        s_searchWaitMsgIdx++;
+        FS3EApp_CheckConnectionState();
+    }
+}
+
+/* "Who favourited/boosted this toot" -- Timeline menu actions (see
+ * Action_TimelineWhoFaved/WhoBoosted, fs3eaction.c), acting on whichever
+ * toot is "selected" per TootTimeline's own TTIMELINE_SelectedPostId --
+ * same "selected" concept Action_TimelineCopyText already reads via
+ * TTIMELINE_CopySelectedText (whichever post the last mouse-down landed
+ * on, or the topmost visible post before any click). Same flat account-row
+ * list shape FS3EApp_ShowAccountsList already gives FOLLOWERS/FOLLOWING/
+ * BLOCKS -- GET /api/v1/statuses/:id/favourited_by or .../reblogged_by,
+ * single page only (see FS3ENET_ACCLIST_FAVOURITED_BY's own doc comment in
+ * fs3enet.h), no profile header, pinned "Favourited by"/"Boosted by" title
+ * instead of "Followers for @user" (see the FS3ENETQ_ACCOUNTS_LIST reply
+ * handler's title-building block). Deliberately its own small function
+ * rather than routed through FS3EApp_ShowAccountsList -- that helper's
+ * FOLLOWERS/FOLLOWING/BLOCKS branches are all tied to profile-page or
+ * connected-account state (searchProfileAccountId / "always your own"),
+ * neither of which fits a request keyed by a STATUS id instead. */
+static void FS3EApp_ShowInteractedBy(ULONG kind, ULONG searchMode, const char *statusId)
+{
+    FS3ENetAccountsListReq *req;
+
+    if (!statusId || !statusId[0]) return;
+    if (!app->accountApiBaseUrl) return;
+
+    searchStackPush();
+
+    app->searchMode = searchMode;
+
+    fs3e_setViewMode(VIEWMODE_Search);
+
+    if (app->tootTimeline)
+        SetAttrs(app->tootTimeline, TTIMELINE_ClearPosts, TRUE, TAG_DONE);
+
+    req = FS3ENetAccountsListReq_Alloc(kind,
+              app->accountGeneration, app->accountApiBaseUrl,
+              app->accountAccessToken ? app->accountAccessToken : "",
+              statusId, "");
+    if (req && FS3EApp_NetSend(FS3ENETQ_ACCOUNTS_LIST, req, sizeof(*req))) {
+        app->timelineFetchedMask |= (1UL << VIEWMODE_Search);
+        s_searchWaitMsgIdx++;
+        FS3EApp_CheckConnectionState();
+    }
+}
+
+void FS3EApp_ShowFavouritedBy(const char *statusId)
+{
+    FS3EApp_ShowInteractedBy(FS3ENET_ACCLIST_FAVOURITED_BY, FS3ESEARCH_FAVOURITED_BY, statusId);
+}
+
+void FS3EApp_ShowRebloggedBy(const char *statusId)
+{
+    FS3EApp_ShowInteractedBy(FS3ENET_ACCLIST_REBLOGGED_BY, FS3ESEARCH_REBLOGGED_BY, statusId);
 }
 
 /* GID_LOGIN_LOGIN_BUTTON -- start a fresh OAuth flow for whatever server is
@@ -970,9 +1500,28 @@ static void FS3EApp_MapStatusToPostSetup(TTLPostSetup *post, const FS3ENetStatus
     post->favouritesCount = st->fmas_FavouritesCount;
     post->favourited      = st->fmas_Favourited;
     post->reblogged       = st->fmas_Reblogged;
+    post->bookmarked      = st->fmas_Bookmarked;
     post->quotable        = st->fmas_Quotable;
     post->isReply         = st->fmas_IsReply;
     post->sensitive       = st->fmas_Sensitive;
+
+    /* "Translate" hot-spot -- offered only when the CONNECTED account's own
+     * server confirmed it supports server-side translation (see
+     * app->accountTranslationEnabled/Known, FS3ENETQ_INSTANCE_INFO) AND the
+     * server told us this status' own language AND we could detect the
+     * OS's preferred language (FS3EOSLocale_LanguageCode) AND the two
+     * differ -- a toot already in the reader's own language has nothing
+     * useful to translate. Case-sensitive compare is fine: both sides are
+     * server/OS-supplied lowercase ISO 639 codes ("en", "fr", ...), never
+     * user-typed text. */
+    {
+        const char *osLang = FS3EOSLocale_LanguageCode();
+        post->language     = st->fmas_Language;
+        post->canTranslate = (app->accountTranslationKnown && app->accountTranslationEnabled &&
+                               st->fmas_Language && st->fmas_Language[0] &&
+                               osLang && osLang[0] &&
+                               strcmp(st->fmas_Language, osLang) != 0);
+    }
 
     post->hasQuote        = st->fmas_HasQuote;
     post->quoteId         = st->fmas_QuoteId;
@@ -1004,6 +1553,9 @@ static void FS3EApp_MapStatusToPostSetup(TTLPostSetup *post, const FS3ENetStatus
     post->pollVotesCount  = st->fmas_PollVotesCount;
     post->pollExpired     = st->fmas_PollExpired;
     post->pollMultiple    = st->fmas_PollMultiple;
+    post->pollId          = st->fmas_PollId;
+    post->pollExpiresAt   = st->fmas_PollExpiresAt;
+    post->pollVoted       = st->fmas_PollVoted;
 
     post->hasCard          = st->fmas_HasCard;
     post->cardUrl          = st->fmas_CardUrl;
@@ -1011,6 +1563,40 @@ static void FS3EApp_MapStatusToPostSetup(TTLPostSetup *post, const FS3ENetStatus
     post->cardDescription  = st->fmas_CardDescription;
     post->cardProviderName = st->fmas_CardProviderName;
     post->cardImageUrl     = st->fmas_CardImageUrl;
+}
+
+/* Triggers a link-preview card image's FETCH_IMAGE download, if it isn't
+ * already requested -- own cache subdir/pool (see
+ * FS3E_CACHE_SUBDIR_CARDIMAGES/AvatarImages_IsCardRequested), kept separate
+ * from real attachment thumbnails so a card's image URL can never collide
+ * with an actual attachment's cache entry. Shared by
+ * FS3EApp_TriggerMediaFetchesForStatus below (a toot's own embedded card)
+ * and the FS3ENETQ_NEWS reply handler (a trending-link card IS the whole
+ * item, not embedded in anything) -- same image, same cache pool, same
+ * dedup guard either way. */
+static void FS3EApp_TriggerCardImageFetch(const char *imageUrl)
+{
+    ULONG reqSize;
+    FS3ENetFetchImageReq *req;
+
+    if (!app->avatarImages || !imageUrl || !imageUrl[0]) return;
+    if (AvatarImages_IsCardRequested(app->avatarImages, imageUrl)) return;
+
+    reqSize = sizeof(FS3ENetFetchImageReq)
+            + strlen(imageUrl) + 1
+            + strlen(imageUrl) + 1
+            + strlen(FS3E_CACHE_SUBDIR_CARDIMAGES) + 1;
+    req = FS3ENetFetchImageReq_Alloc(imageUrl, imageUrl,
+                                     FS3E_CACHE_SUBDIR_CARDIMAGES,
+                                     (BOOL)(!app->settings.minifyThumbnails ||
+                                            app->settings.keepBigThumbnails),
+                                     FALSE);
+    if (req) {
+        if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
+            AvatarImages_MarkCardRequested(app->avatarImages, imageUrl);
+        else
+            FreeVec(req);
+    }
 }
 
 /* Triggers the avatar/thumbnail FETCH_IMAGE downloads for one status, same
@@ -1091,33 +1677,9 @@ static void FS3EApp_TriggerMediaFetchesForStatus(const FS3ENetStatus *st)
         }
     }
 
-    /* Trigger the link preview card's image download, if it has one and
-     * it isn't already requested -- own cache subdir/pool (see
-     * FS3E_CACHE_SUBDIR_CARDIMAGES/AvatarImages_IsCardRequested), kept
-     * separate from real attachment thumbnails above so a card's image URL
-     * can never collide with an actual attachment's cache entry. */
-    if (app->avatarImages &&
-        st->fmas_HasCard &&
-        st->fmas_CardImageUrl && st->fmas_CardImageUrl[0] &&
-        !AvatarImages_IsCardRequested(app->avatarImages, st->fmas_CardImageUrl))
-    {
-        ULONG reqSize = sizeof(FS3ENetFetchImageReq)
-                      + strlen(st->fmas_CardImageUrl) + 1
-                      + strlen(st->fmas_CardImageUrl) + 1
-                      + strlen(FS3E_CACHE_SUBDIR_CARDIMAGES) + 1;
-        FS3ENetFetchImageReq *req =
-            FS3ENetFetchImageReq_Alloc(st->fmas_CardImageUrl, st->fmas_CardImageUrl,
-                                       FS3E_CACHE_SUBDIR_CARDIMAGES,
-                                       (BOOL)(!app->settings.minifyThumbnails ||
-                                              app->settings.keepBigThumbnails),
-                                       FALSE);
-        if (req) {
-            if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
-                AvatarImages_MarkCardRequested(app->avatarImages, st->fmas_CardImageUrl);
-            else
-                FreeVec(req);
-        }
-    }
+    /* Trigger the link preview card's image download, if it has one. */
+    if (st->fmas_HasCard)
+        FS3EApp_TriggerCardImageFetch(st->fmas_CardImageUrl);
 
     /* Trigger the embedded quote's author avatar download, same pipeline
      * and cache pool as the main avatar above (keyed by the quote
@@ -1203,6 +1765,8 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             app->timelineFetchedMask  = 0; /* reset so new account fetches fresh */
             app->channelPopulatedMask = 0;
             app->channelEmptyMask     = 0;
+            app->newsLoadedCount      = 0;
+            app->bookmarksLoadedCount = 0;
             FS3EApp_FetchTimeline(app->viewMode);
             /* Credentials just confirmed -- empty the fields so there's
              * nothing to accidentally resubmit later (see the matching
@@ -1272,9 +1836,131 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 app->accountMaxChars = reply->fs3eii_MaxChars;
                 FS3ETootView_UpdateCharCount(&app->tootView);
             }
+            if (reply->fs3eii_TranslationKnown) {
+                app->accountTranslationEnabled = reply->fs3eii_TranslationEnabled;
+                app->accountTranslationKnown   = TRUE;
+            }
         } else {
 		/* tell instance info failed to wait state message */
 	}
+        break;
+
+    case FS3ENETQ_INSTANCE_DETAILS:
+        /* See FS3EApp_SearchInstance's own doc comment -- fired for both
+         * the "type a domain" search flow and the "About This Server" menu
+         * item, always into the Search channel. Clears the same wait-state
+         * bit FS3EApp_SearchInstance set, whether the lookup succeeded or
+         * the server was simply unreachable (a typo'd domain is common
+         * here, unlike a normal timeline fetch) -- same "no special error
+         * requester, just stop waiting" choice FS3ENETQ_TIMELINE/
+         * ACCOUNTS_LIST's own Search-mode failures already make. */
+        app->timelineFetchedMask &= ~(1UL << VIEWMODE_Search);
+
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetInstanceDetailsReply *reply = (FS3ENetInstanceDetailsReply *)msg->fs3em_Data;
+            TTLInstanceHeaderSetup setup;
+            char subtitle[160];
+            char bodyText[4096];
+            const char *domain = (reply->fs3eid_Domain && reply->fs3eid_Domain[0])
+                                ? reply->fs3eid_Domain
+                                : (app->searchLastQueryText ? app->searchLastQueryText : "");
+
+            subtitle[0] = '\0';
+            if (reply->fs3eid_Title && reply->fs3eid_Title[0]) {
+                if (reply->fs3eid_Version && reply->fs3eid_Version[0])
+                    snprintf(subtitle, sizeof(subtitle), "%s (v%s)",
+                             reply->fs3eid_Title, reply->fs3eid_Version);
+                else
+                    snprintf(subtitle, sizeof(subtitle), "%s", reply->fs3eid_Title);
+            } else if (reply->fs3eid_Version && reply->fs3eid_Version[0]) {
+                snprintf(subtitle, sizeof(subtitle), "v%s", reply->fs3eid_Version);
+            }
+
+            FS3EInstance_BuildInfoText(bodyText, sizeof(bodyText), reply);
+
+            /* Own copy, not just a pointer into this reply's fs3em_Data --
+             * needed once the reply below is freed, same "before either
+             * reply lands" timing as searchProfileAcct. Resolved here
+             * (not app->searchLastQueryText) since what the user typed may
+             * have been a full URL, not the bare domain the block/unblock
+             * endpoints need. */
+            if (app->searchInstanceDomain) FreeVec(app->searchInstanceDomain);
+            app->searchInstanceDomain  = NetStrDup(domain);
+            app->searchInstanceBlocked = FALSE; /* unknown until the FS3ENETQ_DOMAIN_BLOCK_STATE reply */
+
+            memset(&setup, 0, sizeof(setup));
+            setup.channel   = TTL_SEARCH_CHANNEL;
+            setup.domain    = domain;
+            setup.subtitle  = subtitle;
+            setup.body      = bodyText;
+            setup.blocked   = FALSE; /* unknown until the FS3ENETQ_DOMAIN_BLOCK_STATE reply */
+            setup.showBlock = (app->accountAccessToken && app->accountAccessToken[0]); /* can't block anonymously */
+
+            SetAttrs(app->tootTimeline, TTIMELINE_ShowInstanceInfo, (ULONG)&setup, TAG_DONE);
+
+            /* Back-restore scroll position -- see FS3EApp_SearchGoBack;
+             * same best-effort "apply as soon as the header exists" timing
+             * FS3ENETQ_ACCOUNT_LOOKUP's own Search branch already uses. */
+            searchApplyPendingScroll();
+
+            /* Resolve the actual Block/Unblock button state, same "fire the
+             * relationship-style check right after the header goes up"
+             * timing FS3ENETQ_ACCOUNT_LOOKUP's own Search branch uses for
+             * FS3ENETQ_RELATIONSHIP. */
+            if (setup.showBlock && app->searchInstanceDomain && app->searchInstanceDomain[0]) {
+                FS3ENetDomainBlockStateReq *dbReq = FS3ENetDomainBlockStateReq_Alloc(
+                    app->accountApiBaseUrl, app->accountAccessToken,
+                    app->searchInstanceDomain);
+                if (dbReq)
+                    FS3EApp_NetSend(FS3ENETQ_DOMAIN_BLOCK_STATE, dbReq, sizeof(*dbReq));
+            }
+
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+        }
+        break;
+
+    case FS3ENETQ_DOMAIN_BLOCK_STATE:
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline &&
+            app->searchInstanceDomain)
+        {
+            FS3ENetDomainBlockStateReply *reply = (FS3ENetDomainBlockStateReply *)msg->fs3em_Data;
+            if (strcmp(app->searchInstanceDomain, reply->fs3edbs_Domain) == 0) {
+                TTLInstanceBlockedUpdate upd;
+                app->searchInstanceBlocked = reply->fs3edbs_Blocked;
+                upd.channel = TTL_SEARCH_CHANNEL;
+                upd.domain  = reply->fs3edbs_Domain;
+                upd.blocked = reply->fs3edbs_Blocked;
+                SetAttrs(app->tootTimeline, TTIMELINE_UpdateInstanceBlocked, (ULONG)&upd, TAG_DONE);
+                if (CurrentMainWindow)
+                    RefreshGList((struct Gadget *)app->tootTimeline,
+                                 CurrentMainWindow, NULL, 1);
+            }
+        }
+        break;
+
+    case FS3ENETQ_DOMAIN_BLOCK_TOGGLE:
+        /* No error requester on failure -- same "transient, just try again"
+         * treatment FS3ENETQ_UNBLOCK/FOLLOW give a failed toggle; the
+         * button just keeps showing its pre-click label, one more click
+         * retries. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline &&
+            app->searchInstanceDomain)
+        {
+            FS3ENetDomainBlockToggleReply *reply = (FS3ENetDomainBlockToggleReply *)msg->fs3em_Data;
+            if (strcmp(app->searchInstanceDomain, reply->fs3edbt_Domain) == 0) {
+                TTLInstanceBlockedUpdate upd;
+                app->searchInstanceBlocked = reply->fs3edbt_Blocked;
+                upd.channel = TTL_SEARCH_CHANNEL;
+                upd.domain  = reply->fs3edbt_Domain;
+                upd.blocked = reply->fs3edbt_Blocked;
+                SetAttrs(app->tootTimeline, TTIMELINE_UpdateInstanceBlocked, (ULONG)&upd, TAG_DONE);
+                if (CurrentMainWindow)
+                    RefreshGList((struct Gadget *)app->tootTimeline,
+                                 CurrentMainWindow, NULL, 1);
+            }
+        }
         break;
 
     case FS3ENETQ_TIMELINE:
@@ -1567,6 +2253,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     post.favouritesCount = st->fmas_FavouritesCount;
                     post.favourited      = st->fmas_Favourited;
                     post.reblogged       = st->fmas_Reblogged;
+                    post.bookmarked      = st->fmas_Bookmarked;
                     post.quotable        = st->fmas_Quotable;
                     post.isReply         = st->fmas_IsReply;
                     post.targetId        = st->fmas_TargetId;
@@ -1606,6 +2293,9 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                         post.pollVotesCount  = st->fmas_PollVotesCount;
                         post.pollExpired     = st->fmas_PollExpired;
                         post.pollMultiple    = st->fmas_PollMultiple;
+                        post.pollId          = st->fmas_PollId;
+                        post.pollExpiresAt   = st->fmas_PollExpiresAt;
+                        post.pollVoted       = st->fmas_PollVoted;
                     }
 
                     /* Media thumbnail prefetch -- same pipeline as
@@ -1725,6 +2415,103 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
         }
         break;
 
+    case FS3ENETQ_NEWS:
+        /* Paginated via ?offset= (see FS3ENetNewsReq's own doc comment in
+         * fs3enet.h) -- OLDER only, no NEWER, so this mirrors
+         * FS3ENETQ_TIMELINE's own PageDirection handling minus the NEWER
+         * branch. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetNewsReply *reply = (FS3ENetNewsReply *)msg->fs3em_Data;
+            FS3ENetNewsItem  *items = (FS3ENetNewsItem *)(reply + 1);
+            BOOL  older = (reply->fs3enw_PageDirection == FS3ENETPAGE_OLDER);
+            ULONG addAttr = older ? TTIMELINE_AppendPost : TTIMELINE_AddPost;
+            ULONG bit = (1UL << VIEWMODE_News);
+            ULONG i;
+
+            /* Same stale-generation guard as FS3ENETQ_TIMELINE -- an
+             * account switch mid-flight must not splice a stale account's
+             * trending links into the new account's News channel. */
+            if (reply->fs3enw_AccountGeneration != app->accountGeneration) {
+                break;
+            }
+
+            if (older) {
+                app->olderPageInFlightMask &= ~bit;
+            } else {
+                app->timelineFetchedMask  &= ~bit;
+                app->channelPopulatedMask |=  bit;
+                if (reply->fs3enw_Count == 0) app->channelEmptyMask |=  bit;
+                else                          app->channelEmptyMask &= ~bit;
+            }
+            app->newsLoadedCount += reply->fs3enw_Count;
+
+            /* Same walk-order reasoning as FS3ENETQ_TIMELINE: an OLDER page
+             * appends below existing content, so it walks forward; an
+             * INITIAL page prepends, so it walks in reverse (server's own
+             * order -- item 0 = most trending -- ends up top-to-bottom). */
+            for (i = 0; i < reply->fs3enw_Count; i++) {
+                ULONG idx = older ? i : (reply->fs3enw_Count - 1 - i);
+                FS3ENetNewsItem *it = &items[idx];
+                TTLPostSetup post;
+                memset(&post, 0, sizeof(post));
+
+                post.isNewsCard      = TRUE;
+                post.cardUrl         = it->fnn_Url;
+                post.cardTitle       = it->fnn_Title;
+                post.cardDescription = it->fnn_Description;
+                post.cardProviderName= it->fnn_ProviderName;
+                post.cardImageUrl    = it->fnn_ImageUrl;
+                post.timestamp       = it->fnn_PublishedAt;
+                post.viewModeBits    = bit;
+
+                FS3EApp_TriggerCardImageFetch(it->fnn_ImageUrl);
+
+                SetAttrs(app->tootTimeline, addAttr, (ULONG)&post, TAG_DONE);
+            }
+
+            /* Pinned explanatory header, same "isListTitle, added last so
+             * it lands above even index-0's own AddPost" trick as the
+             * followers/following list's "Followers for @user" row above
+             * -- see MSG_NEWS_HEADER's own comment in fs3elocale.h for why
+             * the wording says "neighbourhood", not just "this server".
+             * Only on the initial page: an OLDER page appends below
+             * existing content, so re-adding this here would misplace it
+             * (and it's already pinned at the top from the first page). */
+            if (!older) {
+                TTLPostSetup title;
+                memset(&title, 0, sizeof(title));
+                title.isListTitle  = TRUE;
+                title.body         = LOC(MSG_NEWS_HEADER);
+                title.viewModeBits = bit;
+                SetAttrs(app->tootTimeline, TTIMELINE_AddPost, (ULONG)&title, TAG_DONE);
+            }
+
+            /* Only the very first page should jump the scroll position --
+             * pagination must never move it, same as FS3ENETQ_TIMELINE. */
+            if (!older)
+                SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
+
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+        } else if (msg->fs3em_Result != FS3ENETR_OK) {
+            FS3ENetNewsReq *req = (FS3ENetNewsReq *)msg->fs3em_Data;
+            ULONG bit = (1UL << VIEWMODE_News);
+
+            if (req && req->fs3enw_AccountGeneration != app->accountGeneration) {
+                break;
+            }
+
+            if (req && req->fs3enw_PageDirection == FS3ENETPAGE_OLDER) {
+                app->olderPageInFlightMask &= ~bit; /* allow retry next time the user hits bottom */
+            } else {
+                app->timelineErrorMask   |= bit;
+                app->timelineFetchedMask &= ~bit; /* allow retry on next view switch */
+                app->lastTimelineResult   = msg->fs3em_Result;
+            }
+        }
+        break;
+
     case FS3ENETQ_ACCOUNTS_LIST:
         /* Account search results / followers / following -- see
          * FS3EApp_SearchAccount/ShowFollowers/ShowFollowing. Single page
@@ -1775,28 +2562,43 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 SetAttrs(app->tootTimeline, TTIMELINE_AddPost, (ULONG)&post, TAG_DONE);
             }
 
-            /* Pinned "Followers for @user" / "Followed by @user" title,
-             * so it's clear whose list is being shown -- searchProfileAcct
-             * is still set here (FS3EApp_ShowAccountsList deliberately
-             * never clears it, see its own comment). Deliberately the
-             * LAST AddPost of this batch: AddPost always prepends, and
-             * the loop above already lands account index 0 on top in
-             * reverse-index order, so one more AddPost after it puts this
-             * title above even that, at the very top of the list -- no
-             * special "pin above content" glue needed (contrast
+            /* Pinned "Followers for @user" / "Followed by @user" / "Blocked
+             * users" / "Favourited by" / "Boosted by" title, so it's clear
+             * whose list is being shown -- searchProfileAcct is still set
+             * here for FOLLOWERS/FOLLOWING (FS3EApp_ShowAccountsList
+             * deliberately never clears it, see its own comment); BLOCKS/
+             * FAVOURITED_BY/REBLOGGED_BY need no @handle at all -- BLOCKS is
+             * always the connected account's own list, FAVOURITED_BY/
+             * REBLOGGED_BY are about a TOOT, not a person (see
+             * FS3EApp_ShowFavouritedBy/RebloggedBy). Deliberately the LAST
+             * AddPost of this batch: AddPost always prepends, and the loop
+             * above already lands account index 0 on top in reverse-index
+             * order, so one more AddPost after it puts this title above
+             * even that, at the very top of the list -- no special "pin
+             * above content" glue needed (contrast
              * ttl_channel_add_boundaries), the insertion order alone does
              * it. Not shown for plain account search (SEARCH kind) --
              * there's no single "whose list" to name there. */
-            if ((reply->fs3eal_Kind == FS3ENET_ACCLIST_FOLLOWERS ||
-                 reply->fs3eal_Kind == FS3ENET_ACCLIST_FOLLOWING) &&
-                app->searchProfileAcct && app->searchProfileAcct[0])
+            if (((reply->fs3eal_Kind == FS3ENET_ACCLIST_FOLLOWERS ||
+                  reply->fs3eal_Kind == FS3ENET_ACCLIST_FOLLOWING) &&
+                 app->searchProfileAcct && app->searchProfileAcct[0]) ||
+                reply->fs3eal_Kind == FS3ENET_ACCLIST_BLOCKS ||
+                reply->fs3eal_Kind == FS3ENET_ACCLIST_FAVOURITED_BY ||
+                reply->fs3eal_Kind == FS3ENET_ACCLIST_REBLOGGED_BY)
             {
                 char titleBuf[128];
                 TTLPostSetup title;
-                snprintf(titleBuf, sizeof(titleBuf),
-                    reply->fs3eal_Kind == FS3ENET_ACCLIST_FOLLOWERS
-                        ? "Followers for @%s" : "Followed by @%s",
-                    app->searchProfileAcct);
+                if (reply->fs3eal_Kind == FS3ENET_ACCLIST_BLOCKS)
+                    snprintf(titleBuf, sizeof(titleBuf), "Blocked users");
+                else if (reply->fs3eal_Kind == FS3ENET_ACCLIST_FAVOURITED_BY)
+                    snprintf(titleBuf, sizeof(titleBuf), "Favourited by");
+                else if (reply->fs3eal_Kind == FS3ENET_ACCLIST_REBLOGGED_BY)
+                    snprintf(titleBuf, sizeof(titleBuf), "Boosted by");
+                else
+                    snprintf(titleBuf, sizeof(titleBuf),
+                        reply->fs3eal_Kind == FS3ENET_ACCLIST_FOLLOWERS
+                            ? "Followers for @%s" : "Followed by @%s",
+                        app->searchProfileAcct);
                 memset(&title, 0, sizeof(title));
                 title.isListTitle  = TRUE;
                 title.body         = titleBuf;
@@ -1813,8 +2615,13 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
              * account id if present, same "can't have a relationship
              * with yourself" reasoning the profile header's own singular
              * FS3ENETQ_RELATIONSHIP fetch already applies via its isSelf
-             * skip (FS3ENETQ_ACCOUNT_LOOKUP handler above). */
-            if (app->accountAccessToken && app->accountAccessToken[0]) {
+             * skip (FS3ENETQ_ACCOUNT_LOOKUP handler above). Also skipped
+             * outright for BLOCKS -- Mastodon auto-unfollows both
+             * directions on block, so a "Follows you"/"Following" badge on
+             * a blocked account is never meaningful, just a wasted
+             * request. */
+            if (reply->fs3eal_Kind != FS3ENET_ACCLIST_BLOCKS &&
+                app->accountAccessToken && app->accountAccessToken[0]) {
                 char *ids[FS3E_RELBATCH_MAX];
                 ULONG idCount = 0;
 
@@ -1843,6 +2650,68 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             ULONG bit = (1UL << VIEWMODE_Search);
 
             if (req && req->fs3eal_AccountGeneration != app->accountGeneration) {
+                break;
+            }
+
+            app->timelineErrorMask   |= bit;
+            app->timelineFetchedMask &= ~bit;
+            app->lastTimelineResult   = msg->fs3em_Result;
+        }
+        break;
+
+    case FS3ENETQ_DOMAIN_BLOCKS:
+        /* Blocked servers -- see FS3EApp_ShowBlockedServers. Bare domain
+         * strings, not accounts, so this is its own reply shape/handler
+         * rather than reusing FS3ENETQ_ACCOUNTS_LIST above. Same single-
+         * page, no avatar-prefetch, no relationship-batch reasoning as
+         * that case -- a domain has no relationship to fetch at all. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetDomainBlocksReply *reply = (FS3ENetDomainBlocksReply *)msg->fs3em_Data;
+            char **domains = (char **)(reply + 1);
+            ULONG bit = (1UL << VIEWMODE_Search);
+            ULONG i;
+
+            if (reply->fs3edb_AccountGeneration != app->accountGeneration) {
+                break;
+            }
+
+            app->timelineFetchedMask  &= ~bit;
+            app->channelPopulatedMask |=  bit;
+            if (reply->fs3edb_Count == 0) app->channelEmptyMask |=  bit;
+            else                          app->channelEmptyMask &= ~bit;
+
+            /* Reverse-order prepend, same reasoning as the FOLLOWERS/
+             * FOLLOWING loop above -- index 0 ends up on top. */
+            for (i = 0; i < reply->fs3edb_Count; i++) {
+                ULONG idx = reply->fs3edb_Count - 1 - i;
+                TTLPostSetup post;
+                memset(&post, 0, sizeof(post));
+                post.isDomainRow  = TRUE;
+                post.body         = domains[idx];
+                post.viewModeBits = bit;
+                SetAttrs(app->tootTimeline, TTIMELINE_AddPost, (ULONG)&post, TAG_DONE);
+            }
+
+            {
+                TTLPostSetup title;
+                memset(&title, 0, sizeof(title));
+                title.isListTitle  = TRUE;
+                title.body         = "Blocked servers";
+                title.viewModeBits = bit;
+                SetAttrs(app->tootTimeline, TTIMELINE_AddPost, (ULONG)&title, TAG_DONE);
+            }
+
+            SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
+            searchApplyPendingScroll();
+
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+        } else if (msg->fs3em_Result != FS3ENETR_OK) {
+            FS3ENetDomainBlocksReq *req = (FS3ENetDomainBlocksReq *)msg->fs3em_Data;
+            ULONG bit = (1UL << VIEWMODE_Search);
+
+            if (req && req->fs3edb_AccountGeneration != app->accountGeneration) {
                 break;
             }
 
@@ -2175,8 +3044,10 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 app->pendingTootBody = NULL;
                 FS3EApp_SubmitToot(pendingBody, app->pendingTootVisibility,
                                     app->pendingTootQuotePolicy, app->pendingTootSensitive,
+                                    app->pendingTootLanguage,
                                     (const char *const *)app->pendingTootMediaIds,
-                                    app->pendingTootMediaCount);
+                                    app->pendingTootMediaCount,
+                                    NULL, 0, 0, FALSE);
 
                 for (i = 0; i < app->pendingTootMediaCount; i++) {
                     FreeVec(app->pendingTootMediaIds[i]);
@@ -2248,6 +3119,126 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             if (CurrentMainWindow)
                 RefreshGList((struct Gadget *)app->tootTimeline,
                              CurrentMainWindow, NULL, 1);
+        }
+        break;
+
+    case FS3ENETQ_BOOKMARK:
+        /* Same reasoning as FS3ENETQ_FAVORITE above. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetBookmarkReply *reply = (FS3ENetBookmarkReply *)msg->fs3em_Data;
+            TTLPostUpdate upd;
+            memset(&upd, 0, sizeof(upd));
+            upd.postId     = reply->fs3ebk_StatusId;
+            upd.flags      = TTL_POSTUPD_BOOKMARKED;
+            upd.bookmarked = reply->fs3ebk_Bookmarked;
+            SetAttrs(app->tootTimeline, TTIMELINE_UpdatePost, (ULONG)&upd, TAG_DONE);
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+        }
+        break;
+
+    case FS3ENETQ_VOTE_POLL:
+        /* The vote itself carries back nothing but the status id it was
+         * cast on (see FS3ENetVotePollReply's own doc comment) -- fire the
+         * exact same single-status SINGLE_REFRESH fetch
+         * FS3EApp_RefreshVisibleToots (F5) uses, so the poll's own bars/
+         * "Already voted" show up as soon as the server confirms, without
+         * waiting for a general refresh. Silently drops a failed vote
+         * (network/HTTP error, already voted, poll closed meanwhile,
+         * etc.) -- no explicit error requester, same "transient, just try
+         * again" treatment TTL_HOT_FAVORITE/BOOST/BOOKMARK already give a
+         * failed toggle. May have scrolled out of every channel by the
+         * time this lands -- TIMELINE_RefreshPost is a silent no-op then,
+         * same as every other async reply racing a list change. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline && app->accountApiBaseUrl) {
+            FS3ENetVotePollReply *reply = (FS3ENetVotePollReply *)msg->fs3em_Data;
+            if (reply->fs3evp_StatusId && reply->fs3evp_StatusId[0]) {
+                char tl[128];
+                FS3ENetTimelineReq *req;
+
+                snprintf(tl, sizeof(tl), "statuses/%s", reply->fs3evp_StatusId);
+                req = FS3ENetTimelineReq_Alloc(app->viewMode, FS3ENETPAGE_INITIAL,
+                          app->accountGeneration, FS3ENET_TLSHAPE_SINGLE_REFRESH,
+                          app->accountApiBaseUrl,
+                          app->accountAccessToken ? app->accountAccessToken : "",
+                          tl, "", reply->fs3evp_StatusId, NULL);
+                if (req) FS3EApp_NetSend(FS3ENETQ_TIMELINE, req, sizeof(*req));
+            }
+        }
+        break;
+
+    case FS3ENETQ_BOOKMARKS_SYNC:
+        /* Fire-and-forget backfill (see FS3ENetBookmarksSyncReq's own doc
+         * comment) -- whatever it found (or didn't, including a network
+         * failure: offline browsing should still show whatever's already
+         * on disk), now fetch the first local page for real display. Not
+         * gated on msg->fs3em_Result at all, deliberately. */
+        FS3EApp_FetchBookmarksLocalPage(TRUE);
+        break;
+
+    case FS3ENETQ_BOOKMARKS_LOCAL:
+        /* Local-cache equivalent of FS3ENETQ_NEWS's own reply handler --
+         * same PageDirection-driven AddPost/AppendPost dispatch and walk-
+         * order reasoning (see that case's comments), but entries are real
+         * Status objects (FS3ENetStatus, not FS3ENetNewsItem), so this
+         * reuses FS3EApp_MapStatusToPostSetup/TriggerMediaFetchesForStatus
+         * verbatim, same as FS3ENETQ_TIMELINE. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetBookmarksLocalReply *reply = (FS3ENetBookmarksLocalReply *)msg->fs3em_Data;
+            FS3ENetStatus *statuses = (FS3ENetStatus *)(reply + 1);
+            BOOL  older = (reply->fs3ebl_PageDirection == FS3ENETPAGE_OLDER);
+            ULONG addAttr = older ? TTIMELINE_AppendPost : TTIMELINE_AddPost;
+            ULONG bit = (1UL << VIEWMODE_Bookmarks);
+            ULONG i;
+
+            if (reply->fs3ebl_AccountGeneration != app->accountGeneration) {
+                break;
+            }
+
+            if (older) {
+                app->olderPageInFlightMask &= ~bit;
+            } else {
+                app->timelineFetchedMask  &= ~bit;
+                app->channelPopulatedMask |=  bit;
+                if (reply->fs3ebl_Count == 0) app->channelEmptyMask |=  bit;
+                else                          app->channelEmptyMask &= ~bit;
+            }
+            app->bookmarksLoadedCount += reply->fs3ebl_Count;
+
+            for (i = 0; i < reply->fs3ebl_Count; i++) {
+                ULONG idx = older ? i : (reply->fs3ebl_Count - 1 - i);
+                TTLPostSetup post;
+                memset(&post, 0, sizeof(post));
+                FS3EApp_MapStatusToPostSetup(&post, &statuses[idx]);
+                post.viewModeBits = bit;
+
+                FS3EApp_TriggerMediaFetchesForStatus(&statuses[idx]);
+
+                SetAttrs(app->tootTimeline, addAttr, (ULONG)&post, TAG_DONE);
+            }
+
+            if (!older)
+                SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
+
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
+        } else if (msg->fs3em_Result != FS3ENETR_OK) {
+            FS3ENetBookmarksLocalReq *req = (FS3ENetBookmarksLocalReq *)msg->fs3em_Data;
+            ULONG bit = (1UL << VIEWMODE_Bookmarks);
+
+            if (req && req->fs3ebl_AccountGeneration != app->accountGeneration) {
+                break;
+            }
+
+            if (req && req->fs3ebl_PageDirection == FS3ENETPAGE_OLDER) {
+                app->olderPageInFlightMask &= ~bit;
+            } else {
+                app->timelineErrorMask   |= bit;
+                app->timelineFetchedMask &= ~bit;
+                app->lastTimelineResult   = msg->fs3em_Result;
+            }
         }
         break;
 
@@ -2360,6 +3351,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 setup.followersCount = acc->fma_FollowersCount;
                 setup.followingCount = acc->fma_FollowingCount;
                 setup.following      = FALSE; /* unknown until the FS3ENETQ_RELATIONSHIP reply */
+                setup.blocked        = FALSE; /* unknown until the FS3ENETQ_RELATIONSHIP reply */
                 setup.showFollow     = !isSelf;
                 setup.isSelf         = isSelf;
 
@@ -2440,10 +3432,15 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             FS3ENetRelationshipReply *reply = (FS3ENetRelationshipReply *)msg->fs3em_Data;
             if (strcmp(app->searchProfileAccountId, reply->fs3erl_AccountId) == 0) {
                 TTLProfileFollowUpdate upd;
+                TTLProfileBlockedUpdate bupd;
                 upd.channel   = TTL_SEARCH_CHANNEL;
                 upd.accountId = reply->fs3erl_AccountId;
                 upd.following = reply->fs3erl_Following;
                 SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileFollow, (ULONG)&upd, TAG_DONE);
+                bupd.channel   = TTL_SEARCH_CHANNEL;
+                bupd.accountId = reply->fs3erl_AccountId;
+                bupd.blocked   = reply->fs3erl_Blocking;
+                SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileBlocked, (ULONG)&bupd, TAG_DONE);
                 if (CurrentMainWindow)
                     RefreshGList((struct Gadget *)app->tootTimeline,
                                  CurrentMainWindow, NULL, 1);
@@ -2499,6 +3496,77 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     RefreshGList((struct Gadget *)app->tootTimeline,
                                  CurrentMainWindow, NULL, 1);
             }
+        }
+        break;
+
+    case FS3ENETQ_BLOCK:
+        /* No error requester on failure -- same "transient, just try again"
+         * treatment FS3ENETQ_UNBLOCK/FOLLOW/FAVORITE/BOOST/BOOKMARK already
+         * give a failed toggle. Unlike FS3ENETQ_UNBLOCK, also patches
+         * following -- Mastodon auto-unfollows both directions on block, so
+         * a still-showing "Following" state (from before the block) needs
+         * clearing too, see FS3EMastodon_Block's own comment. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline &&
+            app->searchProfileAccountId)
+        {
+            FS3ENetBlockReply *reply = (FS3ENetBlockReply *)msg->fs3em_Data;
+            if (strcmp(app->searchProfileAccountId, reply->fs3eblk_AccountId) == 0) {
+                TTLProfileBlockedUpdate bupd;
+                TTLProfileFollowUpdate  fupd;
+                bupd.channel   = TTL_SEARCH_CHANNEL;
+                bupd.accountId = reply->fs3eblk_AccountId;
+                bupd.blocked   = reply->fs3eblk_Blocking;
+                SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileBlocked, (ULONG)&bupd, TAG_DONE);
+                fupd.channel   = TTL_SEARCH_CHANNEL;
+                fupd.accountId = reply->fs3eblk_AccountId;
+                fupd.following = reply->fs3eblk_Following;
+                SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileFollow, (ULONG)&fupd, TAG_DONE);
+                if (CurrentMainWindow)
+                    RefreshGList((struct Gadget *)app->tootTimeline,
+                                 CurrentMainWindow, NULL, 1);
+            }
+        }
+        break;
+
+    case FS3ENETQ_UNBLOCK:
+        /* No error requester on failure -- same "transient, just try again"
+         * treatment FS3ENETQ_FOLLOW/FAVORITE/BOOST/BOOKMARK already give a
+         * failed toggle; the Unblock button just stays visible, one more
+         * click retries. On success, the resulting state is always
+         * "not blocked" (see FS3EMastodon_Unblock's own comment), so this
+         * doesn't need to read anything back from the reply beyond which
+         * account it was for. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline &&
+            app->searchProfileAccountId)
+        {
+            FS3ENetUnblockReply *reply = (FS3ENetUnblockReply *)msg->fs3em_Data;
+            if (strcmp(app->searchProfileAccountId, reply->fs3eub_AccountId) == 0) {
+                TTLProfileBlockedUpdate bupd;
+                bupd.channel   = TTL_SEARCH_CHANNEL;
+                bupd.accountId = reply->fs3eub_AccountId;
+                bupd.blocked   = FALSE;
+                SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileBlocked, (ULONG)&bupd, TAG_DONE);
+                if (CurrentMainWindow)
+                    RefreshGList((struct Gadget *)app->tootTimeline,
+                                 CurrentMainWindow, NULL, 1);
+            }
+        }
+        break;
+
+    case FS3ENETQ_TRANSLATE_STATUS:
+        /* No error requester on failure -- see FS3ENETQ_TRANSLATE_STATUS's
+         * own doc comment in fs3enet.h: the toot simply keeps showing its
+         * original text, same as if the Translate row had never been
+         * clicked. */
+        if (msg->fs3em_Result == FS3ENETR_OK && app->tootTimeline) {
+            FS3ENetTranslateStatusReply *reply = (FS3ENetTranslateStatusReply *)msg->fs3em_Data;
+            TTLTranslationSetup setup;
+            setup.postId         = reply->fs3ets_StatusId;
+            setup.translatedText = reply->fs3ets_TranslatedContent;
+            SetAttrs(app->tootTimeline, TTIMELINE_ApplyTranslation, (ULONG)&setup, TAG_DONE);
+            if (CurrentMainWindow)
+                RefreshGList((struct Gadget *)app->tootTimeline,
+                             CurrentMainWindow, NULL, 1);
         }
         break;
 

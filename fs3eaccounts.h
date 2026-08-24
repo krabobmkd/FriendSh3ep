@@ -86,8 +86,32 @@ void FS3EApp_SeedDefaultAnonymousAccount(void);
  * startup right after FS3EApp_LoadAccount(). */
 void FS3EApp_VerifyStoredAccount(void);
 
+/* Fires FS3ENETQ_INSTANCE_INFO for the active account's own server. Called
+ * internally by FS3EApp_SetAccount() on every real account change, AND
+ * explicitly from friendsh3ep.c's main() right after FS3ENet_Start() -- see
+ * this function's own doc comment in fs3eaccounts.c for why both call
+ * sites are needed (the cold-boot one silently fails: no netRequestPort
+ * yet at that point in main()). */
+void FS3EApp_RequestInstanceInfo(void);
+
 /* Rebuild the login window's accounts list from app->accounts[]. */
 void FS3EApp_RefreshLoginAccountsList(void);
+
+/* Builds "<userDataPath>/bookmarks/<serverHash>-<accountId>" into buf,
+ * creating it (recursively) first if it doesn't exist yet -- one
+ * subdirectory per (server, account) pair, same "not disposable cache"
+ * placement as account.dat (see FS3EApp_AccountDatPath's own doc comment).
+ * Keyed on BOTH the server and the account id, not accountId alone:
+ * accountId is only unique WITHIN one Mastodon instance, and this app
+ * connects to multiple servers/accounts interchangeably (see
+ * FS3EApp_SwitchAccount) -- two different servers can and do hand out the
+ * same small numeric id, which would otherwise mix or clobber different
+ * accounts' bookmark caches together. Holds one <statusId>.json file per
+ * bookmarked toot, written/deleted by FS3ENETQ_BOOKMARK and backfilled by
+ * FS3ENETQ_BOOKMARKS_SYNC -- see VIEWMODE_Bookmarks's own fetch path in
+ * fs3erequests.c. Returns FALSE if there's no logged-in account (accountId/
+ * accountApiBaseUrl unset) or the directory couldn't be created/reached. */
+BOOL FS3EApp_BookmarksCacheDir(char *buf, ULONG bufSize);
 
 /* Wipes every bit of state that belonged to whichever account was just
  * left/changed away from (toot timeline channels, search-channel state,
