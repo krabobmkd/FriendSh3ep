@@ -494,7 +494,7 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
         LAYOUT_AddChild,      (ULONG)sv->rgbDrawFunctionChooser,
         CHILD_WeightedHeight, 0,
         CHILD_Label,          (ULONG)rgbDrawFunctionLabel,
-        LAYOUT_AddChild,      (ULONG)thumbnailsRestartNoteLabel,
+        LAYOUT_AddImage ,      (ULONG)thumbnailsRestartNoteLabel,
         CHILD_WeightedHeight, 0,
         LAYOUT_AddChild,      (ULONG)thumbnailsSpacer,
         CHILD_WeightedHeight, 1,

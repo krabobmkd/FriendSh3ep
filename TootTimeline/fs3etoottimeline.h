@@ -438,6 +438,20 @@
  * why (both can be freed/reused between the two clicks). */
 #define TTIMELINE_ActionOnDoubleClick   (TTIMELINE_Base + 41)
 
+/* [S] LONG, seconds: time(NULL) + this approximates the Mastodon server's
+ * own clock, not the local Amiga RTC -- some real Amigas have no
+ * battery-backed clock at all (or a wildly wrong one), so a poll's "X
+ * hours/days left" (ttl_format_poll_remaining, fs3etoottimeline_tiles.c)
+ * can't safely trust time(NULL) alone. Set by friendsh3ep.c's
+ * FS3EApp_HandleNetReply whenever a network reply's fs3em_ServerEpoch
+ * carries a fresh reading (see that field's own doc comment in fs3enet.h)
+ * -- 0 (the default) until the first one arrives, same as a locally correct
+ * clock would read as an offset of 0. Purely a scalar instance field, same
+ * "no semaphore needed, only ever touched from the GUI task" reasoning as
+ * inst->viewMode/dpiHeight -- doesn't force a redraw, an open poll just
+ * picks it up on its next natural repaint. */
+#define TTIMELINE_ServerClockOffset     (TTIMELINE_Base + 51)
+
 
 /* ------------------------------------------------------------------ */
 /* Post content descriptor  (passed via TTIMELINE_AddPost)             */

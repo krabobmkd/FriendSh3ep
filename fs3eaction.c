@@ -180,7 +180,7 @@ BOOL Action_About(struct App *ctx)
         "A Mastodon client for AmigaOS\n"
         " by krb.\n"
         " License LGPL - sources at:\n"
-        "github.com/krabobmkd/FriendSh3ep"
+        "github.com/krabobmkd/FriendSh3ep\n"
         "Version " FRIENDSH3EP_VERSION "\n\n"
         "Built with utf8rastport.library\n"
         "UniTextEditor.gadget\n"

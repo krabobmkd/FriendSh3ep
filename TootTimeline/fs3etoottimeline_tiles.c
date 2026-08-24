@@ -414,8 +414,17 @@ static BOOL ttl_parse_iso8601_utc(const char *raw, LONG *outEpoch)
  * unparseable/already past (shouldn't normally happen -- pollExpired
  * should already be TRUE by then and take the other render mode -- but a
  * local clock a little behind the server's is exactly the kind of edge
- * case worth not showing garbage for, rather than a negative number). */
-static void ttl_format_poll_remaining(const char *expiresAt, char *out, ULONG outSize)
+ * case worth not showing garbage for, rather than a negative number).
+ *
+ * clockOffset (TTIMELINE_ServerClockOffset, inst->serverClockOffset) is
+ * added to time(NULL) instead of trusting it bare -- some real Amigas have
+ * no battery-backed clock at all (or a wildly wrong one), so this is really
+ * "now, corrected to the Mastodon server's own clock" whenever that's been
+ * observed (see fs3em_ServerEpoch's doc comment in network_fs3e/fs3enet.h);
+ * 0 (time(NULL) unmodified) until then, same as a genuinely correct local
+ * clock would read. */
+static void ttl_format_poll_remaining(const char *expiresAt, LONG clockOffset,
+                                       char *out, ULONG outSize)
 {
     LONG expEpoch, remain;
 
@@ -423,7 +432,7 @@ static void ttl_format_poll_remaining(const char *expiresAt, char *out, ULONG ou
         snprintf(out, outSize, "Poll closed");
         return;
     }
-    remain = expEpoch - (LONG)time(NULL);
+    remain = expEpoch - ((LONG)time(NULL) + clockOffset);
     if (remain <= 0) {
         snprintf(out, outSize, "Poll closed");
     } else if (remain >= 86400) {
@@ -1177,11 +1186,13 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                                      (unsigned long)post->pollVotesCount);
                         } else if (post->pollVoted) {
                             char remain[40];
-                            ttl_format_poll_remaining(post->pollExpiresAt, remain, sizeof(remain));
+                            ttl_format_poll_remaining(post->pollExpiresAt, inst->serverClockOffset,
+                                                       remain, sizeof(remain));
                             snprintf(summary, sizeof(summary), "%lu votes \xC2\xB7 %s \xC2\xB7 Already voted",
                                      (unsigned long)post->pollVotesCount, remain);
                         } else {
-                            ttl_format_poll_remaining(post->pollExpiresAt, summary, sizeof(summary));
+                            ttl_format_poll_remaining(post->pollExpiresAt, inst->serverClockOffset,
+                                                       summary, sizeof(summary));
                         }
                         URPDC_SetDrawColorFromPen(dcMini, inst->screen, dimPen, bgPen);
                         tile_draw_text(inst, rp, textX, (WORD)(rowY + inst->miniLineAscent), summary, dcMini);

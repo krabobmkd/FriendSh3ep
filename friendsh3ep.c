@@ -2672,13 +2672,14 @@ int main(int argc, char **argv)
                                     app->tootView.window
                                     );
                             }
-                            /* if edidtor has focus (activation), escape key to close the window is here */
+                            /* if editor has focus (activation), escape key to close the window is here */
                             if(isUp && key == 0x45)
                             {
                                 FS3ETootView_Close(&app->tootView);
                             }
                          }
-                         if((ptag = FindTagItem(UTEDN_CursorMoved, msg))!=NULL && app->tootView.window)
+                         if((ptag = FindTagItem(UTEDN_CursorMoved, msg))!=NULL && app->tootView.window
+                         && ( app->tootView.currentExtras == app->tootView.pollExtrasLayout ))
                          {
                             RefreshGList(app->tootView.pollOptionEditor[ipoll],app->tootView.window,NULL,1);
                          }

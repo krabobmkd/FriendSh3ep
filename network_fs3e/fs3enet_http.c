@@ -317,9 +317,10 @@ static BOOL FS3EHttp_DoRequest(const char *url, const FS3EHttpHeader *extraHeade
     BIO   *resp;
     BOOL   ok = FALSE;
 
-    out->fhr_Body       = NULL;
-    out->fhr_BodyLen    = 0;
-    out->fhr_StatusCode = 0; /* OSSL_HTTP_transfer()'s BIO never exposes this */
+    out->fhr_Body        = NULL;
+    out->fhr_BodyLen     = 0;
+    out->fhr_StatusCode  = 0; /* OSSL_HTTP_transfer()'s BIO never exposes this */
+    out->fhr_ServerEpoch = 0; /* ditto -- no response headers at all on this path */
 
     /* Defensive: never call into AmiSSL/OpenSSL if FS3EHttp_Init() never
      * succeeded. Structurally this can't happen today -- FS3ENet_ProcEntry
@@ -401,6 +402,63 @@ static BOOL FS3EHttp_DoRequest(const char *url, const FS3EHttpHeader *extraHeade
     return ok;
 }
 
+/* Most recent fhr_ServerEpoch seen across any raw-BIO exchange -- see
+ * FS3EHttp_GetLastServerEpoch()'s doc comment in fs3enet_http.h. Written
+ * only from FS3EHttp_DoRawRequest() below, always from this process' one
+ * network task, so no locking is needed. */
+static LONG g_FS3EHttpLastServerEpoch = 0;
+
+LONG FS3EHttp_GetLastServerEpoch(void)
+{
+    return g_FS3EHttpLastServerEpoch;
+}
+
+static const char *const kFS3EHttpMonths[12] = {
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+};
+
+/* Same days-since-epoch algorithm as TootTimeline's ttl_days_from_civil --
+ * duplicated rather than shared, since this file must never depend on
+ * GUI-side headers (see this file's own top-of-file architecture note). */
+static long FS3EHttp_DaysFromCivil(long y, int m, int d)
+{
+    long         era;
+    unsigned     yoe, doy, doe;
+
+    y -= (m <= 2);
+    era = (y >= 0 ? y : y - 399) / 400;
+    yoe = (unsigned)(y - era * 400);
+    doy = (153 * (unsigned)(m + (m > 2 ? -3 : 9)) + 2) / 5 + (unsigned)d - 1;
+    doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return era * 146097 + (long)doe - 719468;
+}
+
+/* Parses an HTTP "Date:" response header's VALUE (the text right after the
+ * "Date:" prefix) -- RFC 1123 format, e.g. "Wed, 21 Oct 2015 07:28:00 GMT",
+ * what every server seen so far sends (nginx, Puma/Mastodon, Cloudflare).
+ * Returns 0 if the value doesn't match that exact shape -- same
+ * "fall back rather than guess" rule ttl_parse_iso8601_utc uses for
+ * CreatedAt/PollExpiresAt, this just isn't worth a general RFC 850/asctime
+ * fallback parser for a value that's only ever used to nudge a clock. */
+static LONG FS3EHttp_ParseHTTPDate(const char *value)
+{
+    char monStr[4];
+    int  d, y, h, mi, se, mon;
+
+    if (sscanf(value, "%*3s, %d %3s %d %d:%d:%d", &d, monStr, &y, &h, &mi, &se) != 6)
+        return 0;
+
+    for (mon = 0; mon < 12; mon++)
+        if (strncmp(monStr, kFS3EHttpMonths[mon], 3) == 0)
+            break;
+    if (mon == 12)
+        return 0;
+
+    return (LONG)((long)FS3EHttp_DaysFromCivil(y, mon + 1, d) * 86400L
+                   + h * 3600 + mi * 60 + se);
+}
+
 /* Raw HTTP/1.1 request path used only by FS3EHttp_Put() -- OSSL_HTTP_transfer()
  * (used by FS3EHttp_DoRequest() above) can only ever emit GET or POST, since
  * OSSL_HTTP_REQ_CTX_set_request_line() takes the verb as a hardcoded
@@ -445,9 +503,10 @@ static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
     char        redirectUrl[FS3EHTTP_MAX_PATH];
     int         redirectsLeft = FS3EHTTP_MAX_REDIRECTS;
 
-    out->fhr_Body       = NULL;
-    out->fhr_BodyLen    = 0;
-    out->fhr_StatusCode = 0;
+    out->fhr_Body        = NULL;
+    out->fhr_BodyLen     = 0;
+    out->fhr_StatusCode  = 0;
+    out->fhr_ServerEpoch = 0;
 
     if (outTotalLen)
         *outTotalLen = 0;
@@ -593,6 +652,17 @@ static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
                 sscanf(text, "HTTP/%*d.%*d %d", &code);
                 out->fhr_StatusCode = (ULONG)code;
 
+                /* "Date:" -- plain strstr, not a case-insensitive header
+                 * parser, same canonical-casing assumption Content-Range
+                 * below already makes. Meaningful on every response
+                 * (redirect or not), unlike Content-Range, so this isn't
+                 * gated on useRange/outTotalLen. */
+                {
+                    char *dateLine = strstr(text, "Date:");
+                    if (dateLine && dateLine < headerEnd)
+                        out->fhr_ServerEpoch = FS3EHttp_ParseHTTPDate(dateLine + 5);
+                }
+
 #ifdef BDBTRACEMULTIPART
                 bdbprintf_now("HttpRaw: %s %s -> status=%d bodyLen=%lu\n",
                                method, curUrl, code, (unsigned long)raw.fhr_BodyLen);
@@ -721,6 +791,9 @@ out_free_bio:
         curUrl = redirectUrl;
         continue;
     }
+
+    if (ok && out->fhr_ServerEpoch != 0)
+        g_FS3EHttpLastServerEpoch = out->fhr_ServerEpoch;
 
     return ok;
     } /* for (;;) */

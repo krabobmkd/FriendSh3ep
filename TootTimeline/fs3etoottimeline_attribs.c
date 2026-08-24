@@ -1032,6 +1032,14 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                 used = 1;
                 break;
 
+            case TTIMELINE_ServerClockOffset:
+                /* No redraw forced -- an open poll's remaining-time text
+                 * just picks this up on its next natural repaint, same as
+                 * every other read of time(NULL) already does. */
+                inst->serverClockOffset = (LONG)tag->ti_Data;
+                used = 1;
+                break;
+
             case TTIMELINE_InvalidateImages:
                 /* No layout/height change -- just redraw the currently
                  * active tiles so they pick up whatever image just

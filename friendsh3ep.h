@@ -31,7 +31,7 @@
 #include "fs3esettings.h"
 #include "avatarimages.h"
 
-#define FRIENDSH3EP_VERSION "1.0"
+#define FRIENDSH3EP_VERSION "1.0.1"
 
 /* Login two-phase OAuth state machine */
 typedef enum {
@@ -247,6 +247,19 @@ struct App {
      * queued or in flight" in the broadest sense (timeline/login/post
      * requests included, not just downloads despite the button's name). */
     ULONG netRequestsPending;
+
+    /* time(NULL) + serverClockOffset approximates the Mastodon server's own
+     * clock -- some real Amigas have no battery-backed clock at all (or a
+     * wildly wrong one), so trusting the local RTC for anything
+     * time-sensitive is unsafe. Derived from FS3ENetMessage.fs3em_ServerEpoch
+     * (see its own doc comment in fs3enet.h) whenever a reply carries one;
+     * see FS3EApp_HandleNetReply. serverClockKnown is FALSE until the first
+     * one arrives -- callers must NOT trust serverClockOffset (still its
+     * zeroed default) until then. Pushed into TootTimeline via
+     * TTIMELINE_ServerClockOffset so ttl_format_poll_remaining can use it --
+     * see fs3etoottimeline_tiles.c. */
+    LONG serverClockOffset;
+    BOOL serverClockKnown;
 
     /* fs3ethumb ports: same shape as the fs3enet ports above, but talking
      * to the thumbnail process (see fs3ethumb.h) instead of the network

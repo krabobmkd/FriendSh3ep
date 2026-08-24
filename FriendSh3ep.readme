@@ -7,7 +7,7 @@ Architecture: m68k-amigaos >= 3.9
 Requires:     68030, AmigaOS 3.9 or 3.2, Internet stack,
               AmiSSL v5, EmojiGear v5.2
 
-------------------------- Version 1.0  22/08/2026
+------------------------- Version 1.0  24/08/2026
 
  FriendSh3ep, a Mastodon / Fediverse client for Amiga OS 3.2
  Finally also for OS3.9.

@@ -36,6 +36,15 @@ typedef struct FS3EHttpResponse
      * contract as Get/Post); callers check fhr_StatusCode themselves for
      * HTTP-semantic success. */
     ULONG fhr_StatusCode;
+    /* Server's own clock at response time, from the standard HTTP "Date:"
+     * response header (RFC 9110 section 6.6.1) as Unix epoch seconds -- 0
+     * if absent/unparseable. Only the raw-BIO paths populate this, same
+     * restriction as fhr_StatusCode above: OSSL_HTTP_transfer() (Get/Post)
+     * never exposes response headers at all. Lets a caller with no working
+     * RTC (some real Amigas have none, or a wildly wrong one) trust the
+     * server's time instead of time(NULL) for anything time-sensitive --
+     * see FS3EHttp_GetLastServerEpoch() below. */
+    LONG  fhr_ServerEpoch;
 } FS3EHttpResponse;
 
 /* Opens bsdsocket.library + amisslmaster.library and initializes AmiSSL.
@@ -130,6 +139,16 @@ BOOL FS3EHttp_GetRange(const char *url, const FS3EHttpHeader *extraHeaders,
 
 /* Frees a response filled in by FS3EHttp_Get()/FS3EHttp_Post(). */
 void FS3EHttp_FreeResponse(FS3EHttpResponse *out);
+
+/* Most recent fhr_ServerEpoch successfully parsed off ANY raw-BIO exchange
+ * (Put/Delete/Patch/PostRaw/GetRaw/GetRange) since FS3EHttp_Init(), or 0 if
+ * none has been seen yet. Deliberately not tied to one specific request --
+ * whichever raw-BIO call happened most recently, across every request type,
+ * is "the freshest trustworthy server time we've seen"; good enough to
+ * correct a wrong/missing local RTC (see FS3ENetMessage.fs3em_ServerEpoch
+ * in fs3enet.h, which piggybacks this onto every reply). Cheap: just
+ * returns a file-scope LONG, no I/O. */
+LONG FS3EHttp_GetLastServerEpoch(void);
 
 /* Dumps the current OpenSSL error queue to Output(), for diagnostics when
  * FS3EHttp_Get()/FS3EHttp_Post() return FALSE. */

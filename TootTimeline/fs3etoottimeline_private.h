@@ -788,6 +788,9 @@ typedef struct TTLData {
     /* ---- TTIMELINE_ActionOnDoubleClick (see fs3etoottimeline.h) ---- */
     BOOL   actionOnDoubleClick;
 
+    /* ---- TTIMELINE_ServerClockOffset (see fs3etoottimeline.h) ---- */
+    LONG   serverClockOffset;
+
     /* ---- Double-click gating for hot-spot activation (used only when
      * actionOnDoubleClick is TRUE, see TTL_OnHandleInput in
      * fs3etoottimeline_input.c) ---- Tracks the most recent qualifying

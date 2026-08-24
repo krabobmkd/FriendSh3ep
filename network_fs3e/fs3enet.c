@@ -1136,7 +1136,15 @@ static void FS3ENet_ProcEntry(void)
             }
 
             if (!deferred)
+            {
+                /* Piggyback whatever server time we most recently observed
+                 * (possibly from a wholly unrelated raw-BIO exchange, or
+                 * none at all -- see fs3em_ServerEpoch's own doc comment)
+                 * onto every reply, not just the request types that happen
+                 * to have made one themselves. */
+                fs3em->fs3em_ServerEpoch = FS3EHttp_GetLastServerEpoch();
                 ReplyMsg((struct Message *)fs3em);
+            }
         }
 
         /* Advance exactly one chunk of the next active download (round
@@ -1791,6 +1799,7 @@ static void FS3ENet_FinishDownload(FS3ENetActiveDownload *dl, ULONG result)
                 dupMsg->fs3em_Result = result;
             }
 
+            dupMsg->fs3em_ServerEpoch = FS3EHttp_GetLastServerEpoch();
             ReplyMsg((struct Message *)dupMsg);
             FreeVec(dup);
             dup = next;
@@ -1799,6 +1808,7 @@ static void FS3ENet_FinishDownload(FS3ENetActiveDownload *dl, ULONG result)
     }
 
     FS3ENet_UnlinkActiveDownload(dl);
+    fs3em->fs3em_ServerEpoch = FS3EHttp_GetLastServerEpoch();
     ReplyMsg((struct Message *)fs3em);
     FS3ENet_FreeActiveDownload(dl);
 }

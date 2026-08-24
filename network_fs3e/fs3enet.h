@@ -128,6 +128,19 @@ typedef struct FS3ENetMessage
     ULONG           fs3em_Result;  /* enum FS3ENetResult, set on reply */
     APTR            fs3em_Data;
     ULONG           fs3em_DataLen;
+    /* Server's own clock (Unix epoch seconds) as of the most recent
+     * raw-BIO HTTP exchange (see FS3EHttp_GetLastServerEpoch() in
+     * fs3enet_http.h) at the moment this reply was sent -- 0 if none has
+     * been observed yet this session. NOT necessarily from the HTTP
+     * exchange THIS reply's own request made (FS3EHttp_Get/Post's
+     * OSSL_HTTP_transfer() path never exposes it at all, and chunked
+     * FETCH_IMAGE downloads interleave with other requests) -- just "the
+     * freshest server time seen recently," which is all a caller correcting
+     * a wrong/missing local RTC needs. See TootTimeline's
+     * TTIMELINE_ServerClockOffset and ttl_format_poll_remaining's use of
+     * it. Left 0 (MEMF_CLEAR'd) on every request; only ever set by the
+     * network process on reply. */
+    LONG            fs3em_ServerEpoch;
 } FS3ENetMessage;
 
 /*

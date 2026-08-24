@@ -953,7 +953,8 @@ void FS3ETootView_Open(FS3ETootView *tv)
     if (tv->window) {
         WindowToFront(tv->window);
         ActivateWindow(tv->window);
-  //no need    DoMethod(tv->windowObj, WM_RETHINK, NULL);
+        /* needed because window can mutate/replace sub-layouts*/
+        DoMethod(tv->windowObj, WM_RETHINK, NULL);
         return; /* already open */
     }
 
@@ -1122,6 +1123,8 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                  * fs3eloginview.c's urlInstructLabel, same reasoning). */
                 if (tv->bodyEditor)
                     RefreshGList((struct Gadget *)tv->bodyEditor, tv->window, NULL, 1);
+
+                if( tv->currentExtras == tv->pollExtrasLayout )
                 {
                     int i;
                     for( i=0 ; i<FS3ETOOT_NUM_POLL_OPTIONS ;i++)

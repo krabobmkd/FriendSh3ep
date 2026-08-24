@@ -7,6 +7,7 @@
 #include <stdio.h>
 #include <stdarg.h>
 #include <string.h>
+#include <time.h>
 
 #include <exec/types.h>
 #include <exec/memory.h>
@@ -1727,6 +1728,22 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
     if (msg->fs3em_Type != FS3ENETQ_FETCH_PROGRESS) {
         if (app->netRequestsPending > 0) app->netRequestsPending--;
         FS3EApp_UpdateNetworkLed();
+    }
+
+    /* Opportunistic clock sync -- see fs3em_ServerEpoch's doc comment in
+     * fs3enet.h and serverClockOffset's in friendsh3ep.h. Any reply can
+     * carry one, not just timeline/poll-related ones, so this is checked
+     * unconditionally rather than inside the switch below. Pushed to
+     * TootTimeline right away (cheap: one instance field, no forced
+     * redraw) so a poll already on screen picks up a just-corrected clock
+     * the next time it naturally redraws. */
+    if (msg->fs3em_ServerEpoch != 0) {
+        app->serverClockOffset = msg->fs3em_ServerEpoch - (LONG)time(NULL);
+        app->serverClockKnown  = TRUE;
+        if (app->tootTimeline)
+            SetAttrs(app->tootTimeline,
+                     TTIMELINE_ServerClockOffset, (ULONG)app->serverClockOffset,
+                     TAG_DONE);
     }
 
     switch (msg->fs3em_Type)
