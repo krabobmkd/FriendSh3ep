@@ -263,7 +263,7 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/listbrowser.gadget",  40, &ListBrowserBase},
     {"gadgets/tapedeck.gadget",     39, &TapeDeckBase},
     {"gadgets/slider.gadget",       40, &SliderBase},
-    {"requester.class",             47, &RequesterBase},
+    {"requester.class",             42, &RequesterBase},
     {"utf8rastport.library",         5, &URPBase},
     {"datatypes.library",           44, &DataTypesBase},
 
@@ -1006,6 +1006,7 @@ void fs3e_setViewMode(ULONG viewMode)
     }
     if(viewMode >=VIEWMODE_NumberOf) return;
     /* synchronize buttons states with no drama */
+
     for(i=0;i<8;i++)
     {
         int btstate=0;

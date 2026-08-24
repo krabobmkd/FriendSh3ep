@@ -1,18 +1,20 @@
-Short:        Mastodon Fediverse client for AmigaOS
+Short:        Mastodon client for AmigaOS
 Author:       krabobmkd
 Uploader:     victorien.ferry@free.fr
 Type:         comm/net
 Version:      1.0
-Architecture: m68k-amigaos >= 3.2
-Requires:     68030, AmigaOS 3.2.x, Internet stack (Miami/AmiTCP/RoadShow),
-              AmiSSL v5 (get it on Aminet), EmojiGear v5.2
+Architecture: m68k-amigaos >= 3.9
+Requires:     68030, AmigaOS 3.9 or 3.2, Internet stack,
+              AmiSSL v5, EmojiGear v5.2
 
 ------------------------- Version 1.0  22/08/2026
 
  FriendSh3ep, a Mastodon / Fediverse client for Amiga OS 3.2
+ Finally also for OS3.9.
 
- Mastodon is a free, open, decentralised alternative to the usual walled-garden
- social networks: no ads, no biased algorithm, no single company owning your
+ Mastodon is a free, open, decentralised alternative to the 
+ usual walled-garden social networks: 
+ no ads, no biased algorithm, no single company owning your
  data, moderation decided per server. 
  
  FriendSh3ep is a native Amiga client for it, 
@@ -20,11 +22,13 @@ Requires:     68030, AmigaOS 3.2.x, Internet stack (Miami/AmiTCP/RoadShow),
 
  Needed to work:
 
-  - AmigaOS 3.2, a 68030 50Mhz should be OK, a 68060 or better is, well, better.
-    (OS3.9/Coffin/AmiKit users: just upgrade to OS3.2.)
+  - AmigaOS 3.9 or 3.2, a 68030 50Mhz should be OK, 
+    a 68060 or better is, well, better.
+    Relies on picture.datatype a lot. 
   - A fast Internet stack (Miami, AmiTCP, RoadShow...).
-  - AmiSSL v5 (the more recent, the better) -- it's on Aminet.
-  - EmojiGear v5.2, for modern fonts, emoji rendering and text editor.
+  - AmiSSL v5 (the more recent, the better) it's on Aminet.
+  - EmojiGear v5.2, for modern fonts, emoji rendering 
+    and text editor.
 
  Optional but used if present:
 

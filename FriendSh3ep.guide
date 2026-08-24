@@ -37,7 +37,7 @@ Bug reports, feature requests, and love letters:
 
 @{b}Minimum system@{ub}
 
-FriendSh3ep runs on @{b}AmigaOS 3.2.x@{ub} or compatible, on a @{b}68030
+FriendSh3ep runs on @{b}AmigaOS 3.9 or 3.2.x@{ub} or compatible, on a @{b}68030
 50MHz@{ub} or better. A @{b}68060@{ub} (or a fast 68040) is recommended for
 a noticeably smoother experience -- fonts, emoji and images are all
 decoded live.

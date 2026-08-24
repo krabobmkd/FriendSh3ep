@@ -574,6 +574,14 @@ ULONG UniButtonBGBM_OnSet(Class *cl, Object *o, struct opSet *msg)
 
         case GA_Selected:
             justBlit = TRUE;
+            if(tag->ti_Data)
+            {
+                G(o)->Flags |= GFLG_SELECTED;
+            }
+            else
+            {
+                G(o)->Flags &= (~GFLG_SELECTED);
+            }
             result = 1;
             break;
 
@@ -701,7 +709,11 @@ ULONG UniButtonBGBM_OnGet(Class *cl, Object *o, struct opGet *msg)
     case GA_Left:
         *msg->opg_Storage = (ULONG)(LONG)G(o)->LeftEdge;
         return TRUE;
+    case GA_Selected:
+        *msg->opg_Storage = (ULONG)((G(o)->Flags & GFLG_SELECTED)!=0);
+        return TRUE;
     default:
+        /* note OS3.9 doesnt do it like it should !!! */
         return DoSuperMethodA(cl, o, (APTR)msg);
     }
 }

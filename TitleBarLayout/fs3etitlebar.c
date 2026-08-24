@@ -154,6 +154,11 @@ typedef struct {
     WORD                  avatarX, avatarY, avatarSize;
 
     struct Task *allowedTask;
+
+
+    /*OS3.9 wouldnt super manage */
+    void    *backfillHook;
+
 } TitleBarLayoutData;
 
 /* AllocVec'd copy of s, or NULL for NULL/"" (matches dup_str() elsewhere
@@ -251,10 +256,14 @@ static ULONG TitleBarLayout_OnSet(Class *cl, Object *o, struct opSet *msg)
                 if (inst->accountAcct) { FreeVec(inst->accountAcct); inst->accountAcct = NULL; }
                 inst->accountAcct = tbl_dup_str((const char *)tag->ti_Data);
                 break;
+            case GA_BackFill:
+                /* should  be managed by supercall, OS3.9 troubles */
+                inst->backfillHook = (void*)tag->ti_Data;
             default:
                 break;
         }
     }
+    /* note OS3.9 is bad at that: */
     return DoSuperMethodA(cl, o, (APTR)msg);
 }
 
@@ -518,14 +527,19 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
          * titlebar.bg -- FS3EStyle_TitleBarBackFillFunc draws the border
          * images too now (see its own comment), so it must run even when
          * there's no tiled background to trigger it otherwise. */
+        /* ok OS3.2
         struct Hook *backFill = NULL;
         GetAttr(GA_BackFill, o, (ULONG *)&backFill);
+        */
+        struct Hook *backFill = (struct Hook *)&app->style.tbBgHook; // inst->backfillHook;
         if (backFill)
             InstallLayerHook(rp->Layer, backFill);
     }
 
     if (rp && w > 0 && h > 0)
+    {
         EraseRect(rp, left, top, left + w - 1, top + h - 1);
+    }
 
 
 

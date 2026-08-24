@@ -507,6 +507,9 @@ ULONG UniButtonP9_OnGet(Class *cl, Object *o, struct opGet *msg)
     case GA_Left:
         *msg->opg_Storage = (ULONG)(LONG)G(o)->LeftEdge;
         return TRUE;
+    case GA_Selected:
+        *msg->opg_Storage = (ULONG)((G(o)->Flags & GFLG_SELECTED)!=0);
+        return TRUE;
     default:
         return DoSuperMethodA(cl, o, (APTR)msg);
     }
