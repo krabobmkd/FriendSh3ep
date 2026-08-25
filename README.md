@@ -5,27 +5,28 @@
 
 Amiga OS3 Mastodon Client
 
-------------------------- Version 0.8
+------------------------- Version 1.0  24/08/2026
 
- First public beta of FriendSh3ep, a Mastodon/Fediverse client for AmigaOS3.
+ FriendSh3ep, a Mastodon / Fediverse client for Amiga OS 3.2
+ Finally also for OS3.9.
 
- Mastodon is a free, open, decentralised alternative to the usual walled-garden
- social networks: no ads, no biased algorithm, no single company owning your
- data, moderation decided per server. FriendSh3ep is a native Amiga client for
- it, with full Unicode/emoji rendering and real image/audio previews.
+ Mastodon is a free, open, decentralised alternative to the  usual walled-garden social networks: 
+ no ads, no biased algorithm, no single company owning your data, moderation decided per server. 
+ 
+ FriendSh3ep is a native Amiga client for it,  with full Unicode/emoji rendering and real image/audio previews.
 
  Needed to work:
 
-  - AmigaOS 3.2, a 68030 should be OK, a 68060 or better is, well, better.
-    (OS3.9/Coffin/AmiKit users: just upgrade to OS3.2.)
-  - An Internet stack (Miami, AmiTCP, RoadShow...).
-  - AmiSSL v5 (the more recent, the better) -- it's on Aminet.
-  - EmojiGear v5.1, for modern font and emoji rendering.
+  - AmigaOS 3.9 or 3.2, a 68030 50Mhz should be OK, a 68060 or better is, well, better.
+  - Relies on picture.datatype a lot. Webp images are not displayed because no dt exists yet.
+  - A fast Internet stack (Miami, AmiTCP, RoadShow...).
+  - AmiSSL v5 (the more recent, the better) it's on Aminet.
+  - EmojiGear v5.2, for modern fonts, emoji rendering and text editor. https://github.com/krabobmkd/EmojiGear
 
- Optional:
+ Optional but used if present:
 
-  - AHI + mpega.library, for mp3 audio playback (yes, you can share mp3s
-    on Mastodon).
+  - AHI + mpega.library, for mp3 audio playback (yes, you can share mp3s on Mastodon).
+  - OpenURL and some browser , to open urls from links.
 
  As with any third-party Mastodon client, you create your account on your
  server's own web site; FriendSh3ep only ever gets a revocable token to it,
@@ -33,47 +34,59 @@ Amiga OS3 Mastodon Client
  on several servers, and switch between them with one click -- or just
  browse anonymously without any account at all.
 
- What this beta can do:
-
-  - Connect multiple accounts, or browse anonymously.
+ And now for the glorious list of features FriendSh3ep brings:
+ 
+  - a list of mastodon servers allowing anonymous connection is preconfigured:
+    So you can watch Local/Deferated timeline out of the box with no account 
+    after installation. 
+  - Connect multiple accounts, and switch account and servers with one click.
   - Home, Local, Federated, User, Search and Notifications timelines.
-  - Full toot rendering with attached images, audio and emoji.
+
+  - Full modern toot rendering with attached images, audio and emoji.
   - Click hashtags, links and mentions -- actually click anything.
-  - Favourite/unfavourite, reply, modify and delete your own toots.
-  - Attach an image or audio/video file to a toot (gif/jpg/png, mp3/ogg/mp4).
+  - Favourite/unfavourite, reply, bookmark, modify and delete your own toots.
+  - Attach images or audio/video file to a toot (gif/jpg/png, mp3/ogg/mp4).
   - Word and hashtag search; search, follow and unfollow accounts.
   - "Autoscroll Play" mode: sit back and let the timeline scroll itself.
-  - Switchable UI themes (fonts, colours, button skins).
 
- Not yet there, but coming:
+  - Switchable UI themes (fonts, colours, button skins):
+    themes stands in the /themes directory and you can create one yourself !
+    watch HowToCreateATheme.gif and "style.txt" file in themes.
 
-  - Block/unblock accounts and whole servers.
-  - Bookmarks and a "News" (most-shared) timeline.
-  - Attaching more than one file per toot.
-  - Polls.
+  (since 1.0:)
+ - Polls: You can create polls with a special window, and vote for them,
+   see the result.  
+  - BookMarks: you can now set and unset bookmarks on toots,
+   and view them in the new Bookmark page. Note If that page is viewed,
+   its fill a special cache under user dir, and
+   then you will be able to watch your bookmarked toots offline.
+ - News page ! The list of "Most shared news from news website, on the
+   last day, on the visible federation." Which is the best rational way
+   to hierarchise information I have ever seen. 
+ - Translation engine: if a toot is written in another language than your 
+  locale settings, and your server allow translation, you'll have a button 
+  to translate it to your own language on the fly.
+  This is amazing and works even with japanese messages. 
+ - When writting a toot, you can specify the language in which you write,
+   it will allow translation for other users.
+ - You can block/ Unblock users and servers, and see the list of blocked ones.
+ - You can see the list of who faved or boosted your toot.
+ - Search page allow to get informations about a given mastodon server,
+   their limits, their rules, and if they allow translation.
 
- Not planned at all (but who knows):
-
-  - Playing attached videos in place (you get a thumbnail for them).
-  - WebP images, until a webp picture.datatype shows up somewhere.
-
---------------------------
-
-FriendSh3ep is a Mastodon/Fediverse client for AmigaOS 3.2.x (68k), built on
-the same UTF-8/emoji rendering stack as EmojiGear (utf8rastport.library,
-unitexteditor.gadget, unibutton.gadget).
-
-License is GPL.
-
----------------------------------------------------------------------------
+ About corrections:
+ 
+  - If you have EmojiGear5.1 you should upgrade to 5.3 or you will have
+   glitches in the poll window setup.
+  - for those who tested the 0.8 versions from github, many corrections 
+    has been done for this releases.
 
 
-SOURCE CODE AND BUG REPORTS
-
-Source code:
-  https://github.com/krabobmkd/FriendSh3ep
-
-Bug reports and feature requests:
-  https://github.com/krabobmkd/FriendSh3ep/issues
-
----------------------------------------------------------------------------
+ License is LGPLv2, sources and project page:
+ https://github.com/krabobmkd/FriendSh3ep 
+ 
+ Releases pages:
+ https://github.com/krabobmkd/FriendSh3ep/releases
+ 
+ Bug reports and features requests:
+ https://github.com/krabobmkd/FriendSh3ep/issues
