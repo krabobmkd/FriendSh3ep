@@ -90,3 +90,61 @@ Amiga OS3 Mastodon Client
  
  Bug reports and features requests:
  https://github.com/krabobmkd/FriendSh3ep/issues
+
+
+
+
+## Build Instruction for Amiga OS3
+ 
+ This is to be cross-compiled with cmake and "Amiga bebbo gcc 6.5"
+ which is at:
+ https://github.com/AmigaPorts/m68k-amigaos-gcc
+
+This compiler works well with C11. other gcc versions (actually developped)
+and other C runtime versions doesnt provide a working C/C++ runtime, as far as tested today.
+ ... follow instructions at this place to install the cross compiler on your linux/macos/windows.
+
+ Then you need 3 repositories: 
+  
+ in a fresh dir:
+ 
+ 
+ git clone https://github.com/krabobmkd/amigacommonlibs
+ 
+ 
+ git clone https://github.com/krabobmkd/EmojiGear
+ 
+ 
+ git clone https://github.com/krabobmkd/FriendSh3ep
+ 
+ 
+ 
+ amigacommonlibs contains extra amiga SDK for libs that may have not been installed by m68k-amigaos-gcc,
+ and a "cmake" platform. Previously the default install path for m68k-amigaos-gcc was /opt/amiga on linux and macos, and may have been "C:/c cygwin64/opt/amiga" on windows. Now because of evolutions on AmigaPorts/m68k-amigaos-gcc, it may be ~/amiga-gccxxx , you'll have to edit
+ amigacommonlibs/cmake/Modules/Platform/m68k-amigaos.cmake and change variable M68KAMIGA_ROOT_PATH to this. (I had a code to do that automatically if compiler was in path, but it didn't work much)
+
+ EmojiGear contains the SDK for the unicode text shared binaries and gadgets classes.
+
+ 
+ to configure a build, and then compile:
+ 
+ 
+ cd FriendSh3ep
+ 
+ 
+ mkdir buildAmiga
+ 
+ 
+ cd buildAmiga
+ 
+ 
+cmake ..  -DCMAKE_TOOLCHAIN_FILE=../../amigacommonlibs/cmake/Modules/Platform/m68k-amigaos.cmake -DCMAKE_BUILD_TYPE=Release
+ 
+cmake --build .
+ 
+ 
+  AmigaPorts m68k-amigaos-gcc version 6.5 used to install gracefully some extra SDK, but this is more and more optional. so you may have to add include path to ../../amigacommonlibs/extrasdk/SOMELIB/include . note amiga shared libs most of the times doesnt need a "link library", includes are enough to open the libs and call functions.
+  
+ 
+ 
+ 
