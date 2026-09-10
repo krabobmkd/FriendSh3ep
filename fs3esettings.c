@@ -24,6 +24,7 @@
 #define TT_PRIMARYFONT    "PRIMARYFONT"    /* path to primary .ttf/.otf          */
 #define TT_FALLBACK1FONT  "FALLBACK1FONT"  /* path to fallback font 1            */
 #define TT_FALLBACK2FONT  "FALLBACK2FONT"  /* path to fallback font 2            */
+#define TT_FALLBACK3FONT  "FALLBACK3FONT"  /* path to fallback font 3            */
 #define TT_EMOJIFONT      "EMOJIFONT"      /* path to UI emoji font (2-color glyph, navbar/buttons) */
 #define TT_COLOREMOJIFONT "COLOREMOJIFONT" /* path to color emoji font (timeline post rendering)    */
 #define TT_FONTSIZE       "FONTSIZE"       /* point size as decimal, e.g. "12"   */
@@ -93,6 +94,11 @@ void FS3ESettings_Load(FS3ESettings *s)
     val = ToolTypePrefs_Get(TT_FALLBACK2FONT);
     if (val && val[0] != '\0')
         s->fallback2FontPath = StrDup(val);
+
+    s->fallback3FontPath = NULL;
+    val = ToolTypePrefs_Get(TT_FALLBACK3FONT);
+    if (val && val[0] != '\0')
+        s->fallback3FontPath = StrDup(val);
 
     s->emojiFontPath = NULL;
     val = ToolTypePrefs_Get(TT_EMOJIFONT);
@@ -326,6 +332,11 @@ void FS3ESettings_Save(FS3ESettings *s)
     else
         ToolTypePrefs_Remove(TT_FALLBACK2FONT);
 
+    if (s->fallback3FontPath && s->fallback3FontPath[0] != '\0')
+        ToolTypePrefs_Set(TT_FALLBACK3FONT, s->fallback3FontPath);
+    else
+        ToolTypePrefs_Remove(TT_FALLBACK3FONT);
+
     if (s->emojiFontPath && s->emojiFontPath[0] != '\0')
         ToolTypePrefs_Set(TT_EMOJIFONT, s->emojiFontPath);
     else
@@ -458,6 +469,7 @@ void FS3ESettings_Close(FS3ESettings *s)
     FreeVec(s->primaryFontPath);   s->primaryFontPath   = NULL;
     FreeVec(s->fallback1FontPath); s->fallback1FontPath = NULL;
     FreeVec(s->fallback2FontPath); s->fallback2FontPath = NULL;
+    FreeVec(s->fallback3FontPath); s->fallback3FontPath = NULL;
     FreeVec(s->emojiFontPath);      s->emojiFontPath      = NULL;
     FreeVec(s->colorEmojiFontPath); s->colorEmojiFontPath = NULL;
     FreeVec(s->themeName);          s->themeName          = NULL;

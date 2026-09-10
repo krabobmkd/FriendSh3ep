@@ -11,6 +11,7 @@
  *     Primary font:    [path display........] [X]
  *     Fallback font 1: [path display........] [X]
  *     Fallback font 2: [path display........] [X]
+ *     Fallback font 3: [path display........] [X]
  *     Emoji font:      [path display........] [X]
  *   Presets group (horizontal):
  *     [Low quality]  [High quality]  [Monospace]
@@ -46,6 +47,7 @@ typedef struct FS3EThemeView {
     Object *primaryFontGF;
     Object *fallback1FontGF;
     Object *fallback2FontGF;
+    Object *fallback3FontGF;
     Object *emojiFontGF;       /* UI emoji font (buttons/navbar) */
     Object *colorEmojiFontGF;  /* color emoji font (timeline)    */
 

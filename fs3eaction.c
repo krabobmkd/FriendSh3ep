@@ -15,11 +15,13 @@
 #include <proto/intuition.h>
 #include <intuition/intuition.h>
 #include <gadgets/button.h>
+#include <gadgets/unitexteditor.h>
 #include "fs3eaction.h"
 #include "fs3elocale.h"
 #include "friendsh3ep.h"
 #include "fs3eloginview.h"
 #include "fs3etootview.h"
+#include "fs3eunicodetricks.h"
 #include "fs3ethemeview.h"
 #include "fs3esettingsview.h"
 #include "fs3esettings.h"
@@ -85,6 +87,11 @@ static FS3EAction s_actions[FS3EACTION_COUNT] = {
     /* FS3EACTION_NETWORK_VIEW     */ { Action_NetworkView,    MSG_NETWORKV_TITLE,        NULL },
     /* FS3EACTION_SETTINGS_FONTSIZEM*/{ Action_FontSizeMinus,  MSG_SETTINGS_FONTSIZEM,    NULL },
     /* FS3EACTION_SETTINGS_FONTSIZEP*/{ Action_FontSizePlus,   MSG_SETTINGS_FONTSIZEP,    NULL },
+
+    /* FS3EACTION_TOOT_UNICODE_BOLD      */ { Action_TootUnicodeBold,          MSG_TOOTMENU_UNICODE_BOLD,     NULL },
+    /* FS3EACTION_TOOT_UNICODE_BOLD_SANS */ { Action_TootUnicodeBoldSansSerif, MSG_TOOTMENU_UNICODE_BOLD2,    NULL },
+    /* FS3EACTION_TOOT_UNICODE_COURRIER  */ { Action_TootUnicodeCourrier,      MSG_TOOTMENU_UNICODE_COURRIER, NULL },
+    /* FS3EACTION_TOOT_UNICODE_REVERSE   */ { Action_TootUnicodeReverse,       MSG_TOOTMENU_UNICODE_REVERSE,  NULL },
 };
 
 /* Defined further down, next to s_easeTable/FS3ENextTootAnim_Hook --
@@ -866,6 +873,77 @@ BOOL Action_ToggleFollow(struct App *ctx, const char *accountId, BOOL currentlyF
         return FALSE;
     }
     return TRUE;
+}
+
+/* -------------------------------------------------------------------------
+ * "Unicode Tricks" menu actions (fs3etootview.c) -- transform
+ * app->tootView.bodyEditor's current selection in place. Shared worker:
+ * read the selection (UTED_GetSelectedText), run it through one of
+ * fs3eunicodetricks.h's transforms, then UTED_InsertText the result back.
+ * UTED_InsertText deletes any active selection before inserting (see
+ * unitexteditor.h), so this both replaces the old text and leaves the
+ * cursor right after the transformed copy -- the same place it would land
+ * after typing over a selection normally.
+ * -------------------------------------------------------------------------*/
+
+typedef char *(*FS3EUnicodeTrickFunc)(const char *utf8In);
+
+static BOOL FS3ETootUnicodeTrick_Apply(struct App *ctx, FS3EUnicodeTrickFunc trick)
+{
+    FS3ETootView *tv;
+    const char *selected = NULL;
+    char *transformed;
+
+    if (!ctx) return FALSE;
+    tv = &ctx->tootView;
+    if (!tv->bodyEditor) return FALSE;
+
+    GetAttr(UTED_GetSelectedText, tv->bodyEditor, (ULONG *)&selected);
+    if (!selected || !selected[0]) {
+        if (selected) FreeVec((APTR)selected);
+        return FALSE; /* nothing selected -- no-op */
+    }
+
+    transformed = trick(selected);
+    FreeVec((APTR)selected);
+    if (!transformed) return FALSE;
+
+    if (tv->window)
+        SetGadgetAttrs((struct Gadget *)tv->bodyEditor, tv->window, NULL,
+                       UTED_InsertText, (ULONG)transformed, TAG_DONE);
+    else
+        SetAttrs(tv->bodyEditor, UTED_InsertText, (ULONG)transformed, TAG_DONE);
+
+    FreeVec(transformed);
+
+    FS3ETootView_UpdateCharCount(tv);
+    /* tv->reactivateEditor itself is set by the FS3ETMENU_UNICODE_* case in
+     * FS3ETootView_HandleInput right after this call returns, same
+     * "reactvalue" debounce its Undo/Redo/Cut/Copy/Paste cases already use
+     * -- a menu pick steals BOOPSI activation from bodyEditor, so it needs
+     * a couple of WM_HANDLEINPUT rounds re-activated before it reliably
+     * takes keyboard input again. */
+    return TRUE;
+}
+
+BOOL Action_TootUnicodeBold(struct App *ctx)
+{
+    return FS3ETootUnicodeTrick_Apply(ctx, FS3EUnicodeTricks_Bold);
+}
+
+BOOL Action_TootUnicodeBoldSansSerif(struct App *ctx)
+{
+    return FS3ETootUnicodeTrick_Apply(ctx, FS3EUnicodeTricks_BoldSansSerif);
+}
+
+BOOL Action_TootUnicodeCourrier(struct App *ctx)
+{
+    return FS3ETootUnicodeTrick_Apply(ctx, FS3EUnicodeTricks_Monospace);
+}
+
+BOOL Action_TootUnicodeReverse(struct App *ctx)
+{
+    return FS3ETootUnicodeTrick_Apply(ctx, FS3EUnicodeTricks_UpsideDown);
 }
 
 BOOL Action_ToggleBlock(struct App *ctx, const char *accountId, BOOL currentlyBlocked)

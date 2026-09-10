@@ -720,6 +720,8 @@ static void FS3EApp_SetButtonFontSize(ULONG pointSize)
         URPDC_AddFont(app->buttonDC, app->settings.fallback1FontPath, (int)pointSize, 0);
     if (app->settings.fallback2FontPath)
         URPDC_AddFont(app->buttonDC, app->settings.fallback2FontPath, (int)pointSize, 0);
+    if (app->settings.fallback3FontPath)
+        URPDC_AddFont(app->buttonDC, app->settings.fallback3FontPath, (int)pointSize, 0);
     URPDC_AddFont(app->buttonDC,
         app->settings.emojiFontPath ? app->settings.emojiFontPath
                                     : "OpenMoji-black-glyf.ttf",
@@ -2630,6 +2632,10 @@ int main(int argc, char **argv)
                             UWORD key = (UWORD)(0x007f & qulkey);
                             UWORD qualifiers = (UWORD)(qulkey>>16);
 
+
+                            app->tootView.lastEditorActivated =
+                                app->tootView.bodyEditor;
+
                             if(!isUp && key>=0x50 && key<=0x59 && app->tootView.window)
                             {
                                 FS3EEmojiBox_HandleFKey(&app->emojiBoxWindow,
@@ -2652,7 +2658,7 @@ int main(int argc, char **argv)
                         case GID_TOOT_POLL_OPTION3:
                         case GID_TOOT_POLL_OPTION4:
                         {
-                            int ipoll = sender_ID - GID_TOOT_POLL_OPTION1;
+                            int ipoll = sender_ID - GID_TOOT_POLL_OPTION1;                          
                         /* we asked unitexteditor, in UKM_Internal mode,
                          * to notify us back rawkey codes and qualifiers */
                          if((ptag = FindTagItem(UTED_InternalRawKey_Code, msg))!=NULL)
@@ -2661,6 +2667,9 @@ int main(int argc, char **argv)
                             int isUp = 0x0080 & qulkey;
                             UWORD key = (UWORD)(0x007f & qulkey);
                             UWORD qualifiers = (UWORD)(qulkey>>16);
+
+                            app->tootView.lastEditorActivated =
+                                app->tootView.pollOptionEditor[ipoll];
 
                             if(!isUp && key>=0x50 && key<=0x59 && app->tootView.window)
                             {
@@ -2678,7 +2687,15 @@ int main(int argc, char **argv)
                                 FS3ETootView_Close(&app->tootView);
                             }
                          }
-                         if((ptag = FindTagItem(UTEDN_CursorMoved, msg))!=NULL && app->tootView.window
+                        /* All UniTextEditor must be refreshed on main process from signals.
+                         * because it tries to refresh from input device process
+                         * (or other restricted process) and can't.
+                         * note since unitexeditor.gadget 5.4, testing UTEDN_CursorMoved
+                        to know of refresh should be enough in all cases */
+                         if((FindTagItem(UTEDN_CursorMoved, msg) ||
+                             FindTagItem(UTEDN_ScrollChanged, msg)
+                            )  && app->tootView.window /* and if toot window opened*/
+                            /* and if current toot window mode is poll (so gadget bvisible) */
                          && ( app->tootView.currentExtras == app->tootView.pollExtrasLayout ))
                          {
                             RefreshGList(app->tootView.pollOptionEditor[ipoll],app->tootView.window,NULL,1);
@@ -2702,17 +2719,20 @@ int main(int argc, char **argv)
                          * offers this from; see fs3eemojibox.h). ---- */
                         case GID_EMOJIBOX_GRID:
                         {
+                            Object *currentEditor =
+                            FS3ETootView_GetLastActivatedUTEditor(&app->tootView);
                             const char *emoji =
                                 FS3EEmojiBoxWindow_GetClickedUTF8(&app->emojiBoxWindow);
-                            if (emoji && app->tootView.bodyEditor) {
+
+                            if (emoji && currentEditor) {
                                 if (app->tootView.window)
                                     SetGadgetAttrs(
-                                        (struct Gadget *)app->tootView.bodyEditor,
+                                        (struct Gadget *)currentEditor,
                                         app->tootView.window, NULL,
                                         UTED_InsertText, (ULONG)emoji,
                                         TAG_DONE);
                                 else
-                                    SetAttrs(app->tootView.bodyEditor,
+                                    SetAttrs(currentEditor,
                                         UTED_InsertText, (ULONG)emoji,
                                         TAG_END);
                                 FS3ETootView_UpdateCharCount(&app->tootView);

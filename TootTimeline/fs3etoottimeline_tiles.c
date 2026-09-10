@@ -916,9 +916,24 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
 
                         /* Decode failed and the source sniffed as WebP
                          * (see BmImage_SniffFormat) -- say so instead of
-                         * leaving a bare box with no explanation. */
-                        if (failed && fmt == BMFMT_WEBP) {
-                            const char *label = "webp";
+                         * leaving a bare box with no explanation. Same
+                         * treatment for BMFMT_UNKNOWN: the download
+                         * succeeded but the bytes match no known image
+                         * signature at all -- diagnosed as a stale proxy
+                         * URL baked into an old bookmark's cached status
+                         * JSON (the server only proxies/caches a remote
+                         * post's media for a limited time; a live/Search
+                         * fetch always gets a fresh URL, a bookmark's raw
+                         * JSON can outlive it). Plain hardcoded text, not
+                         * run through fs3elocale.c, matching "webp" right
+                         * above -- TootTimeline is a standalone gadget
+                         * class with no dependency on the app's locale
+                         * system; keep this in sync by hand with
+                         * MSG_MEDIA_CACHE_EXPIRED's English string in
+                         * fs3elocale.c if either ever changes. */
+                        if (failed && (fmt == BMFMT_WEBP || fmt == BMFMT_UNKNOWN)) {
+                            const char *label = (fmt == BMFMT_WEBP)
+                                              ? "webp" : "Image cache has expired.";
                             struct URPTextMetric m;
                             struct URPTextPos    pos;
                             LONG nc = utf8_codepoints_range(label, label + strlen(label));

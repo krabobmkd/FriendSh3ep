@@ -95,6 +95,17 @@ enum {
     MSG_TOOTMENU_PASTE,
     MSG_TOOTMENU_EMOJIBOX,
 
+    /* "Unicode Tricks" menu (fs3etootview.c), sibling of the "Toot" menu
+     * above -- fake bold/monospace/upside-down look-alikes applied to
+     * bodyEditor's current selection, see fs3eunicodetricks.h and
+     * FS3EACTION_TOOT_UNICODE_* in fs3eaction.h. */
+    MSG_TOOTMENU_UNICODE,         /* title */
+    MSG_TOOTMENU_UNICODE_BOLD,
+    MSG_TOOTMENU_UNICODE_BOLD2,   /* Mathematical Sans-Serif Bold variant, see
+                                    * FS3EUnicodeTricks_BoldSansSerif */
+    MSG_TOOTMENU_UNICODE_COURRIER,
+    MSG_TOOTMENU_UNICODE_REVERSE,
+
     /* Menu: FriendSh3ep */
     MSG_MENU_FRIENDSH3EP,
     MSG_MENU_ACCOUNTS,
@@ -180,6 +191,7 @@ enum {
     MSG_THEMEV_PRIMARY,
     MSG_THEMEV_FALLBACK1,
     MSG_THEMEV_FALLBACK2,
+    MSG_THEMEV_FALLBACK3,
     MSG_THEMEV_EMOJIFONT,       /* UI emoji font label (buttons/navbar) */
     MSG_THEMEV_COLOREMOJIFONT,  /* color emoji font label (timeline)    */
     MSG_THEMEV_PRESETS_GROUP,
@@ -280,6 +292,18 @@ enum {
     MSG_FIRSTUSE_GADGETS,        /* es_GadgetFormat: "PROGDIR:.cache|Ram:T/FriendSh3ep|Quit" --
                                    * left-to-right numbering is 1,...,N-1,0: PROGDIR:.cache=1,
                                    * Ram:T/FriendSh3ep=2, Quit(rightmost)=0 */
+
+    /* Shown instead of a bare placeholder when a media attachment's
+     * download succeeds but the bytes decode to nothing recognizable
+     * (BmImage_SniffFormat returns BMFMT_UNKNOWN after a decode failure) --
+     * the diagnosed cause is a stale proxy URL baked into an old bookmark's
+     * cached status JSON: the server (piaille.fr and presumably others)
+     * only proxies/caches a REMOTE post's media for a limited time, and a
+     * bookmark's raw JSON can outlive that window, unlike a live/Search
+     * fetch which always gets a fresh URL. See fs3emediaview.c's
+     * FS3EMediaView_OnFetchReply and TootTimeline/fs3etoottimeline_tiles.c's
+     * TTL_HOT_IMAGE failed-thumbnail case. */
+    MSG_MEDIA_CACHE_EXPIRED,
 
     /* Must be last */
     MSG_COUNT

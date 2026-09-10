@@ -85,6 +85,8 @@
 #define GID_THEMEV_PRESET_MONO        214
 #define GID_THEMEV_THEME_CHOOSER      215
 #define GID_THEMEV_SCAN_THEMES        216
+#define GID_THEMEV_FALLBACK3_FONT     217
+#define GID_THEMEV_FALLBACK3_CLEAR    218
 
 /* New toot window (fs3etootview.c), continued -- appended here rather than
  * next to GID_TOOT_ATTACH_MEDIA_CLEAR above, since 26-29 already run

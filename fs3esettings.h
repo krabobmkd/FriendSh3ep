@@ -30,6 +30,7 @@ typedef struct FS3ESettings {
     char *primaryFontPath;       /* primary Latin/Unicode font .ttf/.otf */
     char *fallback1FontPath;     /* fallback font 1 */
     char *fallback2FontPath;     /* fallback font 2 */
+    char *fallback3FontPath;     /* fallback font 3 */
     char *emojiFontPath;         /* UI emoji font for buttons/navbar (2-color glyph);
                                   * default: OpenMoji-black-glyf.ttf */
     char *colorEmojiFontPath;    /* color emoji font for TootTimeline post rendering;

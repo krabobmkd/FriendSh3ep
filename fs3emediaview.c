@@ -13,6 +13,7 @@
 #include "fs3emediaview.h"
 #include "fs3eboopsimainwindow.h"  /* extern CurrentMainScreen */
 #include "fs3eboopsimessage.h"
+#include "fs3elocale.h"
 #include <intuition/icclass.h>
 #include <string.h>
 #include <stdio.h>
@@ -1050,7 +1051,29 @@ void FS3EMediaView_OnFetchReply(FS3EMediaView *mv, ULONG result,
                 mediaview_push_picture(mv,
                     (mv->hasAudio && mv->audioLoading) ? FS3EMV_MSG_LOADING_AUDIO : NULL);
             } else {
-                mediaview_push_picture(mv, "Couldn't display this image.");
+                /* mv->image.error is set by BmImage_Init/BmImage_LoadFitScreen
+                 * (see bmimage.h's BmImageError) -- BmImage_SniffFormat here
+                 * is a second, independent check (magic bytes only, ignores
+                 * whatever datatypes are installed): if it disagrees with
+                 * what NewDTObject/DTM_PROCLAYOUT just failed on -- e.g. the
+                 * file isn't a recognizable image at all (an HTML error page
+                 * saved under a .png name, a truncated/empty download, a
+                 * stale/expired signed media URL some servers hand back a
+                 * 200 OK placeholder for) -- that's a strong sign the
+                 * downloaded bytes themselves are bad, not a decode bug. */
+                BmImageFormat sniffed = BmImage_SniffFormat(reply->fs3enf_LocalPath);
+                /* NewDTObject couldn't even open it (OPEN_FAILED) AND the
+                 * bytes don't match any known image signature either --
+                 * the specific shape a stale proxy URL's error/placeholder
+                 * body leaves behind (see MSG_MEDIA_CACHE_EXPIRED's doc
+                 * comment in fs3elocale.h). Any other shape (NO_BITMAP,
+                 * NO_MEMORY, a real-but-unsupported format like WebP with
+                 * no datatype installed, ...) keeps the generic message --
+                 * those aren't the "the link died" case. */
+                if (mv->image.error == BMIMAGE_ERR_OPEN_FAILED && sniffed == BMFMT_UNKNOWN)
+                    mediaview_push_picture(mv, LOC(MSG_MEDIA_CACHE_EXPIRED));
+                else
+                    mediaview_push_picture(mv, "Couldn't display this image.");
             }
 
             /* fs3enf_IsTemp: a RAM:T download we're the last user of (see its

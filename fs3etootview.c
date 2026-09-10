@@ -52,6 +52,7 @@
 #include "fs3egadgetid.h"
 #include "fs3elocale.h"
 #include "fs3enetworkhelper.h"
+#include "fs3eaction.h"
 
 #include "friendsh3ep.h"
 #include "network_fs3e/fs3enet.h"
@@ -81,7 +82,20 @@ typedef enum {
     FS3ETMENU_CUT,
     FS3ETMENU_COPY,
     FS3ETMENU_PASTE,
-    FS3ETMENU_EMOJIBOX
+    FS3ETMENU_EMOJIBOX,
+
+    /* "Unicode Tricks" menu, sibling title alongside "Toot" -- each item
+     * replaces bodyEditor's current selection with a fake bold/monospace/
+     * upside-down look-alike copy. Dispatched through fs3eaction.c's
+     * FS3EAction_Execute (see FS3EACTION_TOOT_UNICODE_* in fs3eaction.h)
+     * rather than handled inline like the items above: those act only on
+     * this window's own editors and never fit fs3eaction.c's plain
+     * (struct App *ctx) shape, whereas these three do, so there's no
+     * reason to duplicate FS3EAction_Execute's dispatch by hand here. */
+    FS3ETMENU_UNICODE_BOLD,
+    FS3ETMENU_UNICODE_BOLD2, /* Mathematical Sans-Serif Bold variant */
+    FS3ETMENU_UNICODE_COURRIER,
+    FS3ETMENU_UNICODE_REVERSE
 } FS3ETootMenuID;
 
 /* Builds and attaches the "Toot" menu (Clear/Undo/Redo/separator/Cut/
@@ -94,7 +108,7 @@ typedef enum {
 static BOOL FS3ETootView_MenuCreate(FS3ETootView *tv, struct Screen *screen,
                                      struct Window *window)
 {
-    struct NewMenu nm[11];
+    struct NewMenu nm[16];
     int n = 0;
 
     if (!tv || !screen || !window || !GadToolsBase) return FALSE;
@@ -125,6 +139,11 @@ static BOOL FS3ETootView_MenuCreate(FS3ETootView *tv, struct Screen *screen,
     ADD(NM_ITEM,  LOC(MSG_TOOTMENU_PASTE),   "V", FS3ETMENU_PASTE);
     ADD(NM_ITEM,  NM_BARLABEL,               0,   0);
     ADD(NM_ITEM,  LOC(MSG_TOOTMENU_EMOJIBOX),"E", FS3ETMENU_EMOJIBOX);
+    ADD(NM_TITLE, LOC(MSG_TOOTMENU_UNICODE),         0, 0);
+    ADD(NM_ITEM,  LOC(MSG_TOOTMENU_UNICODE_BOLD),     0, FS3ETMENU_UNICODE_BOLD);
+    ADD(NM_ITEM,  LOC(MSG_TOOTMENU_UNICODE_BOLD2),    0, FS3ETMENU_UNICODE_BOLD2);
+    ADD(NM_ITEM,  LOC(MSG_TOOTMENU_UNICODE_COURRIER), 0, FS3ETMENU_UNICODE_COURRIER);
+    ADD(NM_ITEM,  LOC(MSG_TOOTMENU_UNICODE_REVERSE),  0, FS3ETMENU_UNICODE_REVERSE);
     ADD(NM_END,   NULL,                      0,   0);
 #undef ADD
 
@@ -1053,6 +1072,7 @@ void FS3ETootView_Open(FS3ETootView *tv)
     if(tv->window)
     {
         ActivateGadget(tv->bodyEditor,tv->window,NULL);
+        tv->lastEditorActivated = tv->bodyEditor;
     }
     DoMethod(tv->windowObj, WM_RETHINK, NULL);
 }
@@ -1096,6 +1116,17 @@ void FS3ETootView_ClearText(FS3ETootView *tv)
     }
     FS3ETootView_UpdateCharCount(tv);
 }
+/* there are the main bodyEditor and the 4 pool ones */
+Object *FS3ETootView_GetLastActivatedUTEditor(FS3ETootView *tv)
+{
+    int i;
+    if(!tv->window) return NULL;
+    if(tv->lastEditorActivated) return tv->lastEditorActivated;
+
+    return tv->bodyEditor;
+}
+
+
 BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
 {
     ULONG result;
@@ -1198,6 +1229,8 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                     switch ((FS3ETootMenuID)udata) {
                         case FS3ETMENU_CLEAR:
                             FS3ETootView_ClearText(tv);
+                            tv->reactivateEditor = reactvalue;
+                            tv->editorToReactivate = tv->bodyEditor;
                             break;
 
                         case FS3ETMENU_UNDO:
@@ -1207,6 +1240,7 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                                     UTED_Undo, TRUE, TAG_DONE);
                             FS3ETootView_UpdateCharCount(tv);
                             tv->reactivateEditor = reactvalue;
+                            tv->editorToReactivate = tv->bodyEditor;
                             break;
 
                         case FS3ETMENU_REDO:
@@ -1216,45 +1250,82 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                                     UTED_Redo, TRUE, TAG_DONE);
                             FS3ETootView_UpdateCharCount(tv);
                             tv->reactivateEditor = reactvalue;
+                            tv->editorToReactivate = tv->bodyEditor;
                             break;
 
                         case FS3ETMENU_CUT:
-                            if (tv->bodyEditor)
                             {
-                                SetGadgetAttrs((struct Gadget *)tv->bodyEditor,
-                                    tv->window, NULL,
-                                    UTED_ApplyCut, TRUE, TAG_DONE);
+                                Object *currentEd = FS3ETootView_GetLastActivatedUTEditor(tv);
+                                if (currentEd)
+                                {
+                                    SetGadgetAttrs((struct Gadget *)currentEd,
+                                        tv->window, NULL,
+                                        UTED_ApplyCut, TRUE, TAG_DONE);
+                                }
+                                FS3ETootView_UpdateCharCount(tv);
+                                tv->reactivateEditor = reactvalue;
+                                tv->editorToReactivate = currentEd;
                             }
-                            FS3ETootView_UpdateCharCount(tv);
-                            tv->reactivateEditor = reactvalue;
                             break;
 
                         case FS3ETMENU_COPY:
-                            if (tv->bodyEditor)
                             {
-                                SetGadgetAttrs((struct Gadget *)tv->bodyEditor,
-                                    tv->window, NULL,
-                                    UTED_ApplyCopy, TRUE, TAG_DONE);
+                                Object *currentEd = FS3ETootView_GetLastActivatedUTEditor(tv);
+                                if (currentEd)
+                                {
+                                    SetGadgetAttrs((struct Gadget *)currentEd,
+                                        tv->window, NULL,
+                                        UTED_ApplyCopy, TRUE, TAG_DONE);
 
-                            tv->reactivateEditor = reactvalue;
+                                    tv->reactivateEditor = reactvalue;
+                                    tv->editorToReactivate = currentEd;
+                                }
                             }
                             break;
 
                         case FS3ETMENU_PASTE:
-                            if (tv->bodyEditor)
                             {
-                                SetGadgetAttrs((struct Gadget *)tv->bodyEditor,
-                                    tv->window, NULL,
-                                    UTED_ApplyPaste, TRUE, TAG_DONE);
+                                Object *currentEd = FS3ETootView_GetLastActivatedUTEditor(tv);
+                                if (currentEd)
+                                {
+                                    SetGadgetAttrs((struct Gadget *)currentEd,
+                                        tv->window, NULL,
+                                        UTED_ApplyPaste, TRUE, TAG_DONE);
 
-                                FS3ETootView_UpdateCharCount(tv);
+                                    FS3ETootView_UpdateCharCount(tv);
 
-                             tv->reactivateEditor = reactvalue;
+                                 tv->reactivateEditor = reactvalue;
+                                 tv->editorToReactivate = currentEd;
+                                }
                             }
                             break;
 
                         case FS3ETMENU_EMOJIBOX:
                             FS3EEmojiBoxWindow_Open(&app->emojiBoxWindow);
+                            break;
+
+                        case FS3ETMENU_UNICODE_BOLD:
+                            FS3EAction_Execute(FS3EACTION_TOOT_UNICODE_BOLD, app);
+                            tv->reactivateEditor = reactvalue;
+                            tv->editorToReactivate = tv->bodyEditor;
+                            break;
+
+                        case FS3ETMENU_UNICODE_BOLD2:
+                            FS3EAction_Execute(FS3EACTION_TOOT_UNICODE_BOLD_SANS, app);
+                            tv->reactivateEditor = reactvalue;
+                            tv->editorToReactivate = tv->bodyEditor;
+                            break;
+
+                        case FS3ETMENU_UNICODE_COURRIER:
+                            FS3EAction_Execute(FS3EACTION_TOOT_UNICODE_COURRIER, app);
+                            tv->reactivateEditor = reactvalue;
+                            tv->editorToReactivate = tv->bodyEditor;
+                            break;
+
+                        case FS3ETMENU_UNICODE_REVERSE:
+                            FS3EAction_Execute(FS3EACTION_TOOT_UNICODE_REVERSE, app);
+                            tv->reactivateEditor = reactvalue;
+                            tv->editorToReactivate = tv->bodyEditor;
                             break;
 
                         default:
@@ -1296,10 +1367,10 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
                 break;
         }
     }
-    if(tv->reactivateEditor>0 && tv->window && tv->bodyEditor)
+    if(tv->reactivateEditor>0 && tv->window && tv->editorToReactivate)
     {
         tv->reactivateEditor--;
-        ActivateGadget(tv->bodyEditor,tv->window,NULL);
+        ActivateGadget(tv->editorToReactivate,tv->window,NULL);
     }
 
     return TRUE;

@@ -272,6 +272,8 @@ typedef struct FS3ETootView {
     APTR         menuVisualInfo;
 
     int reactivateEditor;
+    Object *editorToReactivate;
+     Object *lastEditorActivated;
 } FS3ETootView;
 
 /* Build the BOOPSI window+layout. pointSize is forwarded to the
@@ -396,5 +398,7 @@ FS3ETootAttachStatus FS3ETootView_CheckAttachment(FS3ETootView *tv,
  * (attachMedia2GF) -- see that field's comment in this header. */
 FS3ETootAttachStatus FS3ETootView_CheckAttachment2(FS3ETootView *tv,
     char *outPath, ULONG outPathSize, const char **outMimeType);
+
+Object *FS3ETootView_GetLastActivatedUTEditor(FS3ETootView *tv);
 
 #endif /* FS3ETOOTVIEW_H */

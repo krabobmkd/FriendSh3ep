@@ -259,6 +259,8 @@ static void syncFontPaths(FS3EThemeView *tv)
                    GETFILE_File, (ULONG)app->settings.fallback1FontPath,  TAG_END);
     SetGadgetAttrs((struct Gadget *)tv->fallback2FontGF,  tv->window, NULL,
                    GETFILE_File, (ULONG)app->settings.fallback2FontPath,  TAG_END);
+    SetGadgetAttrs((struct Gadget *)tv->fallback3FontGF,  tv->window, NULL,
+                   GETFILE_File, (ULONG)app->settings.fallback3FontPath,  TAG_END);
     SetGadgetAttrs((struct Gadget *)tv->emojiFontGF,      tv->window, NULL,
                    GETFILE_File, (ULONG)app->settings.emojiFontPath,      TAG_END);
     SetGadgetAttrs((struct Gadget *)tv->colorEmojiFontGF, tv->window, NULL,
@@ -270,6 +272,7 @@ static void removeAllFonts(void)
     FreeVec(app->settings.primaryFontPath);    app->settings.primaryFontPath    = NULL;
     FreeVec(app->settings.fallback1FontPath);  app->settings.fallback1FontPath  = NULL;
     FreeVec(app->settings.fallback2FontPath);  app->settings.fallback2FontPath  = NULL;
+    FreeVec(app->settings.fallback3FontPath);  app->settings.fallback3FontPath  = NULL;
     FreeVec(app->settings.emojiFontPath);      app->settings.emojiFontPath      = NULL;
     FreeVec(app->settings.colorEmojiFontPath); app->settings.colorEmojiFontPath = NULL;
 }
@@ -301,6 +304,7 @@ BOOL FS3EThemeView_Create(FS3EThemeView *tv, const char *title)
     Object *primaryLabel;
     Object *fallback1Label;
     Object *fallback2Label;
+    Object *fallback3Label;
     Object *emojiFontLabel;
     Object *colorEmojiFontLabel;
     Object *themeLabel;
@@ -356,28 +360,31 @@ BOOL FS3EThemeView_Create(FS3EThemeView *tv, const char *title)
     tv->primaryFontGF    = makeGetFileGadget(GID_THEMEV_PRIMARY_FONT,     app->settings.primaryFontPath);
     tv->fallback1FontGF  = makeGetFileGadget(GID_THEMEV_FALLBACK1_FONT,   app->settings.fallback1FontPath);
     tv->fallback2FontGF  = makeGetFileGadget(GID_THEMEV_FALLBACK2_FONT,   app->settings.fallback2FontPath);
+    tv->fallback3FontGF  = makeGetFileGadget(GID_THEMEV_FALLBACK3_FONT,   app->settings.fallback3FontPath);
     tv->emojiFontGF      = makeGetFileGadget(GID_THEMEV_EMOJI_FONT,       app->settings.emojiFontPath);
     tv->colorEmojiFontGF = makeGetFileGadget(GID_THEMEV_COLOR_EMOJI_FONT, app->settings.colorEmojiFontPath);
-    if (!tv->primaryFontGF || !tv->fallback1FontGF || !tv->fallback2FontGF ||
+    if (!tv->primaryFontGF || !tv->fallback1FontGF || !tv->fallback2FontGF || !tv->fallback3FontGF ||
         !tv->emojiFontGF   || !tv->colorEmojiFontGF) return FALSE;
 
     primaryLabel   = NewObject(LABEL_GetClass(), NULL, LABEL_Text, (ULONG)LOC(MSG_THEMEV_PRIMARY),        TAG_END);
     fallback1Label = NewObject(LABEL_GetClass(), NULL, LABEL_Text, (ULONG)LOC(MSG_THEMEV_FALLBACK1),      TAG_END);
     fallback2Label = NewObject(LABEL_GetClass(), NULL, LABEL_Text, (ULONG)LOC(MSG_THEMEV_FALLBACK2),      TAG_END);
+    fallback3Label = NewObject(LABEL_GetClass(), NULL, LABEL_Text, (ULONG)LOC(MSG_THEMEV_FALLBACK3),      TAG_END);
     emojiFontLabel      = NewObject(LABEL_GetClass(), NULL, LABEL_Text, (ULONG)LOC(MSG_THEMEV_EMOJIFONT),      TAG_END);
     colorEmojiFontLabel = NewObject(LABEL_GetClass(), NULL, LABEL_Text, (ULONG)LOC(MSG_THEMEV_COLOREMOJIFONT), TAG_END);
 
     /* --- [getfile][X] row sub-layouts (owned by fontsGroup) --- */
     {
-        Object *primaryRow, *fallback1Row, *fallback2Row, *emojiFontRow, *colorEmojiFontRow;
-        Object *primaryClearBtn, *fallback1ClearBtn, *fallback2ClearBtn, *emojiClearBtn, *colorEmojiClearBtn;
+        Object *primaryRow, *fallback1Row, *fallback2Row, *fallback3Row, *emojiFontRow, *colorEmojiFontRow;
+        Object *primaryClearBtn, *fallback1ClearBtn, *fallback2ClearBtn, *fallback3ClearBtn, *emojiClearBtn, *colorEmojiClearBtn;
 
         primaryClearBtn   = NewObject(BUTTON_GetClass(), NULL, GA_ID, GID_THEMEV_PRIMARY_CLEAR,   GA_RelVerify, TRUE, GA_Text, (ULONG)"X", TAG_END);
         fallback1ClearBtn = NewObject(BUTTON_GetClass(), NULL, GA_ID, GID_THEMEV_FALLBACK1_CLEAR, GA_RelVerify, TRUE, GA_Text, (ULONG)"X", TAG_END);
         fallback2ClearBtn = NewObject(BUTTON_GetClass(), NULL, GA_ID, GID_THEMEV_FALLBACK2_CLEAR, GA_RelVerify, TRUE, GA_Text, (ULONG)"X", TAG_END);
+        fallback3ClearBtn = NewObject(BUTTON_GetClass(), NULL, GA_ID, GID_THEMEV_FALLBACK3_CLEAR, GA_RelVerify, TRUE, GA_Text, (ULONG)"X", TAG_END);
         emojiClearBtn       = NewObject(BUTTON_GetClass(), NULL, GA_ID, GID_THEMEV_EMOJI_CLEAR,       GA_RelVerify, TRUE, GA_Text, (ULONG)"X", TAG_END);
         colorEmojiClearBtn  = NewObject(BUTTON_GetClass(), NULL, GA_ID, GID_THEMEV_COLOR_EMOJI_CLEAR, GA_RelVerify, TRUE, GA_Text, (ULONG)"X", TAG_END);
-        if (!primaryClearBtn || !fallback1ClearBtn || !fallback2ClearBtn ||
+        if (!primaryClearBtn || !fallback1ClearBtn || !fallback2ClearBtn || !fallback3ClearBtn ||
             !emojiClearBtn   || !colorEmojiClearBtn)
             return FALSE;
 
@@ -419,6 +426,19 @@ BOOL FS3EThemeView_Create(FS3EThemeView *tv, const char *title)
             CHILD_WeightedHeight, 0,
             TAG_END);
         if (!fallback2Row) return FALSE;
+
+        fallback3Row = NewObject(LAYOUT_GetClass(), NULL,
+            LAYOUT_Orientation,   LAYOUT_ORIENT_HORIZ,
+            LAYOUT_BevelStyle,    BVS_NONE,
+            LAYOUT_SpaceInner,    FALSE,
+            LAYOUT_AddChild,      (ULONG)tv->fallback3FontGF,
+            CHILD_WeightedWidth,  1,
+            CHILD_WeightedHeight, 0,
+            LAYOUT_AddChild,      (ULONG)fallback3ClearBtn,
+            CHILD_WeightedWidth,  0,
+            CHILD_WeightedHeight, 0,
+            TAG_END);
+        if (!fallback3Row) return FALSE;
 
         emojiFontRow = NewObject(LAYOUT_GetClass(), NULL,
             LAYOUT_Orientation,   LAYOUT_ORIENT_HORIZ,
@@ -462,6 +482,9 @@ BOOL FS3EThemeView_Create(FS3EThemeView *tv, const char *title)
             LAYOUT_AddChild,      (ULONG)fallback2Row,
             CHILD_WeightedHeight, 0,
             CHILD_Label,          (ULONG)fallback2Label,
+            LAYOUT_AddChild,      (ULONG)fallback3Row,
+            CHILD_WeightedHeight, 0,
+            CHILD_Label,          (ULONG)fallback3Label,
             LAYOUT_AddChild,      (ULONG)emojiFontRow,
             CHILD_WeightedHeight, 0,
             CHILD_Label,          (ULONG)emojiFontLabel,
@@ -714,6 +737,10 @@ BOOL FS3EThemeView_HandleInput(FS3EThemeView *tv)
                     if (gfRequestFile(tv->fallback2FontGF, tv->window))
                         updateFontPath(tv->fallback2FontGF, &app->settings.fallback2FontPath);
 
+                } else if (gadId == GID_THEMEV_FALLBACK3_FONT) {
+                    if (gfRequestFile(tv->fallback3FontGF, tv->window))
+                        updateFontPath(tv->fallback3FontGF, &app->settings.fallback3FontPath);
+
                 } else if (gadId == GID_THEMEV_EMOJI_FONT) {
                     if (gfRequestFile(tv->emojiFontGF, tv->window))
                         updateFontPath(tv->emojiFontGF, &app->settings.emojiFontPath);
@@ -750,6 +777,16 @@ BOOL FS3EThemeView_HandleInput(FS3EThemeView *tv)
                                    TAG_END);
                     FreeVec(app->settings.fallback2FontPath);
                     app->settings.fallback2FontPath = NULL;
+                    FS3EApp_ApplyFontSettings();
+
+                } else if (gadId == GID_THEMEV_FALLBACK3_CLEAR) {
+                    SetGadgetAttrs((struct Gadget *)tv->fallback3FontGF,
+                                   tv->window, NULL,
+                                   GETFILE_File,   (ULONG)"",
+                                   GETFILE_Drawer, (ULONG)"",
+                                   TAG_END);
+                    FreeVec(app->settings.fallback3FontPath);
+                    app->settings.fallback3FontPath = NULL;
                     FS3EApp_ApplyFontSettings();
 
                 } else if (gadId == GID_THEMEV_EMOJI_CLEAR) {
@@ -789,6 +826,12 @@ BOOL FS3EThemeView_HandleInput(FS3EThemeView *tv)
                     syncCheckboxes(tv);
                     removeAllFonts();
                     app->settings.primaryFontPath    = ThemeStrDup("LiberationSans-Regular.ttf");
+                    /* Wider glyph coverage than primaryFontPath alone (CJK,
+                     * extra symbols) -- same two fonts GID_THEMEV_PRESET_MONO
+                     * uses below, both High Quality presets just differ in
+                     * primaryFontPath itself. */
+                    app->settings.fallback1FontPath  = ThemeStrDup("Fonts:NotoSansJP-Regular.otf");
+                    app->settings.fallback2FontPath  = ThemeStrDup("Fonts:TootGlyphs.ttf");
                     app->settings.emojiFontPath      = ThemeStrDup("OpenMoji-black-glyf.ttf");
                     app->settings.colorEmojiFontPath = ThemeStrDup("NotoColorEmoji32.ttf");
                     syncFontPaths(tv);
@@ -800,6 +843,11 @@ BOOL FS3EThemeView_HandleInput(FS3EThemeView *tv)
                     syncCheckboxes(tv);
                     removeAllFonts();
                     app->settings.primaryFontPath    = ThemeStrDup("UbuntuMono-Regular.ttf");
+                    /* Same fallback pair as GID_THEMEV_PRESET_HQ above --
+                     * Monospace is High Quality too, just with a monospaced
+                     * primaryFontPath. */
+                    app->settings.fallback1FontPath  = ThemeStrDup("Fonts:NotoSansJP-Regular.otf");
+                    app->settings.fallback2FontPath  = ThemeStrDup("Fonts:TootGlyphs.ttf");
                     app->settings.emojiFontPath      = ThemeStrDup("OpenMoji-black-glyf.ttf");
                     app->settings.colorEmojiFontPath = ThemeStrDup("NotoColorEmoji32.ttf");
                     syncFontPaths(tv);

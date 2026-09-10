@@ -122,6 +122,17 @@ static const char *defaultStrings[MSG_COUNT] = {
     /* MSG_TOOTMENU_EMOJIBOX */
     "Emoji Box",
 
+    /* MSG_TOOTMENU_UNICODE */
+    "Unicode Tricks",
+    /* MSG_TOOTMENU_UNICODE_BOLD */
+    "Make selection bold",
+    /* MSG_TOOTMENU_UNICODE_BOLD2 */
+    "Make selection bold 2",
+    /* MSG_TOOTMENU_UNICODE_COURRIER */
+    "Make selection Courrier",
+    /* MSG_TOOTMENU_UNICODE_REVERSE */
+    "Make selection reverse",
+
     /* MSG_MENU_FRIENDSH3EP */
     "FriendSh3ep",
     /* MSG_MENU_ACCOUNTS */
@@ -223,6 +234,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Fallback font 1",
     /* MSG_THEMEV_FALLBACK2 */
     "Fallback font 2",
+    /* MSG_THEMEV_FALLBACK3 */
+    "Fallback font 3",
     /* MSG_THEMEV_EMOJIFONT */
     "UI emoji font",
     /* MSG_THEMEV_COLOREMOJIFONT */
@@ -372,6 +385,9 @@ static const char *defaultStrings[MSG_COUNT] = {
     "\n",
     /* MSG_FIRSTUSE_GADGETS */
     "PROGDIR:.cache|Ram:T/FriendSh3ep|Quit",
+
+    /* MSG_MEDIA_CACHE_EXPIRED */
+    "Image cache has expired.",
 };
 
 /* LocaleBase declared in friendsh3ep.c */

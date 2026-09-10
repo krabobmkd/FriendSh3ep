@@ -79,6 +79,20 @@ typedef enum {
     FS3EACTION_SETTINGS_FONTSIZEM,
     FS3EACTION_SETTINGS_FONTSIZEP,
 
+    /* Toot compose window -- "Unicode Tricks" menu (fs3etootview.c). Each
+     * replaces app->tootView.bodyEditor's current selection with a
+     * transformed copy (see fs3eunicodetricks.h); a no-op (FALSE) when
+     * nothing is selected. Unlike the window's own Cut/Copy/Paste/Undo/
+     * Redo/Clear (handled inline in FS3ETootView_HandleInput, see that
+     * function's own comment on why -- purely local, never triggered from
+     * anywhere else), these fit FS3EActionFunc's plain (struct App *ctx)
+     * shape as-is, so they're dispatched through this table like any other
+     * action instead of duplicating that inline switch. */
+    FS3EACTION_TOOT_UNICODE_BOLD,
+    FS3EACTION_TOOT_UNICODE_BOLD_SANS, /* "bold 2" -- FS3EUnicodeTricks_BoldSansSerif */
+    FS3EACTION_TOOT_UNICODE_COURRIER,
+    FS3EACTION_TOOT_UNICODE_REVERSE,
+
     /* Must be last */
     FS3EACTION_COUNT
 } FS3EActionID;
@@ -196,6 +210,16 @@ BOOL Action_SettingsGeneral(struct App *ctx);
 BOOL Action_NetworkView(struct App *ctx);
 BOOL Action_FontSizeMinus(struct App *ctx);
 BOOL Action_FontSizePlus(struct App *ctx);
+
+/* "Unicode Tricks" menu (fs3etootview.c) -- see FS3EACTION_TOOT_UNICODE_*
+ * above. Replaces app->tootView.bodyEditor's current selection with a
+ * bold/monospace/upside-down look-alike copy (fs3eunicodetricks.h).
+ * Returns FALSE (no-op) if the toot window isn't open or nothing is
+ * currently selected. */
+BOOL Action_TootUnicodeBold(struct App *ctx);
+BOOL Action_TootUnicodeBoldSansSerif(struct App *ctx);
+BOOL Action_TootUnicodeCourrier(struct App *ctx);
+BOOL Action_TootUnicodeReverse(struct App *ctx);
 
 /* -------------------------------------------------------------------------
  * Toot actions -- one specific toot is always involved, so these take
