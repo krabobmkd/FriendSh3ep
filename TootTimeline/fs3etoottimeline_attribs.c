@@ -1040,6 +1040,13 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                 used = 1;
                 break;
 
+            case TTIMELINE_HotSpotPointerTypeAt: {
+                TTLPointerQuery *q = (TTLPointerQuery *)tag->ti_Data;
+                if (q) ttl_query_pointer_type(inst, q);
+                used = 1;
+                break;
+            }
+
             case TTIMELINE_InvalidateImages:
                 /* No layout/height change -- just redraw the currently
                  * active tiles so they pick up whatever image just

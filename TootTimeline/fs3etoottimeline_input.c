@@ -31,6 +31,7 @@
 #include <proto/graphics.h>
 #include <proto/alib.h>
 #include <intuition/gadgetclass.h>
+#include <intuition/pointerclass.h>
 #include <devices/inputevent.h>
 #include <string.h>
 
@@ -106,8 +107,8 @@ static TTLPost *ttl_hit_post(TTLData *inst, LONG timelineY)
  * ttl_post_ensure_hotspots) -- gadX/gadY only ever come from a point the
  * user just clicked, which is on screen, so this is a cheap freshness
  * check rather than a real rebuild in practice. */
-static BOOL ttl_hit_hotspot(TTLData *inst, WORD gadX, WORD gadY,
-                             TTLPost **outPost, UBYTE *outIndex)
+BOOL ttl_hit_hotspot(TTLData *inst, WORD gadX, WORD gadY,
+                      TTLPost **outPost, UBYTE *outIndex)
 {
     LONG     timelineY = ttl_active(inst)->scrollY + gadY;
     TTLPost *post       = ttl_hit_post(inst, timelineY);
@@ -180,6 +181,49 @@ static BOOL ttl_hit_hotspot(TTLData *inst, WORD gadX, WORD gadY,
         }
     }
     return FALSE;
+}
+
+/* Maps a hot-spot's TTL_HOT_* type to the pointer shape that best signals
+ * its behavior when hovered: POINTERTYPE_LINK for anything that navigates
+ * to different content elsewhere in the app (a mention/hashtag/URL token,
+ * an avatar, a link-preview or quote card, the followers/following counts,
+ * a notification's actor line, a blocked-server row), POINTERTYPE_HAND for
+ * everything else that's still a plain "click me" action (action-bar
+ * buttons, media browse arrows, poll votes, load more/newer, the
+ * sensitive-content toggle, ...). */
+static ULONG ttl_hotspot_pointer_type(UBYTE hotType)
+{
+    switch (hotType) {
+        case TTL_HOT_MENTION:
+        case TTL_HOT_HASHTAG:
+        case TTL_HOT_URL:
+        case TTL_HOT_AVATAR:
+        case TTL_HOT_CARD:
+        case TTL_HOT_QUOTECARD:
+        case TTL_HOT_FOLLOWERS_LIST:
+        case TTL_HOT_FOLLOWING_LIST:
+        case TTL_HOT_NOTIF_STATUS:
+        case TTL_HOT_DOMAIN:
+            return POINTERTYPE_LINK;
+        default:
+            return POINTERTYPE_HAND;
+    }
+}
+
+/* [TTIMELINE_HotSpotPointerTypeAt] -- see fs3etoottimeline.h. Called from
+ * ttl_apply_tags (fs3etoottimeline_attribs.c), which already holds
+ * listSem for the whole tag loop -- same cross-task hit-test hazard
+ * ttl_hit_hotspot's own callers above guard against, since this can run
+ * concurrently with GM_RENDER/AddPost on another task. */
+void ttl_query_pointer_type(TTLData *inst, TTLPointerQuery *q)
+{
+    TTLPost *post;
+    UBYTE    idx;
+
+    q->pointerType = POINTERTYPE_NORMAL;
+
+    if (ttl_hit_hotspot(inst, q->gadX, q->gadY, &post, &idx))
+        q->pointerType = ttl_hotspot_pointer_type(post->hotSpots[idx].type);
 }
 
 /* TTIMELINE_ActionOnDoubleClick gating -- see TTLData.pendingClick* doc

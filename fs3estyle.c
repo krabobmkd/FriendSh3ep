@@ -223,6 +223,7 @@ static void compute_layout(FS3EStyle *st)
 static void resize_dc(struct URPDrawContext *dc, int size,
                       const char *primary,
                       const char *fallback1, const char *fallback2,
+                       const char *fallback3,
                       const char *emoji, ULONG styleBits)
 {
     if (!dc) return;
@@ -230,15 +231,29 @@ static void resize_dc(struct URPDrawContext *dc, int size,
     URPDC_AddFont(dc, primary, size, 0);
     if (fallback1) URPDC_AddFont(dc, fallback1, size, 0);
     if (fallback2) URPDC_AddFont(dc, fallback2, size, 0);
+    if (fallback3) URPDC_AddFont(dc, fallback3, size, 0);
     URPDC_AddFont(dc, emoji, size, 0);
     if (styleBits) URPDC_SetStyle(dc, styleBits);
 }
-
-void FS3EStyle_SetFontSize(FS3EStyle *st, int baseSize,
+/*
+app->settings.fontPointSize,
+                          app->settings.primaryFontPath,
+                          app->settings.fallback1FontPath,
+                          app->settings.fallback2FontPath,
+                          app->settings.colorEmojiFontPath
+*/
+void FS3EStyle_SetFontSize(FS3EStyle *st,FS3ESettings   *settings)
+/* int baseSize,
                            const char *primary,
                            const char *fallback1, const char *fallback2,
-                           const char *emoji)
+                           const char *emoji)*/
 {
+    int baseSize = settings->fontPointSize;
+    const char *primary = settings->primaryFontPath;
+    const char *fallback1 = settings->fallback1FontPath;
+    const char *fallback2 = settings->fallback2FontPath;
+    const char *emoji = settings->colorEmojiFontPath;
+
     const char *pri = primary ? primary : "LiberationSans-Regular.ttf";
     const char *emo = emoji   ? emoji   : "NotoColorEmoji32.ttf";
     int normalSize   = baseSize;
@@ -247,9 +262,9 @@ void FS3EStyle_SetFontSize(FS3EStyle *st, int baseSize,
 
     if (!st) return;
 
-    resize_dc(st->dcNormal,   normalSize,   pri, fallback1, fallback2, emo, 0);
-    resize_dc(st->dcUsername, usernameSize, pri, fallback1, fallback2, emo, URP_STYLE_BOLD);
-    resize_dc(st->dcMini,     miniSize,     pri, fallback1, fallback2, emo, 0);
+    resize_dc(st->dcNormal,   normalSize,   pri, fallback1, fallback2,settings->fallback3FontPath, emo, 0);
+    resize_dc(st->dcUsername, usernameSize, pri, fallback1, fallback2,settings->fallback3FontPath, emo, URP_STYLE_BOLD);
+    resize_dc(st->dcMini,     miniSize,     pri, fallback1, fallback2,settings->fallback3FontPath, emo, 0);
 
     /* Re-bind the screen so the DCs can access the colour map for CLUT mode.
      * URPDC_FlushFonts may reset internal bitmap state. */

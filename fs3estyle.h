@@ -377,10 +377,9 @@ void FS3EStyle_ReleaseDrawContexts(FS3EStyle *st);
  * Call after changing app->settings.fontPointSize; the caller must then
  * re-set TTIMELINE_Style on the toot-timeline to refresh cached metrics.
  */
-void FS3EStyle_SetFontSize(FS3EStyle *st, int baseSize,
-                           const char *primary,
-                           const char *fallback1, const char *fallback2,
-                           const char *emoji);
+ struct FS3ESettings;
+ void FS3EStyle_SetFontSize(FS3EStyle *st,struct FS3ESettings   *settings);
+
 
 /* ------------------------------------------------------------------ */
 /* Image theme API                                                     */

@@ -32,6 +32,10 @@
 #include <classes/window.h>
 #include <proto/label.h>
 #include <images/label.h>
+#include <proto/string.h>
+#include <gadgets/string.h>
+#include <proto/unibutton.h>
+#include <gadgets/unibutton.h>
 
 #include <devices/inputevent.h>
 #include <intuition/gadgetclass.h>
@@ -238,9 +242,16 @@ static const char *animalsEmojiTable[40] = {
 };
 
 static const char *diacriticsTable[40] = {
-    "\xC2\xB7", "\xC3\xA6", "\xC5\x93", "\xC3\x86",
-    "\xC5\x92", "\xC3\xBF", "\xC5\xB8", "\xC2\xAB",
-    "\xC2\xBB", "\xE2\x80\x99",
+    "\xC2\xB7",
+    "\xE2\x80\xA2", /*bullet */
+    "\xE2\x97\x8F", /* bigger dot */
+
+    "\xC3\xA6", "\xC5\x93", "\xC3\x86",
+    "\xC5\x92", "\xC3\xBF",
+     //"\xC5\xB8",
+     "\xC2\xAB",
+    "\xC2\xBB",
+    //"\xE2\x80\x99",
     "\xC3\x89", "\xC3\x88", "\xC3\x8A", "\xC3\x8B",
     "\xC3\x80", "\xC3\x82", "\xC3\x8E", "\xC3\x8F",
     "\xC3\x94", "\xC3\x9B",
@@ -710,7 +721,7 @@ static ULONG ASM SAVEDS FSEBGrid_Dispatch(
 
 BOOL FS3EEmojiBoxWindow_Create(FS3EEmojiBoxWindow *ebw, struct URPDrawContext *dc)
 {
-    Object *topBar, *setLabel;
+    Object *topBar, *setLabel, *unicodeLabel;
     int i;
 
     {
@@ -749,15 +760,53 @@ BOOL FS3EEmojiBoxWindow_Create(FS3EEmojiBoxWindow *ebw, struct URPDrawContext *d
         LABEL_Text, (ULONG)"Set:",
         TAG_END);
 
+    /* "Unicode Hex:" field -- type a hex codepoint, preview/insert via the
+     * UniButton right next to it (shows the decoded UTF-8 character, or a
+     * single space when the field can't be parsed as one). Unlike
+     * EmojiGear's UniTextEditor-based version, this is a plain
+     * string.gadget (the only editable one-line field available in this
+     * app) with STRINGA_HookType/SHK_HEXIDECIMAL restricting input to hex
+     * digits, and STRINGA_InterimUpdates (default TRUE) driving the live
+     * preview refresh on every keystroke via ICA_TARGET -- see
+     * FS3EEmojiBoxWindow_RefreshHexPreview / friendsh3ep.c's
+     * GID_EMOJIBOX_HEXEDITOR case. */
+    unicodeLabel = (Object *)NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)"Unicode Hex:",
+        TAG_END);
+
+    /* Default to "parrot" -- U+1F99C, the same default EmojiGear's own
+     * hex field opens with -- so the field and its preview button aren't
+     * blank/space on first open. */
+    ebw->hexEditor = (Object *)NewObject(STRING_GetClass(), NULL,
+        GA_ID,             (ULONG)GID_EMOJIBOX_HEXEDITOR,
+        GA_RelVerify,      TRUE,
+        GA_TabCycle,       TRUE,
+        ICA_TARGET,        (ULONG)TargetInstance,
+        STRINGA_HookType,  SHK_HEXIDECIMAL,
+        STRINGA_MaxChars,  7UL,
+        STRINGA_TextVal,   (ULONG)"1F99C",
+        TAG_END);
+    if (!ebw->hexEditor) return FALSE;
+
+    ebw->hexButton = (Object *)NewObject(UNIBUTTON_GetClass(), NULL,
+        GA_ID,              (ULONG)GID_EMOJIBOX_HEXBUTTON,
+        GA_RelVerify,       TRUE,
+        ICA_TARGET,         (ULONG)TargetInstance,
+        UBT_BevelStyle,     BVS_BUTTON,
+        UBT_URPDrawContext, (ULONG)app->buttonDC,
+        GA_Text,            (ULONG)"\xF0\x9F\xA6\x9C", /* U+1F99C parrot */
+        TAG_END);
+    if (!ebw->hexButton) return FALSE;
+
     topBar = (Object *)NewObject(LAYOUT_GetClass(), NULL,
         LAYOUT_Orientation,  LAYOUT_ORIENT_HORIZ,
         LAYOUT_BottomSpacing, 4,
-        LAYOUT_AddChild, (ULONG)NewObject(BUTTON_GetClass(), NULL,
-                              GA_ReadOnly, TRUE,
-                              BUTTON_BevelStyle, BVS_NONE,
-                              BUTTON_Transparent, TRUE,
-                              TAG_END),
+        LAYOUT_AddChild, (ULONG)ebw->hexEditor,
             CHILD_WeightedWidth, 1,
+            CHILD_Label,         (ULONG)unicodeLabel,
+        LAYOUT_AddChild, (ULONG)ebw->hexButton,
+            CHILD_WeightedWidth, 0,
+            CHILD_MinWidth,      32,
         LAYOUT_AddChild, (ULONG)setLabel,
             CHILD_WeightedWidth, 0,
         LAYOUT_AddChild, (ULONG)ebw->chooser,
@@ -1006,6 +1055,85 @@ const char *FS3EEmojiBoxWindow_GetClickedUTF8(FS3EEmojiBoxWindow *ebw)
     if (setIdx < 0 || setIdx >= FS3EEMOJIBOX_NUM_SETS) setIdx = 0;
 
     return emojiSets[setIdx].emojis[cidx];
+}
+
+/* =========================================================================
+ * "Unicode Hex:" field -- parse + UTF-8 encode + live preview/insert.
+ * Ported from EmojiGear's EmojiBoxWindow_DecodeHex, adapted from
+ * UniTextEditor's UTED_Text to string.gadget's STRINGA_TextVal (a pointer
+ * to the gadget's own buffer -- no FreeVec needed, unlike UTED_Text) and
+ * simplified: STRINGA_HookType/SHK_HEXIDECIMAL already restricts what the
+ * field can contain to hex digits, so there is no "U+"/"0x" prefix or
+ * stray-character case left to parse around.
+ * =========================================================================
+ */
+BOOL FS3EEmojiBoxWindow_GetHexUTF8(FS3EEmojiBoxWindow *ebw, char *outBuf)
+{
+    STRPTR text = NULL;
+    const char *s;
+    ULONG cp = 0;
+    int i, n;
+
+    outBuf[0] = ' ';
+    outBuf[1] = '\0';
+
+    if (!ebw || !ebw->hexEditor) return FALSE;
+    GetAttr(STRINGA_TextVal, ebw->hexEditor, (ULONG *)&text);
+    s = (const char *)text;
+    if (!s || !s[0]) return FALSE;
+
+    for (i = 0, n = 0; s[i] && n < 6; i++, n++) {
+        char c = s[i];
+        ULONG digit;
+        if      (c >= '0' && c <= '9') digit = (ULONG)(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = (ULONG)(10 + c - 'a');
+        else if (c >= 'A' && c <= 'F') digit = (ULONG)(10 + c - 'A');
+        else return FALSE;
+        cp = (cp << 4) | digit;
+    }
+    if (n == 0) return FALSE;
+
+    /* Reject surrogate halves (not valid standalone codepoints) and
+     * anything beyond Unicode's own range. */
+    if ((cp >= 0xD800 && cp <= 0xDFFF) || cp > 0x10FFFF) return FALSE;
+
+    if (cp < 0x80) {
+        outBuf[0] = (char)cp;
+        outBuf[1] = '\0';
+    } else if (cp < 0x800) {
+        outBuf[0] = (char)(0xC0 | (cp >> 6));
+        outBuf[1] = (char)(0x80 | (cp & 0x3F));
+        outBuf[2] = '\0';
+    } else if (cp < 0x10000) {
+        outBuf[0] = (char)(0xE0 | (cp >> 12));
+        outBuf[1] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        outBuf[2] = (char)(0x80 | (cp & 0x3F));
+        outBuf[3] = '\0';
+    } else {
+        outBuf[0] = (char)(0xF0 | (cp >> 18));
+        outBuf[1] = (char)(0x80 | ((cp >> 12) & 0x3F));
+        outBuf[2] = (char)(0x80 | ((cp >> 6) & 0x3F));
+        outBuf[3] = (char)(0x80 | (cp & 0x3F));
+        outBuf[4] = '\0';
+    }
+    return TRUE;
+}
+
+/* Re-decodes the hex field and refreshes the preview button's glyph.
+ * Called from friendsh3ep.c's GID_EMOJIBOX_HEXEDITOR case, itself reached
+ * on every keystroke via STRINGA_InterimUpdates. */
+void FS3EEmojiBoxWindow_RefreshHexPreview(FS3EEmojiBoxWindow *ebw)
+{
+    char utf8buf[8];
+
+    if (!ebw || !ebw->hexButton) return;
+
+    FS3EEmojiBoxWindow_GetHexUTF8(ebw, utf8buf);
+
+    SetGadgetAttrs((struct Gadget *)ebw->hexButton, ebw->window, NULL,
+                   GA_Text, (ULONG)utf8buf, TAG_END);
+    if (ebw->window)
+        RefreshGadgets((struct Gadget *)ebw->hexButton, ebw->window, NULL);
 }
 
 

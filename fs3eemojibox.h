@@ -45,6 +45,8 @@ typedef struct FS3EEmojiBoxWindow {
 
     Object         *chooser;       /* set-selector */
     Object         *gridGadget;    /* private grid gadget (see fs3eemojibox.c) */
+    Object         *hexEditor;     /* string.gadget: Unicode hex codepoint */
+    Object         *hexButton;     /* UniButton: decoded preview, click to insert */
     Object         *mainLayout;
 
     struct List     chooserList;
@@ -104,5 +106,20 @@ const char *FS3EEmojiBoxWindow_GetClickedUTF8(FS3EEmojiBoxWindow *ebw);
 
 BOOL FS3EEmojiBox_HandleFKey(FS3EEmojiBoxWindow *ebw, Object *editor, ULONG code, ULONG qualifiers,
                          struct Window *win);
+
+/* Decodes ebw->hexEditor's current text (STRINGA_TextVal, digits only --
+ * see STRINGA_HookType/SHK_HEXIDECIMAL in fs3eemojibox.c) as a hex Unicode
+ * codepoint and UTF-8 encodes it into outBuf (must be >= 5 bytes). Returns
+ * TRUE and fills outBuf with the encoded character on success; returns
+ * FALSE and fills outBuf with a single space on failure (empty field, a
+ * surrogate half, or a codepoint beyond U+10FFFF). Called from
+ * friendsh3ep.c's GID_EMOJIBOX_HEXBUTTON case. */
+BOOL FS3EEmojiBoxWindow_GetHexUTF8(FS3EEmojiBoxWindow *ebw, char *outBuf);
+
+/* Re-decodes the hex field and refreshes hexButton's glyph. Called from
+ * friendsh3ep.c's GID_EMOJIBOX_HEXEDITOR case, itself reached on every
+ * keystroke via STRINGA_InterimUpdates (ICA_TARGET -> BoopsiDelay queue),
+ * not just on commit. */
+void FS3EEmojiBoxWindow_RefreshHexPreview(FS3EEmojiBoxWindow *ebw);
 
 #endif /* FS3EEMOJIBOX_H */

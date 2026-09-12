@@ -945,6 +945,9 @@ ULONG TTL_OnHitTest    (Class *cl, Object *o, struct gpHitTest *msg);
 ULONG TTL_OnGoActive   (Class *cl, Object *o, struct gpInput *msg);
 ULONG TTL_OnHandleInput(Class *cl, Object *o, struct gpInput *msg);
 ULONG TTL_OnGoInactive (Class *cl, Object *o, struct gpGoInactive *msg);
+BOOL  ttl_hit_hotspot  (TTLData *inst, WORD gadX, WORD gadY,
+                        TTLPost **outPost, UBYTE *outIndex);
+void  ttl_query_pointer_type(TTLData *inst, TTLPointerQuery *q);
 
 /* fs3etoottimeline_posts.c */
 TTLPost *ttl_post_alloc        (const TTLPostSetup *setup);

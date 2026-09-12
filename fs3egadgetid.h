@@ -131,7 +131,9 @@
 #define GID_NETWORKV_LIST                      318
 
 /* Emoji picker window (fs3eemojibox.c), opened from GID_TOOT_EMOJI_BUTTON */
-#define GID_EMOJIBOX_CHOOSER  400  /* emoji-set popup chooser */
-#define GID_EMOJIBOX_GRID     401  /* private grid gadget: click a cell to pick */
+#define GID_EMOJIBOX_CHOOSER    400  /* emoji-set popup chooser */
+#define GID_EMOJIBOX_GRID       401  /* private grid gadget: click a cell to pick */
+#define GID_EMOJIBOX_HEXEDITOR  402  /* string.gadget: Unicode hex codepoint */
+#define GID_EMOJIBOX_HEXBUTTON  403  /* UniButton: preview of the hex field, click to insert */
 
 #endif /* FS3EGADGETID_H */

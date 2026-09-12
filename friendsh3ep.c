@@ -40,6 +40,7 @@
 #include <intuition/screens.h>
 #include <intuition/icclass.h>
 #include <intuition/gadgetclass.h>
+#include <intuition/pointerclass.h>
 
 #include <proto/exec.h>
 #include <proto/graphics.h>
@@ -173,6 +174,8 @@ WORD windowResizeStartW    = 0;   /* window width  at drag start */
 WORD windowResizeStartH    = 0;   /* window height at drag start */
 WORD windowResizeLastTargetW = 0; /* last width  we sent to SizeWindow */
 WORD windowResizeLastTargetH = 0; /* last height we sent to SizeWindow */
+
+
 
 /* Library bases */
 struct GfxBase       *GfxBase       = NULL;
@@ -807,12 +810,7 @@ void FS3EApp_ApplyFontSettings_Delayed(void)
      * Sized proportionally: normal = base, username = base+1, mini = base-2.
      * Re-setting TTIMELINE_Style forces the gadget to re-cache line metrics
      * and do a full relayout + redraw. */
-    FS3EStyle_SetFontSize(&app->style,
-                          app->settings.fontPointSize,
-                          app->settings.primaryFontPath,
-                          app->settings.fallback1FontPath,
-                          app->settings.fallback2FontPath,
-                          app->settings.colorEmojiFontPath);
+    FS3EStyle_SetFontSize(&app->style, &app->settings);
 
     /* SetAttrs (not SetGadgetAttrs) so this reaches the gadget even before
      * the window is open (CurrentMainWindow is still NULL at startup, just
@@ -1173,6 +1171,74 @@ void StartSearchFromLine()
          * server. */
         FS3EApp_SearchWord(text);
     }
+}
+
+/* TRUE if (mx,my) -- window-relative, same space as CurrentMainWindow->
+ * MouseX/Y -- falls inside gadget g's own (already layout-resolved,
+ * window-relative) bounds. NULL-safe so callers can pass a not-yet-
+ * created gadget straight through (e.g. before login, several titlebar/
+ * navbar buttons may not exist yet). */
+static BOOL FS3E_PointInGadget(Object *g, WORD mx, WORD my)
+{
+    struct Gadget *gad;
+    if (!g) return FALSE;
+    gad = (struct Gadget *)g;
+    return (mx >= gad->LeftEdge && mx < gad->LeftEdge + (WORD)gad->Width &&
+            my >= gad->TopEdge  && my < gad->TopEdge  + (WORD)gad->Height);
+}
+
+/* Whichever pointer shape should be shown for the mouse currently at
+ * (mx,my) (window-relative) -- checked across the three interactive
+ * regions the main window is divided into (see FS3E_PointInGadget above
+ * for the coordinate space):
+ *   1. TootTimeline -- one BOOPSI gadget with its own internal hot-spots
+ *      (links/buttons/images/...), queried via
+ *      TTIMELINE_HotSpotPointerTypeAt (see fs3etoottimeline.h) since
+ *      nothing outside the gadget knows where those are.
+ *   2. TitleBarLayout -- sparse buttons among drag-strip/empty space
+ *      (see fs3etitlebar.h's child-order comment), so each of its 9
+ *      buttons is checked individually -- unlike TootTimeline these are
+ *      ordinary child Gadgets with plain rects, no custom query needed.
+ *   3. NavBarLayout -- always exactly 8 buttons tiling its own bounds
+ *      edge-to-edge with no gaps in either row mode (see
+ *      NavBarLayout_OnLayout), so its own outer bounds stand in for
+ *      "over any one of its buttons" without checking all 8.
+ * The three never overlap (siblings in the same layout tree), so order
+ * between them doesn't matter. POINTERTYPE_NORMAL (0) if none claim the
+ * point (window background, scrollbars, the search bar row, ...). */
+static ULONG FS3EApp_HoverPointerType(struct App *app, WORD mx, WORD my)
+{
+    if (app->tootTimeline) {
+        struct Gadget *ttlGad = (struct Gadget *)app->tootTimeline;
+        WORD gadX = mx - ttlGad->LeftEdge;
+        WORD gadY = my - ttlGad->TopEdge;
+
+        if (gadX >= 0 && gadY >= 0 && gadX < ttlGad->Width && gadY < ttlGad->Height) {
+            TTLPointerQuery q;
+            q.gadX = gadX;
+            q.gadY = gadY;
+            q.pointerType = POINTERTYPE_NORMAL;
+            SetGdAttrs(app->tootTimeline, TTIMELINE_HotSpotPointerTypeAt,
+                       (ULONG)&q, TAG_END);
+            return q.pointerType;
+        }
+    }
+
+    if (FS3E_PointInGadget(app->titlebar_closeBtn,      mx, my) ||
+        FS3E_PointInGadget(app->titlebar_iconifyBtn,    mx, my) ||
+        FS3E_PointInGadget(app->titlebar_altposBtn,     mx, my) ||
+        FS3E_PointInGadget(app->titlebar_depthBtn,      mx, my) ||
+        FS3E_PointInGadget(app->titlebar_networkLedBtn, mx, my) ||
+        FS3E_PointInGadget(app->titlebar_scrollUpBtn,   mx, my) ||
+        FS3E_PointInGadget(app->titlebar_playModeBtn,   mx, my) ||
+        FS3E_PointInGadget(app->titlebar_accountBtn,    mx, my) ||
+        FS3E_PointInGadget(app->titlebar_newtootBtn,    mx, my))
+        return POINTERTYPE_HAND;
+
+    if (FS3E_PointInGadget(app->navBarLayout, mx, my))
+        return POINTERTYPE_HAND;
+
+    return POINTERTYPE_NORMAL;
 }
 
 /* - - - - - - - - - - - - - - - - - - - MAIN - - - - - - - - - - - - - - - */
@@ -2086,7 +2152,7 @@ int main(int argc, char **argv)
                         break;
                     }
                     case WMHI_MOUSEMOVE:
-                    {
+                    {                    
                         if (windowDragActive && CurrentMainWindow) {
                             struct Screen *scr = CurrentMainWindow->WScreen;
                             WORD sx = scr->MouseX;
@@ -2123,6 +2189,27 @@ int main(int argc, char **argv)
                                 windowResizeLastTargetW = (WORD)targetW;
                                 windowResizeLastTargetH = (WORD)targetH;
                                 SizeWindow(CurrentMainWindow, dx, dy);
+                            }
+                        }
+                        else if (CurrentMainWindow) {
+                            /* Neither dragging the window nor resizing it --
+                             * track whatever's under the mouse across all
+                             * three parts of the window (see
+                             * FS3EApp_HoverPointerType's doc comment) and
+                             * switch the window's pointer shape to match. */
+                            ULONG newPointerType = FS3EApp_HoverPointerType(
+                                app, CurrentMainWindow->MouseX, CurrentMainWindow->MouseY);
+
+                            /* Only call SetWindowPointer() on an actual
+                             * change -- called on every mouse-move sample
+                             * otherwise, pure waste since it's a no-op past
+                             * the first call anyway. */
+                            if (newPointerType != app->currentHoverPointerType)
+                            {
+                                app->currentHoverPointerType = newPointerType;
+                                SetWindowPointer(CurrentMainWindow,
+                                                  WA_PointerType, newPointerType,
+                                                  TAG_DONE);
                             }
                         }
                     } break;
@@ -2734,6 +2821,43 @@ int main(int argc, char **argv)
                                 else
                                     SetAttrs(currentEditor,
                                         UTED_InsertText, (ULONG)emoji,
+                                        TAG_END);
+                                FS3ETootView_UpdateCharCount(&app->tootView);
+                            }
+                            break;
+                        }
+
+                        /* ---- Emoji box: "Unicode Hex:" field changed --
+                         * purely local to that window (refresh the preview
+                         * button's glyph), reached here because ICA_TARGET
+                         * for that string.gadget is TargetInstance, same
+                         * as every other cross-task BOOPSI notification in
+                         * this app -- see fs3eemojibox.c's file header. ---- */
+                        case GID_EMOJIBOX_HEXEDITOR:
+                            FS3EEmojiBoxWindow_RefreshHexPreview(&app->emojiBoxWindow);
+                            break;
+
+                        /* ---- Emoji box: hex preview button clicked --
+                         * insert the decoded character, same target/flow
+                         * as GID_EMOJIBOX_GRID above. ---- */
+                        case GID_EMOJIBOX_HEXBUTTON:
+                        {
+                            Object *currentEditor =
+                                FS3ETootView_GetLastActivatedUTEditor(&app->tootView);
+                            char utf8buf[8];
+
+                            if (FS3EEmojiBoxWindow_GetHexUTF8(&app->emojiBoxWindow, utf8buf) &&
+                                currentEditor)
+                            {
+                                if (app->tootView.window)
+                                    SetGadgetAttrs(
+                                        (struct Gadget *)currentEditor,
+                                        app->tootView.window, NULL,
+                                        UTED_InsertText, (ULONG)utf8buf,
+                                        TAG_DONE);
+                                else
+                                    SetAttrs(currentEditor,
+                                        UTED_InsertText, (ULONG)utf8buf,
                                         TAG_END);
                                 FS3ETootView_UpdateCharCount(&app->tootView);
                             }

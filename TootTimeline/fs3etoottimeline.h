@@ -452,6 +452,26 @@
  * picks it up on its next natural repaint. */
 #define TTIMELINE_ServerClockOffset     (TTIMELINE_Base + 51)
 
+/* [S] TTLPointerQuery*: in/out hover query -- caller fills in gadX/gadY
+ * (gadget-relative, same coordinate space as GM_HITTEST/GM_HANDLEINPUT's
+ * own mouse fields), gadget fills in pointerType: a POINTERTYPE_* value
+ * (see <intuition/pointerclass.h>; 0 == POINTERTYPE_NORMAL) picked from
+ * whichever hot-spot, if any, covers that point, or 0 if none does. Raw
+ * ULONG rather than that header's enum so this self-contained gadget class
+ * doesn't need the include itself -- friendsh3ep.c already does, to hand
+ * the result straight to SetWindowPointer(). Read-only query, doesn't
+ * mutate anything -- same "S struct pointer with an out field" shape as
+ * TTIMELINE_GetVisiblePosts above. Meant to be polled from friendsh3ep.c's
+ * WMHI_MOUSEMOVE handler while nothing else owns the mouse (no window
+ * drag/resize, no scroll-drag already active on this gadget), so the
+ * pointer shape can track whatever's under the cursor as it moves, not
+ * just at click time. */
+#define TTIMELINE_HotSpotPointerTypeAt  (TTIMELINE_Base + 52)
+
+typedef struct TTLPointerQuery {
+    WORD  gadX, gadY;   /* in: gadget-relative point to test */
+    ULONG pointerType;  /* out: POINTERTYPE_* (intuition/pointerclass.h), 0 = none/normal */
+} TTLPointerQuery;
 
 /* ------------------------------------------------------------------ */
 /* Post content descriptor  (passed via TTIMELINE_AddPost)             */

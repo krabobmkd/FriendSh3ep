@@ -496,6 +496,14 @@ struct App {
     /* enum fs3eViewMode */
     ULONG     viewMode;
 
+    /* POINTERTYPE_* currently applied to CurrentMainWindow via
+     * SetWindowPointer() -- see FS3EApp_HoverPointerType/WMHI_MOUSEMOVE in
+     * friendsh3ep.c. Tracked so that handler only calls SetWindowPointer()
+     * again when the hovered region's desired shape actually changes
+     * (TootTimeline hot-spots, TitleBarLayout/NavBarLayout buttons, or
+     * neither). */
+    ULONG currentHoverPointerType;
+
     /* enum fs3eViewMode -- whichever channel was active the moment Search
      * was last entered FROM a non-Search channel (Home/Local/Fed/Notifs/
      * Bookmarks/News/User), captured once, centrally, in fs3e_setViewMode
