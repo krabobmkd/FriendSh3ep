@@ -1089,8 +1089,17 @@ void FS3ETootView_Close(FS3ETootView *tv)
 
     GetAttr(WA_Left,   tv->windowObj, (ULONG *)&tv->left);
     GetAttr(WA_Top,    tv->windowObj, (ULONG *)&tv->top);
-    GetAttr(WA_Width,  tv->windowObj, (ULONG *)&tv->width);
-    GetAttr(WA_Height, tv->windowObj, (ULONG *)&tv->height);
+
+    if(IntuitionBase->LibNode.lib_Version<47 )
+    {
+        tv->width = (LONG)tv->window->Width;
+        tv->height = (LONG)tv->window->Height;
+    } else
+    {
+        GetAttr(WA_Width,  tv->windowObj, (ULONG *)&tv->width);
+        GetAttr(WA_Height, tv->windowObj, (ULONG *)&tv->height);
+    }
+
 
     DoMethod(tv->windowObj, WM_CLOSE, NULL);
     tv->window = NULL;

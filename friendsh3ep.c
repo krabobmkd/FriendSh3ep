@@ -267,7 +267,7 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/tapedeck.gadget",     39, &TapeDeckBase},
     {"gadgets/slider.gadget",       40, &SliderBase},
     {"requester.class",             42, &RequesterBase},
-    {"utf8rastport.library",         5, &URPBase},
+    {"utf8rastport.library",         6, &URPBase},
     {"datatypes.library",           44, &DataTypesBase},
 
     {NULL, 0, NULL}
@@ -1817,11 +1817,10 @@ int main(int argc, char **argv)
     app->app_port = CreateMsgPort();
 
     app->window_obj = (Object *)NewObject(WINDOW_GetClass(), NULL,
-        WA_Left,    40,
-        WA_Top,     40,
-        WA_Width,   400,
-        WA_Height,  300,
-
+        WA_Left,    app->mainwindow.left,
+        WA_Top,     app->mainwindow.top,
+        WA_Width, app->mainwindow.width,
+        WA_Height,  app->mainwindow.height,
         WA_IDCMP,   IDCMP_GADGETUP | IDCMP_NEWSIZE | IDCMP_RAWKEY
                     | IDCMP_MOUSEMOVE | IDCMP_MOUSEBUTTONS | IDCMP_MENUPICK,
         WA_Flags,
@@ -1947,6 +1946,8 @@ int main(int argc, char **argv)
             ULONG loginSig, tootSig;
             ULONG refreshFlags = 0;
             flushbdbprint();
+            /* flush library output*/
+            //URPDC_FlushGlyphCache(NULL);
 
             loginSig = FS3ELoginView_GetSignalMask(&app->loginView);
             tootSig  = FS3ETootView_GetSignalMask(&app->tootView);
@@ -2834,7 +2835,9 @@ int main(int argc, char **argv)
                          * as every other cross-task BOOPSI notification in
                          * this app -- see fs3eemojibox.c's file header. ---- */
                         case GID_EMOJIBOX_HEXEDITOR:
+                        {
                             FS3EEmojiBoxWindow_RefreshHexPreview(&app->emojiBoxWindow);
+                        }
                             break;
 
                         /* ---- Emoji box: hex preview button clicked --
@@ -2842,24 +2845,30 @@ int main(int argc, char **argv)
                          * as GID_EMOJIBOX_GRID above. ---- */
                         case GID_EMOJIBOX_HEXBUTTON:
                         {
-                            Object *currentEditor =
-                                FS3ETootView_GetLastActivatedUTEditor(&app->tootView);
-                            char utf8buf[8];
-
-                            if (FS3EEmojiBoxWindow_GetHexUTF8(&app->emojiBoxWindow, utf8buf) &&
-                                currentEditor)
+                            // on Up only
+                            if(((ptag =FindTagItem(GA_Selected, msg)) !=NULL) &&
+                                 ptag->ti_Data ==0)
                             {
-                                if (app->tootView.window)
-                                    SetGadgetAttrs(
-                                        (struct Gadget *)currentEditor,
-                                        app->tootView.window, NULL,
-                                        UTED_InsertText, (ULONG)utf8buf,
-                                        TAG_DONE);
-                                else
-                                    SetAttrs(currentEditor,
-                                        UTED_InsertText, (ULONG)utf8buf,
-                                        TAG_END);
-                                FS3ETootView_UpdateCharCount(&app->tootView);
+                                Object *currentEditor =
+                                    FS3ETootView_GetLastActivatedUTEditor(&app->tootView);
+                                char utf8buf[8];
+
+                                 if (FS3EEmojiBoxWindow_GetHexUTF8(&app->emojiBoxWindow, utf8buf) &&
+                                     currentEditor)
+                                 {
+                                    if (app->tootView.window)
+                                        SetGadgetAttrs(
+                                            (struct Gadget *)currentEditor,
+                                            app->tootView.window, NULL,
+                                            UTED_InsertText, (ULONG)utf8buf,
+                                            TAG_DONE);
+                                    else
+                                        SetAttrs(currentEditor,
+                                            UTED_InsertText, (ULONG)utf8buf,
+                                            TAG_END);
+
+                                   FS3ETootView_UpdateCharCount(&app->tootView);
+                                }
                             }
                             break;
                         }
@@ -3284,6 +3293,15 @@ int main(int argc, char **argv)
                                              * see fs3emediaview.c. Opens/
                                              * reuses the "FriendSh3ep
                                              * Media" viewer window. */
+                                            /* thumbnailsOnlyOnClick may have
+                                             * left this attachment's timeline
+                                             * thumbnail never fetched (see
+                                             * fs3esettings.h) -- opening it
+                                             * here is exactly that click, so
+                                             * fetch it now too, independent
+                                             * of FS3EMediaView's own
+                                             * full-size download below. */
+                                            FS3EApp_TriggerMediaThumbFetch(hotSpotString);
                                             FS3EMediaView_ShowUrl(&app->mediaView, hotSpotString, hotSpotAcct);
                                             break;
 
@@ -3345,8 +3363,13 @@ int main(int argc, char **argv)
                                                 ? hotSpotAudioUrl : hotSpotString;
 
                                             if (hotSpotString && hotSpotString[0] && realAudioUrl &&
-                                                strcmp(hotSpotString, realAudioUrl) != 0)
+                                                strcmp(hotSpotString, realAudioUrl) != 0) {
+                                                /* Same thumbnailsOnlyOnClick
+                                                 * catch-up as TTL_HOT_IMAGE
+                                                 * above, for this cover art. */
+                                                FS3EApp_TriggerMediaThumbFetch(hotSpotString);
                                                 FS3EMediaView_ShowUrl(&app->mediaView, hotSpotString, hotSpotAcct);
+                                            }
 
                                             FS3EMediaView_ShowAudioUrl(&app->mediaView, realAudioUrl, hotSpotAcct,
                                                                        app->audioRequestPort, app->audioReplyPort);
@@ -3713,8 +3736,8 @@ void exitclose(void)
         FS3EMediaView_Dispose(&app->mediaView);
         if (app->window_obj)
         {
-            FS3EMenu_Close(&app->menu, CurrentMainWindow);
             FS3ESettings_Save(&app->settings);
+            FS3EMenu_Close(&app->menu, CurrentMainWindow);            
             FS3EMain_Close(&app->mainwindow, app->window_obj, 0);
             /* Cascades: mainlayout → titleBarLayout/navBarLayout/placeholder
              * → all UniButtonP9 children. */

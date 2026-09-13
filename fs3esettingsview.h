@@ -113,7 +113,8 @@ typedef struct FS3ESettingsView {
 
     /* Thumbnails & icons group */
     Object *biggerThumbnailsCheck;
-    Object *minifyThumbnailsCheck;
+//    Object *minifyThumbnailsCheck;
+    Object *thumbnailsOnlyOnClickCheck;
     Object *scalingQualityChooser;
     Object *rgbDrawFunctionChooser;
     struct List  scalingQualityList;

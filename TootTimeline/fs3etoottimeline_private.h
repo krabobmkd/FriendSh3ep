@@ -51,6 +51,7 @@
 #include "fs3etoottimeline.h"
 #include "../compilers.h"
 #include "../fs3etextwrap.h"
+#include "../fs3eblurhash.h"
 
 /* ------------------------------------------------------------------ */
 /* Tile pool constants                                                   */
@@ -352,6 +353,17 @@ typedef struct TTLPost {
     ULONG  mediaKinds[TTL_POST_MAX_MEDIA];
     ULONG  mediaCount;
     ULONG  mediaCurrentIndex;
+
+    /* Raw blurhash strings (AllocVec'd copies), same indexing/NULL-past-
+     * mediaCount convention as mediaUrls -- see TTLPostSetup.mediaBlurhash.
+     * mediaBlurhashColors[i] is decoded from mediaBlurhash[i] once, at the
+     * same time it's duplicated (not per-draw -- see fs3eblurhash.h),
+     * valid only where mediaBlurhashValid[i] is TRUE (NULL/""/corrupt hash
+     * leaves it FALSE, ttl_toot_render then falls back to the plain
+     * placeholder rect). */
+    char  *mediaBlurhash[TTL_POST_MAX_MEDIA];
+    UBYTE  mediaBlurhashColors[TTL_POST_MAX_MEDIA][FS3EBLURHASH_CELLS][3];
+    BOOL   mediaBlurhashValid[TTL_POST_MAX_MEDIA];
 
     /* Comma-joined media_attachments[].id list (AllocVec'd), built once
      * from TTLPostSetup.mediaIds at alloc time; NULL if mediaCount==0. Not

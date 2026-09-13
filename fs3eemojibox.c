@@ -787,13 +787,14 @@ BOOL FS3EEmojiBoxWindow_Create(FS3EEmojiBoxWindow *ebw, struct URPDrawContext *d
         STRINGA_TextVal,   (ULONG)"1F99C",
         TAG_END);
     if (!ebw->hexEditor) return FALSE;
-
+//app->settings.colorEmojiFontPath
     ebw->hexButton = (Object *)NewObject(UNIBUTTON_GetClass(), NULL,
         GA_ID,              (ULONG)GID_EMOJIBOX_HEXBUTTON,
         GA_RelVerify,       TRUE,
         ICA_TARGET,         (ULONG)TargetInstance,
         UBT_BevelStyle,     BVS_BUTTON,
-        UBT_URPDrawContext, (ULONG)app->buttonDC,
+        UBT_URPDrawContext, (ULONG)dc,
+//        UBT_URPDrawContext, (ULONG) app->buttonDC,
         GA_Text,            (ULONG)"\xF0\x9F\xA6\x9C", /* U+1F99C parrot */
         TAG_END);
     if (!ebw->hexButton) return FALSE;

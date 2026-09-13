@@ -45,6 +45,7 @@
 #define TT_KEEPBIGTHUMBNAILS  "KEEPBIGTHUMBNAILS"  /* "1" or "0"                  */
 #define TT_BIGGERTHUMBNAILS   "BIGGERTHUMBNAILS"   /* "1" or "0"                  */
 #define TT_MINIFYTHUMBNAILS   "MINIFYTHUMBNAILS"   /* "1" or "0"                  */
+#define TT_THUMBSONLYONCLICK  "THUMBSONLYONCLICK"  /* "1" or "0"                  */
 #define TT_SCALINGQUALITY     "SCALINGQUALITY"     /* FS3E_SCALEQ_* index         */
 #define TT_RGBDRAWFUNCTION    "RGBDRAWFUNCTION"    /* FS3E_RGBDRAW_* index        */
 #define TT_URLLINKACTION      "URLLINKACTION"      /* FS3E_URLLINK_* index        */
@@ -200,6 +201,10 @@ void FS3ESettings_Load(FS3ESettings *s)
     val = ToolTypePrefs_Get(TT_MINIFYTHUMBNAILS);
     if (val) s->minifyThumbnails = (val[0] != '0');
 
+    s->thumbnailsOnlyOnClick = FALSE;
+    val = ToolTypePrefs_Get(TT_THUMBSONLYONCLICK);
+    if (val) s->thumbnailsOnlyOnClick = (val[0] != '0');
+
     s->scalingQuality = FS3E_SCALEQ_FAST;
     val = ToolTypePrefs_Get(TT_SCALINGQUALITY);
     if (val && val[0] != '\0') {
@@ -249,6 +254,11 @@ void FS3ESettings_Load(FS3ESettings *s)
 
     /* Main window position - written directly into app->mainwindow */
     if (app) {
+    // default
+        app->mainwindow.left   = 40;
+        app->mainwindow.top    = 40;
+        app->mainwindow.width  = 400;
+        app->mainwindow.height = 300;
         val = ToolTypePrefs_Get(TT_WINDOW);
         if (val && val[0] != '\0') {
             int l = 0, t = 0, w = 0, h = 0;
@@ -389,6 +399,7 @@ void FS3ESettings_Save(FS3ESettings *s)
 
     ToolTypePrefs_Set(TT_BIGGERTHUMBNAILS, s->biggerThumbnails ? "1" : "0");
     ToolTypePrefs_Set(TT_MINIFYTHUMBNAILS, s->minifyThumbnails ? "1" : "0");
+    ToolTypePrefs_Set(TT_THUMBSONLYONCLICK, s->thumbnailsOnlyOnClick ? "1" : "0");
 
     snprintf(buf, sizeof(buf), "%d", s->scalingQuality);
     ToolTypePrefs_Set(TT_SCALINGQUALITY, buf);

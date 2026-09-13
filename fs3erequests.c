@@ -1536,6 +1536,7 @@ static void FS3EApp_MapStatusToPostSetup(TTLPostSetup *post, const FS3ENetStatus
         post->mediaUrls[mi]      = st->fmas_MediaUrls[mi];
         post->mediaAudioUrls[mi] = st->fmas_MediaAudioUrls[mi];
         post->mediaIds[mi]  = st->fmas_MediaIds[mi];
+        post->mediaBlurhash[mi] = st->fmas_MediaBlurhash[mi];
         switch (st->fmas_MediaKind[mi]) {
             case FS3ENET_MEDIAKIND_IMAGE: post->mediaKinds[mi] = TTL_MEDIA_KIND_IMAGE; break;
             case FS3ENET_MEDIAKIND_VIDEO: post->mediaKinds[mi] = TTL_MEDIA_KIND_VIDEO; break;
@@ -1656,6 +1657,12 @@ static void FS3EApp_TriggerMediaFetchesForStatus(const FS3ENetStatus *st)
                 if (!audioUrl || !audioUrl[0] || strcmp(url, audioUrl) == 0)
                     continue;
             }
+            /* Deferred until the user actually opens this attachment --
+             * see FS3EApp_TriggerMediaThumbFetch, called from friendsh3ep.c
+             * when TTL_HOT_IMAGE opens FS3EMediaView -- and
+             * fs3esettings.h's thumbnailsOnlyOnClick doc comment. Until
+             * then ttl_toot_render draws the blurhash placeholder. */
+            if (app->settings.thumbnailsOnlyOnClick) continue;
             if (AvatarImages_IsMediaRequested(app->avatarImages, url)) continue;
             {
                 ULONG reqSize = sizeof(FS3ENetFetchImageReq)
@@ -1708,6 +1715,41 @@ static void FS3EApp_TriggerMediaFetchesForStatus(const FS3ENetStatus *st)
             else
                 FreeVec(req);
         }
+    }
+}
+
+/* Explicitly triggers a timeline-thumbnail fetch for one attachment URL,
+ * bypassing settings.thumbnailsOnlyOnClick's gate in
+ * FS3EApp_TriggerMediaFetchesForStatus above -- called from friendsh3ep.c
+ * when the user actually opens that attachment in FS3EMediaView (TTL_HOT_
+ * IMAGE/PLAY_AUDIO), so the next time this post scrolls back into view
+ * the real thumbnail is what gets drawn instead of leaving the blurhash
+ * placeholder (see fs3eblurhash.h) up forever. Same dedup/no-op-if-
+ * already-requested behavior as that loop; safe to call unconditionally
+ * on every click regardless of the setting, since it's a no-op once the
+ * fetch already happened (on its own, when the setting is off; via this
+ * function, when it's on). */
+void FS3EApp_TriggerMediaThumbFetch(const char *url)
+{
+    ULONG reqSize;
+    FS3ENetFetchImageReq *req;
+
+    if (!app->avatarImages || !url || !url[0]) return;
+    if (AvatarImages_IsMediaRequested(app->avatarImages, url)) return;
+
+    reqSize = sizeof(FS3ENetFetchImageReq)
+            + strlen(url) + 1 + strlen(url) + 1
+            + strlen(FS3E_CACHE_SUBDIR_THUMBNAILS) + 1;
+    req = FS3ENetFetchImageReq_Alloc(url, url,
+                                      FS3E_CACHE_SUBDIR_THUMBNAILS,
+                                      (BOOL)(!app->settings.minifyThumbnails ||
+                                             app->settings.keepBigThumbnails),
+                                      FALSE);
+    if (req) {
+        if (FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, reqSize))
+            AvatarImages_MarkMediaRequested(app->avatarImages, url);
+        else
+            FreeVec(req);
     }
 }
 
@@ -2290,6 +2332,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                             post.mediaUrls[mi]      = st->fmas_MediaUrls[mi];
                             post.mediaAudioUrls[mi] = st->fmas_MediaAudioUrls[mi];
                             post.mediaIds[mi]  = st->fmas_MediaIds[mi];
+                            post.mediaBlurhash[mi] = st->fmas_MediaBlurhash[mi];
                             switch (st->fmas_MediaKind[mi]) {
                                 case FS3ENET_MEDIAKIND_IMAGE: post.mediaKinds[mi] = TTL_MEDIA_KIND_IMAGE; break;
                                 case FS3ENET_MEDIAKIND_VIDEO: post.mediaKinds[mi] = TTL_MEDIA_KIND_VIDEO; break;
@@ -2330,6 +2373,9 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                                 if (!audioUrl || !audioUrl[0] || strcmp(url, audioUrl) == 0)
                                     continue;
                             }
+                            /* See the matching block in
+                             * FS3EApp_TriggerMediaFetchesForStatus() above. */
+                            if (app->settings.thumbnailsOnlyOnClick) continue;
                             if (AvatarImages_IsMediaRequested(app->avatarImages, url)) continue;
                             {
                                 ULONG reqSize = sizeof(FS3ENetFetchImageReq)

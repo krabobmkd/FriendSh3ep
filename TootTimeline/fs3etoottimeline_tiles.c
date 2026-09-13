@@ -32,6 +32,7 @@
 #include <graphics/gfx.h>
 #include <graphics/rastport.h>
 #include <graphics/layers.h>
+#include <graphics/view.h>
 #include <string.h>
 #include <stdio.h>
 #include <time.h>
@@ -910,9 +911,50 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                         UBYTE fmt = BMFMT_UNKNOWN;
                         BOOL  failed = (inst->avatarImages && hs->data)
                                      && AvatarImages_MediaFailed(inst->avatarImages, hs->data, &fmt);
+                        BOOL  drewBlurhash = FALSE;
 
-                        SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
-                        RectFill(rp, rx, ry, (WORD)(rx + hs->w - 1), (WORD)(ry + hs->h - 1));
+                        /* No thumbnail yet (still fetching, or deferred
+                         * altogether by settings.thumbnailsOnlyOnClick --
+                         * see fs3esettings.h) -- draw the attachment's
+                         * blurhash (decoded once into 16 flat colors at
+                         * post-setup time, see fs3eblurhash.h/TTLPost.
+                         * mediaBlurhashColors) as a 4x4 mosaic instead of
+                         * the plain accent-colored placeholder rect below,
+                         * remapping each cell's RGB to the screen's actual
+                         * palette via FindColor() (no ObtainBestPenA --
+                         * these are transient per-post colors, not worth
+                         * permanently allocating a pen for, unlike
+                         * FS3EManagedColor in fs3estyle.c). */
+                        if (post->mediaCurrentIndex < post->mediaCount &&
+                            post->mediaBlurhashValid[post->mediaCurrentIndex])
+                        {
+                            struct ColorMap *cm = inst->screen->ViewPort.ColorMap;
+                            UBYTE (*cellColors)[3] = post->mediaBlurhashColors[post->mediaCurrentIndex];
+                            WORD  gr, gc;
+
+                            for (gr = 0; gr < FS3EBLURHASH_GRID; gr++) {
+                                WORD cy0 = (WORD)(ry + ((LONG)hs->h * gr) / FS3EBLURHASH_GRID);
+                                WORD cy1 = (WORD)(ry + ((LONG)hs->h * (gr + 1)) / FS3EBLURHASH_GRID - 1);
+                                for (gc = 0; gc < FS3EBLURHASH_GRID; gc++) {
+                                    UBYTE *col = cellColors[gr * FS3EBLURHASH_GRID + gc];
+                                    WORD   cx0 = (WORD)(rx + ((LONG)hs->w * gc) / FS3EBLURHASH_GRID);
+                                    WORD   cx1 = (WORD)(rx + ((LONG)hs->w * (gc + 1)) / FS3EBLURHASH_GRID - 1);
+                                    LONG   pen = FindColor(cm,
+                                        0x01010101UL * col[0],
+                                        0x01010101UL * col[1],
+                                        0x01010101UL * col[2], -1);
+
+                                    SetAPen(rp, pen);
+                                    RectFill(rp, cx0, cy0, cx1, cy1);
+                                }
+                            }
+                            drewBlurhash = TRUE;
+                        }
+
+                        if (!drewBlurhash) {
+                            SetAPen(rp, (LONG)FS3E_PEN(inst->style, FS3E_COLOR_ACCENT));
+                            RectFill(rp, rx, ry, (WORD)(rx + hs->w - 1), (WORD)(ry + hs->h - 1));
+                        }
 
                         /* Decode failed and the source sniffed as WebP
                          * (see BmImage_SniffFormat) -- say so instead of

@@ -230,28 +230,41 @@ static void resize_dc(struct URPDrawContext *dc, int size,
     URPDC_FlushFonts(dc);
     URPDC_AddFont(dc, primary, size, 0);
     if (fallback1) URPDC_AddFont(dc, fallback1, size, 0);
+    URPDC_AddFont(dc, emoji, size, 0);
     if (fallback2) URPDC_AddFont(dc, fallback2, size, 0);
     if (fallback3) URPDC_AddFont(dc, fallback3, size, 0);
-    URPDC_AddFont(dc, emoji, size, 0);
+
     if (styleBits) URPDC_SetStyle(dc, styleBits);
 }
-/*
-app->settings.fontPointSize,
-                          app->settings.primaryFontPath,
-                          app->settings.fallback1FontPath,
-                          app->settings.fallback2FontPath,
-                          app->settings.colorEmojiFontPath
-*/
+
+/* Cheap path: font list is unchanged, only the point size moved.
+ * URPDC_ChangeFontsSize resizes every already-open face in place
+ * (FT_Set_Char_Size on the existing FT_Face -- no file reopen, no
+ * reparse) and flushes just the glyph bitmap cache. fontMask ~0UL covers
+ * all URP_MAX_FONTS slots; the library bounds it to dc->numFonts itself. */
+static void resize_dc_size_only(struct URPDrawContext *dc, int size, ULONG styleBits)
+{
+    if (!dc) return;
+    URPDC_ChangeFontsSize(dc, (ULONG)size, ~0UL);
+    if (styleBits) URPDC_SetStyle(dc, styleBits);
+}
+
+/* NULL and "" both mean "no font in this slot" -- treat them as equal so a
+ * settings pointer that goes from NULL to NULL (unset fallback, untouched)
+ * doesn't look like a change against the cached "". */
+static int font_path_changed(const char *cached, const char *cur)
+{
+    if (!cur) cur = "";
+    return strcmp(cached, cur) != 0;
+}
+
 void FS3EStyle_SetFontSize(FS3EStyle *st,FS3ESettings   *settings)
-/* int baseSize,
-                           const char *primary,
-                           const char *fallback1, const char *fallback2,
-                           const char *emoji)*/
 {
     int baseSize = settings->fontPointSize;
     const char *primary = settings->primaryFontPath;
     const char *fallback1 = settings->fallback1FontPath;
     const char *fallback2 = settings->fallback2FontPath;
+    const char *fallback3 = settings->fallback3FontPath;
     const char *emoji = settings->colorEmojiFontPath;
 
     const char *pri = primary ? primary : "LiberationSans-Regular.ttf";
@@ -259,12 +272,41 @@ void FS3EStyle_SetFontSize(FS3EStyle *st,FS3ESettings   *settings)
     int normalSize   = baseSize;
     int usernameSize = (baseSize * 18)/16;
     int miniSize     = (baseSize *14)/16;
+    int fontsChanged;
 
     if (!st) return;
 
-    resize_dc(st->dcNormal,   normalSize,   pri, fallback1, fallback2,settings->fallback3FontPath, emo, 0);
-    resize_dc(st->dcUsername, usernameSize, pri, fallback1, fallback2,settings->fallback3FontPath, emo, URP_STYLE_BOLD);
-    resize_dc(st->dcMini,     miniSize,     pri, fallback1, fallback2,settings->fallback3FontPath, emo, 0);
+    /* pri/emo are already defaulted; fallback1/2/3 compare raw (NULL =
+     * absent slot) since resize_dc's font count depends on which of them
+     * are actually present. */
+    fontsChanged = !st->fontCacheValid ||
+                   font_path_changed(st->fontCachePrimary,   pri) ||
+                   font_path_changed(st->fontCacheFallback1, fallback1) ||
+                   font_path_changed(st->fontCacheFallback2, fallback2) ||
+                   font_path_changed(st->fontCacheFallback3, fallback3) ||
+                   font_path_changed(st->fontCacheEmoji,     emo);
+
+    if (fontsChanged) {
+        resize_dc(st->dcNormal,   normalSize,   pri, fallback1, fallback2, fallback3, emo, 0);
+        resize_dc(st->dcUsername, usernameSize, pri, fallback1, fallback2, fallback3, emo, URP_STYLE_BOLD);
+        resize_dc(st->dcMini,     miniSize,     pri, fallback1, fallback2, fallback3, emo, 0);
+
+        strncpy(st->fontCachePrimary,   pri,                   FS3E_FONTPATH_MAX - 1);
+        strncpy(st->fontCacheFallback1, fallback1 ? fallback1 : "", FS3E_FONTPATH_MAX - 1);
+        strncpy(st->fontCacheFallback2, fallback2 ? fallback2 : "", FS3E_FONTPATH_MAX - 1);
+        strncpy(st->fontCacheFallback3, fallback3 ? fallback3 : "", FS3E_FONTPATH_MAX - 1);
+        strncpy(st->fontCacheEmoji,     emo,                   FS3E_FONTPATH_MAX - 1);
+        st->fontCachePrimary[FS3E_FONTPATH_MAX - 1]   = '\0';
+        st->fontCacheFallback1[FS3E_FONTPATH_MAX - 1] = '\0';
+        st->fontCacheFallback2[FS3E_FONTPATH_MAX - 1] = '\0';
+        st->fontCacheFallback3[FS3E_FONTPATH_MAX - 1] = '\0';
+        st->fontCacheEmoji[FS3E_FONTPATH_MAX - 1]     = '\0';
+        st->fontCacheValid = TRUE;
+    } else {
+        resize_dc_size_only(st->dcNormal,   normalSize,   0);
+        resize_dc_size_only(st->dcUsername, usernameSize, URP_STYLE_BOLD);
+        resize_dc_size_only(st->dcMini,     miniSize,     0);
+    }
 
     /* Re-bind the screen so the DCs can access the colour map for CLUT mode.
      * URPDC_FlushFonts may reset internal bitmap state. */

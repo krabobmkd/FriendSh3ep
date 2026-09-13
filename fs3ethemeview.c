@@ -673,10 +673,20 @@ void FS3EThemeView_Close(FS3EThemeView *tv)
 
     GetAttr(WA_Left,   tv->windowObj, (ULONG *)&tv->left);
     GetAttr(WA_Top,    tv->windowObj, (ULONG *)&tv->top);
-    GetAttr(WA_Width,  tv->windowObj, (ULONG *)&tv->width);
-    GetAttr(WA_Height, tv->windowObj, (ULONG *)&tv->height);
 
-    FS3ESettings_Save(&app->settings);
+
+    /* OS3.9 bug again ! */
+    if(IntuitionBase->LibNode.lib_Version<47 )
+    {
+        tv->width = (LONG)tv->window->Width;
+        tv->height = (LONG)tv->window->Height;
+    } else
+    {
+        GetAttr(WA_Width,  tv->windowObj, (ULONG *)&tv->width);
+        GetAttr(WA_Height, tv->windowObj, (ULONG *)&tv->height);
+    }
+
+  //no  FS3ESettings_Save(&app->settings);
     DoMethod(tv->windowObj, WM_CLOSE, NULL);
     tv->window = NULL;
 }

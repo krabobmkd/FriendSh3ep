@@ -285,8 +285,10 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Thumbnails & icons",
     /* MSG_SETTINGSV_BIGGER_THUMBNAILS */
     "Bigger Thumbnails",
-    /* MSG_SETTINGSV_MINIFY_THUMBNAILS */
+    /* MSG_SETTINGSV_MINIFY_THUMBNAILS -> this is disabled */
     "Minify thumbnails source",
+    /* MSG_SETTINGSV_THUMBS_ONLY_ON_CLICK */
+    "Thumbnails only on click",
     /* MSG_SETTINGSV_SCALING_QUALITY */
     "Scaling Quality",
     /* MSG_SETTINGSV_SCALEQ_FAST */

@@ -118,6 +118,13 @@ void FS3EApp_LoginSubmitCode(void);
  * Search/posting stay disabled until a real login. */
 void FS3EApp_ConnectAnonymously(void);
 
+/* Explicitly triggers a timeline-thumbnail fetch for one attachment URL,
+ * bypassing settings.thumbnailsOnlyOnClick's gate -- call when the user
+ * opens that attachment in FS3EMediaView (TTL_HOT_IMAGE/PLAY_AUDIO), so
+ * the blurhash placeholder (fs3eblurhash.h) gets replaced by the real
+ * thumbnail next time the post is drawn. Safe to call unconditionally. */
+void FS3EApp_TriggerMediaThumbFetch(const char *url);
+
 /* Handle one reply message from the network process. */
 void FS3EApp_HandleNetReply(FS3ENetMessage *msg);
 

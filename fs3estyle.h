@@ -30,6 +30,11 @@
 #include "bmimage.h"
 #include "rgbimage.h"
 
+/* Max length cached for a font path in FS3EStyle's font-change detection
+ * (see fontCachePrimary etc. below) -- matches utf8rastport.library's own
+ * internal URP_PATH_MAX, comfortably larger than any real font filename. */
+#define FS3E_FONTPATH_MAX 256
+
 /* ------------------------------------------------------------------ */
 /* FS3EManagedColor — one color role: RGB definition + runtime pen     */
 /* ------------------------------------------------------------------ */
@@ -170,6 +175,21 @@ typedef struct {
     struct URPDrawContext *dcNormal;    /* body text   : 12 pt regular */
     struct URPDrawContext *dcUsername;  /* display names: 13 pt bold   */
     struct URPDrawContext *dcMini;      /* timestamps, acct: 9 pt      */
+
+    /* Font path set last applied via FS3EStyle_SetFontSize(), used to tell
+     * "only the point size changed" (cheap URPDC_ChangeFontsSize resize)
+     * apart from "the font list itself changed" (needs a full
+     * URPDC_FlushFonts + URPDC_AddFont reload, since fonts are opened by
+     * path). "" means "no font in this slot", matching a NULL settings
+     * pointer. fontCacheValid is 0 until the first call. All three DCs
+     * share one path set (only size/style differ per DC), so one cache
+     * covers dcNormal/dcUsername/dcMini together. */
+    char fontCachePrimary[FS3E_FONTPATH_MAX];
+    char fontCacheFallback1[FS3E_FONTPATH_MAX];
+    char fontCacheFallback2[FS3E_FONTPATH_MAX];
+    char fontCacheFallback3[FS3E_FONTPATH_MAX];
+    char fontCacheEmoji[FS3E_FONTPATH_MAX];
+    int  fontCacheValid;
 
     /* Post layout metrics derived from dcNormal line height.
      * Updated by FS3EStyle_InitDefaults and FS3EStyle_SetFontSize.

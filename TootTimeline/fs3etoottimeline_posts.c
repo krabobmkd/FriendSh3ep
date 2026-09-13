@@ -58,6 +58,21 @@ static char *dup_strn(const char *s, ULONG len)
     return copy;
 }
 
+/* Duplicates hash into post->mediaBlurhash[mi] (NULL if hash is NULL/"")
+ * and decodes it into post->mediaBlurhashColors[mi] right away -- once
+ * here, not on every draw, see fs3eblurhash.h. mediaBlurhashValid[mi] is
+ * left FALSE (colors untouched) when there's no hash or it fails to
+ * decode; ttl_toot_render then just falls back to the plain placeholder
+ * rect it always used to draw. Caller must have already freed/cleared
+ * any previous post->mediaBlurhash[mi] (same convention as mediaUrls). */
+static void ttl_set_media_blurhash(TTLPost *post, ULONG mi, const char *hash)
+{
+    post->mediaBlurhash[mi]      = (hash && hash[0]) ? dup_str(hash) : NULL;
+    post->mediaBlurhashValid[mi] = post->mediaBlurhash[mi]
+        ? FS3EBlurHash_Decode4x4(post->mediaBlurhash[mi], post->mediaBlurhashColors[mi])
+        : FALSE;
+}
+
 /* Number of visual lines needed to display utf8 in a column of maxW pixels.
  * Coarse fallback for when no draw context is available yet (style not
  * set) -- ttl_post_layout uses the pixel-exact fs3etextwrap path whenever
@@ -277,6 +292,7 @@ TTLPost *ttl_post_alloc(const TTLPostSetup *setup)
             post->mediaAudioUrls[mi] = (setup->mediaAudioUrls[mi] && setup->mediaAudioUrls[mi][0])
                                       ? dup_str(setup->mediaAudioUrls[mi]) : NULL;
             post->mediaKinds[mi] = setup->mediaKinds[mi];
+            ttl_set_media_blurhash(post, mi, setup->mediaBlurhash[mi]);
         }
 
         /* Comma-join attachment ids for TTL_HOT_MODIFY -- see
@@ -419,6 +435,7 @@ void ttl_post_refresh_fields(TTLPost *post, const TTLPostSetup *setup)
     for (mi = 0; mi < post->mediaCount; mi++) {
         if (post->mediaUrls[mi]) FreeVec(post->mediaUrls[mi]);
         if (post->mediaAudioUrls[mi]) FreeVec(post->mediaAudioUrls[mi]);
+        if (post->mediaBlurhash[mi]) FreeVec(post->mediaBlurhash[mi]);
     }
     for (mi = 0; mi < post->pollOptionCount; mi++)
         if (post->pollOptionTitles[mi]) FreeVec(post->pollOptionTitles[mi]);
@@ -452,6 +469,7 @@ void ttl_post_refresh_fields(TTLPost *post, const TTLPostSetup *setup)
         post->mediaAudioUrls[mi] = (setup->mediaAudioUrls[mi] && setup->mediaAudioUrls[mi][0])
                                   ? dup_str(setup->mediaAudioUrls[mi]) : NULL;
         post->mediaKinds[mi] = setup->mediaKinds[mi];
+        ttl_set_media_blurhash(post, mi, setup->mediaBlurhash[mi]);
     }
 
     post->mediaIdsJoined = NULL;
@@ -600,6 +618,7 @@ static void ttl_toot_dispose(TTLPost *post)
         for (mi = 0; mi < post->mediaCount; mi++) {
             if (post->mediaUrls[mi]) FreeVec(post->mediaUrls[mi]);
             if (post->mediaAudioUrls[mi]) FreeVec(post->mediaAudioUrls[mi]);
+            if (post->mediaBlurhash[mi]) FreeVec(post->mediaBlurhash[mi]);
         }
         for (mi = 0; mi < post->pollOptionCount; mi++)
             if (post->pollOptionTitles[mi]) FreeVec(post->pollOptionTitles[mi]);

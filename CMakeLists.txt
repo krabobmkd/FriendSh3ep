@@ -5,7 +5,8 @@ set(CMAKE_C_STANDARD 11)
 
 # Assembler output for debug; picked up by the network subdirectory via scope.
 list(APPEND AMIGA_COMPILER_OPTIONS -save-temps -Wall)
-list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O2)
+# -mhard-float -ffast-math -msoft-float
+list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020  -O2)
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/sdk/include)
 
@@ -32,6 +33,7 @@ set(FRIENDSH3EP_SOURCES
     rgbscale.c
     rgbimage.c
     scalepixelarraybilinear.c
+    fs3eblurhash.c
     clipboard.c
     patch9.c
     stylefile.c

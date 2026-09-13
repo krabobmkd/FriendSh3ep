@@ -2426,6 +2426,7 @@ static ULONG FS3ENet_SizeStatusFields(const cJSON *item, const cJSON *src)
              * preview_url-with-url-fallback below (see fmas_MediaAudioUrls'
              * doc comment in fs3enet.h). */
             const cJSON *rurl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
+            const cJSON *bh   = att ? cJSON_GetObjectItemCaseSensitive(att, "blurhash") : NULL;
             if (!purl || !cJSON_IsString(purl) || !purl->valuestring)
                 purl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
             total += (purl && cJSON_IsString(purl) && purl->valuestring)
@@ -2434,6 +2435,8 @@ static ULONG FS3ENet_SizeStatusFields(const cJSON *item, const cJSON *src)
                    ? strlen(aid->valuestring) + 1 : 1;
             total += (rurl && cJSON_IsString(rurl) && rurl->valuestring)
                    ? strlen(rurl->valuestring) + 1 : 1;
+            total += (bh && cJSON_IsString(bh) && bh->valuestring)
+                   ? strlen(bh->valuestring) + 1 : 1;
         }
     }
 
@@ -2606,6 +2609,7 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
              * attachment's kind is confirmed to actually be audio, below --
              * see fmas_MediaAudioUrls' doc comment in fs3enet.h. */
             const cJSON *rurl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
+            const cJSON *bh   = att ? cJSON_GetObjectItemCaseSensitive(att, "blurhash") : NULL;
             const cJSON *typeV;
             const char  *typeStr;
             const char  *ru = (rurl && cJSON_IsString(rurl)) ? rurl->valuestring : NULL;
@@ -2681,11 +2685,15 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
              * FS3ENetStatus.fmas_MediaIds. */
             str = (aid && cJSON_IsString(aid)) ? aid->valuestring : "";
             FS3ENet_PackStr(&dst->fmas_MediaIds[mi], p, str);
+
+            str = (bh && cJSON_IsString(bh)) ? bh->valuestring : "";
+            FS3ENet_PackStr(&dst->fmas_MediaBlurhash[mi], p, str);
         }
         for (; mi < FS3ENET_MAX_MEDIA; mi++) {
             dst->fmas_MediaUrls[mi]      = NULL;
             dst->fmas_MediaAudioUrls[mi] = NULL;
             dst->fmas_MediaIds[mi]       = NULL;
+            dst->fmas_MediaBlurhash[mi]  = NULL;
             dst->fmas_MediaKind[mi]      = FS3ENET_MEDIAKIND_UNKNOWN;
         }
         dst->fmas_MediaCount = (ULONG)mCount;

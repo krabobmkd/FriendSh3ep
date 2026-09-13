@@ -46,7 +46,7 @@ void FS3EMain_SetTitle(FS3EMainWindow *mw, const char *title)
     strncpy(mw->title, title, sizeof(mw->title) - 1);
     mw->title[sizeof(mw->title) - 1] = 0;
 
-    if (CurrentMainWindow)
+    if (CurrentMainWindow)œ
         SetWindowTitles(CurrentMainWindow, mw->title, NULL);
 */
 }
@@ -57,9 +57,18 @@ void FS3EMain_GetWindowPos(FS3EMainWindow *mw, Object *window_obj)
 
     GetAttr(WA_Top,    window_obj, (ULONG *)&mw->top);
     GetAttr(WA_Left,   window_obj, (ULONG *)&mw->left);
-    GetAttr(WA_Width,  window_obj, (ULONG *)&mw->width);
-    GetAttr(WA_Height, window_obj, (ULONG *)&mw->height);
 
+
+    /* OS3.9 bug again ! */
+    if(IntuitionBase->LibNode.lib_Version<47 && CurrentMainWindow)
+    {
+        mw->width = (LONG)CurrentMainWindow->Width;
+        mw->height = (LONG)CurrentMainWindow->Height;
+    } else
+    {
+        GetAttr(WA_Width,  window_obj, (ULONG *)&mw->width);
+        GetAttr(WA_Height, window_obj, (ULONG *)&mw->height);
+    }
     if (mw->width  < 128) mw->width  = 128;
     if (mw->height < 64)  mw->height = 64;
 }

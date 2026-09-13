@@ -613,6 +613,16 @@ typedef struct TTLPostSetup {
                                * later PUT-edit of an own toot can resend
                                * them and not lose the attachments. NULL
                                * past mediaCount. */
+    const char *mediaBlurhash[TTL_POST_MAX_MEDIA]; /* attachment blurhash (see
+                               * FS3ENetStatus.fmas_MediaBlurhash), same
+                               * indexing as mediaUrls -- decoded once (see
+                               * fs3eblurhash.h) into a 4x4 flat-color grid
+                               * and drawn in place of the plain accent-
+                               * colored placeholder rect while the real
+                               * thumbnail hasn't been fetched/isn't loaded
+                               * yet. NULL/"" past mediaCount or when the
+                               * server didn't provide one -- falls back to
+                               * the plain placeholder in that case. */
     ULONG       mediaCount;   /* 0..TTL_POST_MAX_MEDIA; 0 = no preview rect */
     ULONG       viewModeBits; /* bit i set = also prepend to channel i (see
                                 * TTIMELINE_NUM_VIEWMODES); a post can be

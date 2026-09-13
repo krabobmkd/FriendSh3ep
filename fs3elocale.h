@@ -221,6 +221,9 @@ enum {
     MSG_SETTINGSV_THUMBNAILS_GROUP,
     MSG_SETTINGSV_BIGGER_THUMBNAILS,
     MSG_SETTINGSV_MINIFY_THUMBNAILS,
+    MSG_SETTINGSV_THUMBS_ONLY_ON_CLICK, /* replaces MSG_SETTINGSV_MINIFY_THUMBNAILS's
+                                          * checkbox in the "Thumbnails & icons" group,
+                                          * see fs3esettings.h's thumbnailsOnlyOnClick */
     MSG_SETTINGSV_SCALING_QUALITY,
     MSG_SETTINGSV_SCALEQ_FAST,
     MSG_SETTINGSV_SCALEQ_BILINEAR,

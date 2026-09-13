@@ -107,6 +107,18 @@ typedef struct FS3ESettings {
      * run thumbnails through the same minify pipeline as icons, like
      * before this option existed. */
     short minifyThumbnails;
+
+    /* FALSE (default) = fetch a toot's media thumbnails as usual as the
+     * timeline scrolls them into view. TRUE = don't request them at all
+     * until the user actually opens that attachment in FS3EMediaView (see
+     * FS3EApp_TriggerMediaFetchesForStatus/FS3EApp_TriggerMediaThumbFetch
+     * in fs3erequests.c) -- until then, ttl_toot_render draws the
+     * attachment's blurhash (see fs3eblurhash.h), remapped to the
+     * screen's actual pens via FindColor(), instead of fetching anything.
+     * Replaces the old "Minify thumbnails source" checkbox above (see
+     * MSG_SETTINGSV_MINIFY_THUMBNAILS -- that one is disabled, this is its
+     * replacement in the settings window). */
+    short thumbnailsOnlyOnClick;
     int   scalingQuality;     /* FS3E_SCALEQ_*, default FS3E_SCALEQ_FAST */
     int   rgbDrawFunction;    /* FS3E_RGBDRAW_*, default FS3E_RGBDRAW_SCALEPIXELARRAY */
 

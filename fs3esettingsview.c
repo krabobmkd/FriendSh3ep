@@ -154,7 +154,8 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
     Object *keepBigUserIconsLabel;
     Object *keepBigThumbnailsLabel;
     Object *biggerThumbnailsLabel;
-    Object *minifyThumbnailsLabel;
+    //Object *minifyThumbnailsLabel;
+    Object *thumbnailsOnlyOnClickLabel;
     Object *scalingQualityLabel;
     Object *rgbDrawFunctionLabel;
     Object *thumbnailsRestartNoteLabel;
@@ -403,7 +404,7 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
 
     biggerThumbnailsLabel = NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_BIGGER_THUMBNAILS), TAG_END);
-
+/*
     sv->minifyThumbnailsCheck = NewObject(CHECKBOX_GetClass(), NULL,
         GA_ID,        GID_SETTINGSV_MINIFY_THUMBNAILS,
         GA_RelVerify, TRUE,
@@ -413,6 +414,16 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
 
     minifyThumbnailsLabel = NewObject(LABEL_GetClass(), NULL,
         LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_MINIFY_THUMBNAILS), TAG_END);
+*/
+    sv->thumbnailsOnlyOnClickCheck = NewObject(CHECKBOX_GetClass(), NULL,
+        GA_ID,        GID_SETTINGSV_THUMBS_ONLY_ON_CLICK,
+        GA_RelVerify, TRUE,
+        GA_Selected,  (ULONG)app->settings.thumbnailsOnlyOnClick,
+        TAG_END);
+    if (!sv->thumbnailsOnlyOnClickCheck) return FALSE;
+
+    thumbnailsOnlyOnClickLabel = NewObject(LABEL_GetClass(), NULL,
+        LABEL_Text, (ULONG)LOC(MSG_SETTINGSV_THUMBS_ONLY_ON_CLICK), TAG_END);
 
     NewList(&sv->scalingQualityList);
     for (i = 0; i < FS3E_SCALEQ_COUNT; i++) {
@@ -484,10 +495,14 @@ BOOL FS3ESettingsView_Create(FS3ESettingsView *sv, const char *title)
         CHILD_WeightedWidth,  1,
         CHILD_WeightedHeight, 0,
         CHILD_Label,          (ULONG)biggerThumbnailsLabel,
-        LAYOUT_AddChild,      (ULONG)sv->minifyThumbnailsCheck,
+        /*LAYOUT_AddChild,      (ULONG)sv->minifyThumbnailsCheck,
         CHILD_WeightedWidth,  1,
         CHILD_WeightedHeight, 0,
-        CHILD_Label,          (ULONG)minifyThumbnailsLabel,
+        CHILD_Label,          (ULONG)minifyThumbnailsLabel,*/
+        LAYOUT_AddChild,      (ULONG)sv->thumbnailsOnlyOnClickCheck,
+        CHILD_WeightedWidth,  1,
+        CHILD_WeightedHeight, 0,
+        CHILD_Label,          (ULONG)thumbnailsOnlyOnClickLabel,
         LAYOUT_AddChild,      (ULONG)sv->scalingQualityChooser,
         CHILD_WeightedHeight, 0,
         CHILD_Label,          (ULONG)scalingQualityLabel,
@@ -740,10 +755,19 @@ void FS3ESettingsView_Close(FS3ESettingsView *sv)
 
     GetAttr(WA_Left,   sv->windowObj, (ULONG *)&sv->left);
     GetAttr(WA_Top,    sv->windowObj, (ULONG *)&sv->top);
-    GetAttr(WA_Width,  sv->windowObj, (ULONG *)&sv->width);
-    GetAttr(WA_Height, sv->windowObj, (ULONG *)&sv->height);
 
-    FS3ESettings_Save(&app->settings);
+    /* OS3.9 bug again ! */
+    if(IntuitionBase->LibNode.lib_Version<47 )
+    {
+        sv->width = (LONG)sv->window->Width;
+        sv->height = (LONG)sv->window->Height;
+    } else
+    {
+        GetAttr(WA_Width,  sv->windowObj, (ULONG *)&sv->width);
+        GetAttr(WA_Height, sv->windowObj, (ULONG *)&sv->height);
+    }
+
+//not now    FS3ESettings_Save(&app->settings);
     DoMethod(sv->windowObj, WM_CLOSE, NULL);
     sv->window = NULL;
 }
@@ -842,10 +866,15 @@ BOOL FS3ESettingsView_HandleInput(FS3ESettingsView *sv)
                     GetAttr(GA_Selected, sv->biggerThumbnailsCheck, &checked);
                     app->settings.biggerThumbnails = checked ? TRUE : FALSE;
 
-                } else if (gadId == GID_SETTINGSV_MINIFY_THUMBNAILS) {
+                } else /*if (gadId == GID_SETTINGSV_MINIFY_THUMBNAILS) {
                     ULONG checked = 0;
                     GetAttr(GA_Selected, sv->minifyThumbnailsCheck, &checked);
                     app->settings.minifyThumbnails = checked ? TRUE : FALSE;
+
+                } else*/ if (gadId == GID_SETTINGSV_THUMBS_ONLY_ON_CLICK) {
+                    ULONG checked = 0;
+                    GetAttr(GA_Selected, sv->thumbnailsOnlyOnClickCheck, &checked);
+                    app->settings.thumbnailsOnlyOnClick = checked ? TRUE : FALSE;
 
                 } else if (gadId == GID_SETTINGSV_SCALING_QUALITY) {
                     ULONG active = 0;

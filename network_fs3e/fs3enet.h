@@ -723,6 +723,11 @@ typedef struct FS3ENetStatus {
      * field as a full replace-list: omit it and existing attachments get
      * stripped even if the edit never touched them. */
     char  *fmas_MediaIds[FS3ENET_MAX_MEDIA];
+    /* media_attachments[].blurhash for the same slots -- "" (not NULL,
+     * same convention FS3ENet_PackStr already gives every other packed
+     * string here) when the server didn't provide one. See
+     * fs3eblurhash.h for what this decodes into. */
+    char  *fmas_MediaBlurhash[FS3ENET_MAX_MEDIA];
     ULONG  fmas_MediaCount;
 
     /* Action-bar counts/state -- for reblogs these belong to the boosted
