@@ -654,6 +654,8 @@ void FS3EApp_ApplyFontSettings_Delayed(void);
  * selection changes. */
 void FS3EApp_LoadTheme(const char *themeName);
 
+void FS3EApp_LoadTheme_Immediate(struct Screen *screen);
+
 void flushThemeImagesFromButtons();
 
 /* Startup progress bar stages -- one entry per FS3EProgressView_SetValue()

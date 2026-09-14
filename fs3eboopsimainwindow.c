@@ -197,7 +197,7 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
 
 }
 
-void FS3EMain_Show(FS3EMainWindow *mw, Object *window_obj)
+void FS3EMain_Show(FS3EMainWindow *mw, Object *window_obj, int upDateStyle)
 {
     LONG x1, y1, w, h;
 
@@ -236,6 +236,12 @@ void FS3EMain_Show(FS3EMainWindow *mw, Object *window_obj)
         WA_Width,        w,
         WA_Height,       h,
         TAG_END);
+
+    /*experimental: set theme before open */
+    if(upDateStyle)
+    {
+        FS3EApp_LoadTheme_Immediate(CurrentMainScreen);
+    }
 
     GenericOpenWindow(mw, window_obj);
 

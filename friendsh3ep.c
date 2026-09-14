@@ -866,26 +866,13 @@ void flushThemeImagesFromButtons()
     // NO free_tb_images(&app->style);
 
 }
-/* Private, does the real work -- see FS3EApp_ApplyFontSettings_Delayed's
- * doc comment just above for why this is split from the public trigger.
- * Not static: none needed yet, but kept a plain function (not inlined
- * into main()) so it mirrors FS3EApp_ApplyFontSettings_Delayed's shape. */
-static void FS3EApp_LoadTheme_Delayed(void)
+
+
+void FS3EApp_LoadTheme_Immediate(struct Screen *screen)
 {
     const char *themeName = app ? app->settings.themeName : NULL;
 
     if (!app) return;
-
-    /* Detach GA_Image on the 4 title bar buttons first thing, before
-     * anything below disposes whatever they're currently pointing at --
-     * otherwise there's a brief window where a live gadget still
-     * references a just-freed bitmap, and a redraw landing in it blits
-     * freed memory (visible as a "trashed" button image for a frame when
-     * switching away from a theme with button images, e.g. mouton, to
-     * "-"). FS3EStyle_SyncTitleBarButtons() below re-attaches a new
-     * theme's images if one gets loaded. */
-     //test flushThemeImagesFromButtons();
-
 
     /* Dispose whatever the previously active theme (or nothing, if none
      * was active) loaded, before deciding what replaces it.
@@ -903,7 +890,7 @@ static void FS3EApp_LoadTheme_Delayed(void)
         char path[300];
         snprintf(path, sizeof(path), "%s/%s", FS3ESTYLE_THEMES_ROOT, themeName);
         FS3EStyle_SetThemePath(&app->style, path);
-        FS3EStyle_LoadThemeImages(&app->style, CurrentMainScreen);
+        FS3EStyle_LoadThemeImages(&app->style, screen);
     } else {
         /* "-" in the theme chooser, or nothing ever activated -- no
          * theme: no images (already closed above, and deliberately not
@@ -920,10 +907,10 @@ static void FS3EApp_LoadTheme_Delayed(void)
         FS3EStyle_ResetPatch9Colors(&app->style);
     }
 
-    FS3EStyle_ApplyColors(&app->style, CurrentMainScreen);
+    FS3EStyle_ApplyColors(&app->style, screen);
 
     /* Loading screen bitmap datatypes allocs/free colors to screen palette */
-    FS3EStyle_UpdateAllDCColorMap(&app->style,CurrentMainScreen);
+    FS3EStyle_UpdateAllDCColorMap(&app->style, screen);
 
 
     /* Propagates the (re)loaded/reset style onto every widget that caches
@@ -934,16 +921,13 @@ static void FS3EApp_LoadTheme_Delayed(void)
      * with what a fresh open already does correctly. */
     FS3EMain_SyncStyleToWidgets();
 
-    /* Recompute minimum gadget sizes and relayout the whole main window --
-     * same call main()'s own font-size-change handling uses (see
-     * delayApplyFontSettings below). Themeview/fs3ethemeview.h's own doc
-     * comment: this affects the main window only, not the theme settings
-     * window itself. */
-    if (app->window_obj) DoMethod(app->window_obj, WM_RETHINK);
+}
+
+INLINE void FS3EApp_LoadTheme_Delayed(void) {
+    FS3EApp_LoadTheme_Immediate(CurrentMainScreen);
 
     delayLoadTheme = FALSE;
 }
-
 /* Create one UniButtonBGBM (flat-colour, cached-by-state), click arrives
  * via WMHI_GADGETUP. dpiH is reserved for future use; font size is
  * controlled by app->buttonDC. Style-image background crop offset (nav
@@ -1913,8 +1897,7 @@ int main(int argc, char **argv)
 
     flushbdbprint();
 
-// printf("FS3EMain_Show\n");
-    FS3EMain_Show(&app->mainwindow, app->window_obj);
+    FS3EMain_Show(&app->mainwindow, app->window_obj,TRUE);
     if (!CurrentMainWindow) cleanexit("Can't open window");
 
     /* Restore the last activated theme (app->settings.themeName, NULL/""
@@ -1925,7 +1908,7 @@ int main(int argc, char **argv)
      * _Delayed worker directly (like FS3EApp_ApplyFontSettings_Delayed()
      * above) rather than through the debounced public trigger, since
      * there's no event loop running yet to deliver the deferred signal. */
-    FS3EApp_LoadTheme_Delayed();
+    //moved FS3EApp_LoadTheme_Delayed();
 
     FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
 // printf("loop\n");
@@ -1984,7 +1967,7 @@ int main(int argc, char **argv)
                 {
                     if (!CurrentMainWindow)
                     {
-                        FS3EMain_Show(&app->mainwindow, app->window_obj);
+                        FS3EMain_Show(&app->mainwindow, app->window_obj,FALSE);
                         if (CurrentMainWindow)
                         {
                             FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
@@ -2034,7 +2017,7 @@ int main(int argc, char **argv)
                         break;
 
                     case WMHI_UNICONIFY:
-                        FS3EMain_Show(&app->mainwindow, app->window_obj);
+                        FS3EMain_Show(&app->mainwindow, app->window_obj,FALSE);
                         if (!CurrentMainWindow) cleanexit("can't re-open window");
                         FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
                         if (app->avatarImages)
@@ -3679,27 +3662,26 @@ int main(int argc, char **argv)
 
             }
 
-
-            // test, doesnt work:
-            // if(refreshTitleBarLayout  && CurrentMainWindow)
-            // {
-            //     RefreshGList((struct Gadget *)app->titleBarLayout,
-            //                  CurrentMainWindow, NULL, 1);
-            //     refreshTitleBarLayout = 0;
-            // }
-            // test trick
-
-            if(delayApplyFontSettings)
+            // - - - - gather style change and window rethink
             {
-                FS3EApp_ApplyFontSettings_Delayed();
-                /* Recompute minimum gadget sizes and relayout the whole window */
-                DoMethod(app->window_obj, WM_RETHINK);
-            }
+                int shouldrethink=FALSE;
+                if(delayApplyFontSettings)
+                {
+                    FS3EApp_ApplyFontSettings_Delayed();
+                    /* Recompute minimum gadget sizes and relayout the whole window */
+                     shouldrethink = TRUE;
+                }
 
-            if(delayLoadTheme)
-            {
-                /* does its own WM_RETHINK internally -- see its doc comment */
-                FS3EApp_LoadTheme_Delayed();
+                if(delayLoadTheme)
+                {
+                    FS3EApp_LoadTheme_Delayed();
+                    shouldrethink = TRUE;
+                }
+                if(shouldrethink)
+                {
+                    DoMethod(app->window_obj, WM_RETHINK);
+                }
+
             }
         }  // ed while events
     }// end paragraph

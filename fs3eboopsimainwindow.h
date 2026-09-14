@@ -33,7 +33,7 @@ typedef struct FS3EMainWindow {
 void FS3EMain_SetTitle(FS3EMainWindow *mw, const char *title);
 
 /* Open (or reopen after iconify) the window on the locked Workbench screen. */
-void FS3EMain_Show(FS3EMainWindow *mw, Object *window_obj);
+void FS3EMain_Show(FS3EMainWindow *mw, Object *window_obj, int updateStyle);
 
 /* Close the Intuition-level window. iconify!=0 sends WM_ICONIFY (keeps the
  * BOOPSI object and app_port alive so WMHI_UNICONIFY can be received),
