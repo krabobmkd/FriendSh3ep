@@ -723,6 +723,20 @@ typedef struct FS3ENetStatus {
      * field as a full replace-list: omit it and existing attachments get
      * stripped even if the edit never touched them. */
     char  *fmas_MediaIds[FS3ENET_MAX_MEDIA];
+    /* media_attachments[].url for the same slots, but ONLY when this
+     * attachment's own kind is VIDEO or GIFV -- "" otherwise (image,
+     * audio, unknown), same NULL-past-fmas_MediaCount convention as
+     * fmas_MediaUrls. Most Amiga configs this app targets can't decode
+     * video, so fmas_MediaUrls[i] above (falls back through preview_url)
+     * is what's actually shown as a thumbnail for these slots -- this is
+     * only the real file's URL, kept so the user can still choose to
+     * download the original mp4/webm/gif for playback elsewhere (see
+     * fs3emediaview.c's "Download full video..."). Unlike
+     * fmas_MediaAudioUrls, which only ever holds a value for a DISTINCT
+     * cover-art case, this is populated unconditionally for every VIDEO/
+     * GIFV slot (there's always a real file to download, whether or not
+     * its preview_url happens to differ). */
+    char  *fmas_MediaVideoUrls[FS3ENET_MAX_MEDIA];
     /* media_attachments[].blurhash for the same slots -- "" (not NULL,
      * same convention FS3ENet_PackStr already gives every other packed
      * string here) when the server didn't provide one. See

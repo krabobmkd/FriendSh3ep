@@ -1158,6 +1158,7 @@ ULONG TTL_OnDispose(Class *cl, Object *o, Msg msg)
     if (inst->selectedAuthorAcct) { FreeVec(inst->selectedAuthorAcct); inst->selectedAuthorAcct = NULL; }
     if (inst->lastHotSpotStr) { FreeVec(inst->lastHotSpotStr); inst->lastHotSpotStr = NULL; }
     if (inst->lastHotSpotAudioUrl) { FreeVec(inst->lastHotSpotAudioUrl); inst->lastHotSpotAudioUrl = NULL; }
+    if (inst->lastHotSpotVideoUrl) { FreeVec(inst->lastHotSpotVideoUrl); inst->lastHotSpotVideoUrl = NULL; }
 
     return DoSuperMethodA(cl, o, (APTR)msg);
 }

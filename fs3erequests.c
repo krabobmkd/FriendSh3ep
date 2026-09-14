@@ -1535,6 +1535,7 @@ static void FS3EApp_MapStatusToPostSetup(TTLPostSetup *post, const FS3ENetStatus
     for (mi = 0; mi < st->fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
         post->mediaUrls[mi]      = st->fmas_MediaUrls[mi];
         post->mediaAudioUrls[mi] = st->fmas_MediaAudioUrls[mi];
+        post->mediaVideoUrls[mi] = st->fmas_MediaVideoUrls[mi];
         post->mediaIds[mi]  = st->fmas_MediaIds[mi];
         post->mediaBlurhash[mi] = st->fmas_MediaBlurhash[mi];
         switch (st->fmas_MediaKind[mi]) {
@@ -2331,6 +2332,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                         for (mi = 0; mi < st->fmas_MediaCount && mi < TTL_POST_MAX_MEDIA; mi++) {
                             post.mediaUrls[mi]      = st->fmas_MediaUrls[mi];
                             post.mediaAudioUrls[mi] = st->fmas_MediaAudioUrls[mi];
+                            post.mediaVideoUrls[mi] = st->fmas_MediaVideoUrls[mi];
                             post.mediaIds[mi]  = st->fmas_MediaIds[mi];
                             post.mediaBlurhash[mi] = st->fmas_MediaBlurhash[mi];
                             switch (st->fmas_MediaKind[mi]) {

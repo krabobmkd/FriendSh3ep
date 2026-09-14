@@ -880,6 +880,16 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                     rx = hs->x;
                     ry = (WORD)(drawY + hs->y);
 
+                    /* Where the "mp4"/"gif" badge below actually lands --
+                     * the real drawn image rect (bx,by/dw,dh) when a thumb
+                     * is loaded, since box-fit can letterbox it well
+                     * inside [rx,ry,hs->w,hs->h) and a badge anchored to
+                     * the outer hotspot rect could then sit in the empty
+                     * letterbox margin instead of over the actual pixels;
+                     * the placeholder/blurhash rect otherwise, which does
+                     * fill [rx,ry,hs->w,hs->h) exactly. */
+                    WORD badgeX = rx, badgeY = ry;
+
                     thumb = (inst->avatarImages && hs->data)
                           ? AvatarImages_GetMedia(inst->avatarImages, hs->data)
                           : NULL;
@@ -904,6 +914,8 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
 
                         bx = (WORD)(rx + (hs->w - (WORD)dw) / 2);
                         by = (WORD)(ry + (hs->h - (WORD)dh) / 2);
+                        badgeX = bx;
+                        badgeY = by;
 
                         RgbImage_DrawScaled(thumb, rp, inst->screen, inst->style->dcNormal,
                                              bx, by, (UWORD)dw, (UWORD)dh);
@@ -985,6 +997,59 @@ void ttl_toot_render(TTLData *inst, struct RastPort *rp, TTLPost *post, LONG til
                             URPDC_TextSizeUTF8(dcBody, label, nc, &m);
                             pos.x = (WORD)(rx + (hs->w - m.width) / 2);
                             pos.y = (WORD)(ry + (hs->h - inst->lineHeight) / 2 + inst->lineAscent);
+                            URPDrawTextUTF8(rp, dcBody, &pos, label, (ULONG)nc);
+                        }
+                    }
+
+                    /* "mp4 🎬"/"gif 🎬" badge for a video/GIFV attachment,
+                     * drawn directly over the top-left corner of the real
+                     * image/placeholder pixels just drawn above (badgeX/Y,
+                     * not the outer hotspot rect -- see that variable's own
+                     * doc comment for why) -- these still just show the
+                     * ordinary preview-frame thumbnail like a plain image,
+                     * so this is the only thing marking it as playable
+                     * rather than a still. No filled background box (that
+                     * read as an ugly grey slab over the picture) -- a
+                     * plain 1px dark drop-shadow behind light text instead,
+                     * same "readable over arbitrary image content" trick
+                     * as any photo app's HUD text. Plain hardcoded label,
+                     * not run through fs3elocale.c -- same reasoning as
+                     * "Image cache has expired." above. */
+                    if (post->mediaCurrentIndex < post->mediaCount) {
+                        ULONG curKind = post->mediaKinds[post->mediaCurrentIndex];
+
+                        if (curKind == TTL_MEDIA_KIND_VIDEO || curKind == TTL_MEDIA_KIND_GIFV) {
+                            /* Both kinds say "mp4" -- Mastodon transcodes
+                             * any uploaded GIF server-side into a muted,
+                             * looping mp4 (that's what "gifv" itself
+                             * means: GIF-like playback, video delivery),
+                             * so a GIFV attachment's real downloadable
+                             * file genuinely is an mp4 too, same as
+                             * VIDEO -- see fmas_MediaVideoUrls' doc
+                             * comment in fs3enet.h. */
+                            const char *label = "mp4 \xF0\x9F\x8E\xAC"; /* 🎬 */
+                            struct URPTextPos pos;
+                            LONG  nc = utf8_codepoints_range(label, label + strlen(label));
+                            WORD  pad = 3;
+                            /* NOT named shadowPen/textPen -- those collide
+                             * with #define shadowPen SHADOWPEN / #define
+                             * textPen TEXTPEN, obsolete gadget-rendering
+                             * aliases pulled in transitively by <proto/
+                             * intuition.h> (see intuition/iobsolete.h), and
+                             * silently rewrite the declaration into
+                             * nonsense ("LONG SHADOWPEN_VALUE = ..."). */
+                            LONG  badgeShadowPen = FindColor(inst->screen->ViewPort.ColorMap, 0, 0, 0, -1);
+                            LONG  badgeTextPen   = FindColor(inst->screen->ViewPort.ColorMap,
+                                                         0xFFFFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, -1);
+
+                            pos.x = (WORD)(badgeX + pad + 1);
+                            pos.y = (WORD)(badgeY + pad + inst->lineAscent + 1);
+                            URPDC_SetDrawColorFromPen(dcBody, inst->screen, badgeShadowPen, -1);
+                            URPDrawTextUTF8(rp, dcBody, &pos, label, (ULONG)nc);
+
+                            pos.x = (WORD)(badgeX + pad);
+                            pos.y = (WORD)(badgeY + pad + inst->lineAscent);
+                            URPDC_SetDrawColorFromPen(dcBody, inst->screen, badgeTextPen, -1);
                             URPDrawTextUTF8(rp, dcBody, &pos, label, (ULONG)nc);
                         }
                     }
@@ -1660,10 +1725,11 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                          const char *postId, BOOL favourited, BOOL following,
                          BOOL reblogged, BOOL bookmarked, BOOL quotable,
                          const char *mediaIds, const char *acct,
-                         const char *audioUrl, const char *pollId)
+                         const char *audioUrl, const char *pollId,
+                         const char *videoUrl)
 {
     TTLData         *inst = TTL_DATA(cl, o);
-    struct TagItem  tags[14];
+    struct TagItem  tags[15];
     struct opUpdate nmsg;
 
     /* Copy into the gadget-owned buffers first -- see the TTLData comment
@@ -1730,6 +1796,21 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
         inst->lastHotSpotAudioUrl = NULL;
     }
 
+    /* Same shape as audioUrl above. */
+    if (videoUrl && videoUrl[0]) {
+        ULONG n = (ULONG)strlen(videoUrl);
+        char *copy = (char *)AllocVec(n + 1, MEMF_ANY);
+        if (copy) {
+            CopyMem((APTR)videoUrl, copy, n);
+            copy[n] = '\0';
+            FreeVec(inst->lastHotSpotVideoUrl);
+            inst->lastHotSpotVideoUrl = copy;
+        }
+    } else {
+        FreeVec(inst->lastHotSpotVideoUrl);
+        inst->lastHotSpotVideoUrl = NULL;
+    }
+
     if (pollId && pollId[0]) {
         ULONG n = (ULONG)strlen(pollId);
         if (n >= sizeof(inst->lastHotSpotPollId)) n = sizeof(inst->lastHotSpotPollId) - 1;
@@ -1767,7 +1848,9 @@ void ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
     tags[11].ti_Data = (ULONG)bookmarked;
     tags[12].ti_Tag  = TTIMELINE_LastHotSpotPollId;
     tags[12].ti_Data = inst->lastHotSpotPollId[0] ? (ULONG)inst->lastHotSpotPollId : 0;
-    tags[13].ti_Tag = TAG_DONE;
+    tags[13].ti_Tag  = TTIMELINE_LastHotSpotVideoUrl;
+    tags[13].ti_Data = inst->lastHotSpotVideoUrl ? (ULONG)inst->lastHotSpotVideoUrl : 0;
+    tags[14].ti_Tag = TAG_DONE;
 
     nmsg.MethodID     = OM_UPDATE;
     nmsg.opu_AttrList = (struct TagItem *)tags;

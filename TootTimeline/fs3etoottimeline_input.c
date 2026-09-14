@@ -297,10 +297,16 @@ static void ttl_activate_hotspot(TTLData *inst, Class *cl, Object *o,
     const char *audioUrl = (post->mediaCurrentIndex < post->mediaCount)
                           ? post->mediaAudioUrls[post->mediaCurrentIndex] : NULL;
 
+    /* Same idea, but for a VIDEO/GIFV attachment's real file -- see
+     * TTLPost.mediaVideoUrls' own doc comment. NULL for every other
+     * kind/hot-spot type. */
+    const char *videoUrl = (post->mediaCurrentIndex < post->mediaCount)
+                          ? post->mediaVideoUrls[post->mediaCurrentIndex] : NULL;
+
     ttl_notify_hotspot(cl, o, gi, hs->type, hs->data, hs->dataLen, targetId,
                         post->favourited, post->following, post->reblogged,
                         post->bookmarked, post->quotable, post->mediaIdsJoined,
-                        post->acct, audioUrl, post->pollId);
+                        post->acct, audioUrl, post->pollId, videoUrl);
 
     if (post->cls && post->cls->activate)
         post->cls->activate(inst, cl, o, gi, post, hs);

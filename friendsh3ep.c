@@ -261,8 +261,8 @@ static LibraryEntry libraryTable[] = {
     {"gadgets/getfile.gadget",       42, &GetFileBase},
     {"gadgets/integer.gadget",       44, &IntegerBase},
     {"gadgets/clicktab.gadget",      44, &ClickTabBase},
-    {"gadgets/unitexteditor.gadget",  4, &UniTextEditorBase},
-    {"gadgets/unibutton.gadget",     4, &UniButtonBase},
+    {"gadgets/unitexteditor.gadget",  6, &UniTextEditorBase},
+    {"gadgets/unibutton.gadget",     6, &UniButtonBase},
     {"gadgets/listbrowser.gadget",  40, &ListBrowserBase},
     {"gadgets/tapedeck.gadget",     39, &TapeDeckBase},
     {"gadgets/slider.gadget",       40, &SliderBase},
@@ -2896,6 +2896,7 @@ int main(int argc, char **argv)
                                     const char *hotSpotMediaIds = NULL;
                                     const char *hotSpotAcct = NULL;
                                     const char *hotSpotAudioUrl = NULL;
+                                    const char *hotSpotVideoUrl = NULL;
                                     const char *hotSpotPollId = NULL;
                                     BOOL hotSpotFavourited = FALSE;
                                     BOOL hotSpotFollowing = FALSE;
@@ -2917,6 +2918,9 @@ int main(int argc, char **argv)
 
                                     ptag = FindTagItem(TTIMELINE_LastHotSpotAudioUrl, msg);
                                     if(ptag) hotSpotAudioUrl = (const char *)ptag->ti_Data;
+
+                                    ptag = FindTagItem(TTIMELINE_LastHotSpotVideoUrl, msg);
+                                    if(ptag) hotSpotVideoUrl = (const char *)ptag->ti_Data;
 
                                     ptag = FindTagItem(TTIMELINE_LastHotSpotFavourited, msg);
                                     if(ptag) hotSpotFavourited = (BOOL)ptag->ti_Data;
@@ -3303,6 +3307,17 @@ int main(int argc, char **argv)
                                              * full-size download below. */
                                             FS3EApp_TriggerMediaThumbFetch(hotSpotString);
                                             FS3EMediaView_ShowUrl(&app->mediaView, hotSpotString, hotSpotAcct);
+                                            /* hotSpotVideoUrl (TTIMELINE_
+                                             * LastHotSpotVideoUrl) is only
+                                             * non-NULL for a VIDEO/GIFV
+                                             * attachment -- see fs3emediaview.c's
+                                             * "Download full video..." menu
+                                             * action. ShowUrl() above already
+                                             * cleared any previous one; this
+                                             * sets it again only if this
+                                             * click's attachment actually has
+                                             * a full video file to offer. */
+                                            FS3EMediaView_SetFullVideoUrl(&app->mediaView, hotSpotVideoUrl);
                                             break;
 
                                         case TTL_HOT_LOAD_NEWER:

@@ -27,4 +27,16 @@
  * comment. No-op if url is NULL/empty. */
 void ManageUrl(const char *url);
 
+/* ASL file-save requester (defaulting to app->settings.downloadPath and
+ * url's own final path segment as the filename), then a background
+ * FS3ENETQ_FETCH_IMAGE download straight to the confirmed path, tracked
+ * in the Network downloads window -- the same mechanism ManageUrl()
+ * already uses for a "Direct download .zip,.lha" body-text URL, exported
+ * here so fs3emediaview.c's "Download full video..." menu action (a
+ * click, not a URL-kind check) can trigger the identical flow for a
+ * video/GIFV attachment's real file URL. No-op if url is NULL/empty, if
+ * it ends in '/' (nothing to name the file), if asl.library isn't
+ * available, or if the requester is cancelled. */
+void ManageUrl_DownloadToFile(const char *url);
+
 #endif /* FS3EMANAGEURL_H */

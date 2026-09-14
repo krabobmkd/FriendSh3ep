@@ -350,6 +350,12 @@ typedef struct TTLPost {
      * TTL_HOT_PLAY_AUDIO specifically. NULL past mediaCount, same as
      * mediaUrls. */
     char  *mediaAudioUrls[TTL_POST_MAX_MEDIA];
+    /* Real file URL (AllocVec'd copies), same indexing as mediaUrls, but
+     * only ever non-NULL for a VIDEO/GIFV slot -- see TTLPostSetup.
+     * mediaVideoUrls' doc comment. Not drawn/played, only carried
+     * through to a TTL_HOT_IMAGE activation's TTIMELINE_LastHotSpotVideoUrl
+     * (see ttl_activate_hotspot) for a "Download full video..." action. */
+    char  *mediaVideoUrls[TTL_POST_MAX_MEDIA];
     ULONG  mediaKinds[TTL_POST_MAX_MEDIA];
     ULONG  mediaCount;
     ULONG  mediaCurrentIndex;
@@ -727,6 +733,10 @@ typedef struct TTLData {
                                       * shape as lastHotSpotPostId above (a poll id is
                                       * a Mastodon snowflake id too). "" = no click yet,
                                       * or the clicked post has no poll. */
+    char  *lastHotSpotVideoUrl;     /* see TTIMELINE_LastHotSpotVideoUrl -- AllocVec'd,
+                                      * same shape as lastHotSpotAudioUrl above. NULL =
+                                      * no click yet, or the clicked attachment isn't
+                                      * VIDEO/GIFV. */
 
     /* ---- "Selected" toot for TTIMELINE_CopySelectedText (see its own
      * doc comment in fs3etoottimeline.h) ---- AllocVec'd owned copy of
@@ -1139,13 +1149,19 @@ void     ttl_notify       (Class *cl, Object *o, struct GadgetInfo *gi,
  * TTIMELINE_LastHotSpotPollId the same way -- the owning post's own
  * TTLPost.pollId, or NULL/"" if the post has no poll; only meaningful for
  * TTL_HOT_POLL_VOTE (postId/targetId alone identifies the STATUS, not the
- * poll object a vote actually POSTs to). */
+ * poll object a vote actually POSTs to). videoUrl is copied into
+ * lastHotSpotVideoUrl and carried as TTIMELINE_LastHotSpotVideoUrl the
+ * same way -- the owning post's mediaVideoUrls[mediaCurrentIndex]
+ * (TTLPost.mediaVideoUrls), or NULL/"" if unknown; only meaningful for
+ * TTL_HOT_IMAGE on a VIDEO/GIFV slot (see TTLPostSetup.mediaVideoUrls'
+ * own doc comment). */
 void     ttl_notify_hotspot(Class *cl, Object *o, struct GadgetInfo *gi,
                              UBYTE type, const char *data, ULONG dataLen,
                              const char *postId, BOOL favourited, BOOL following,
                              BOOL reblogged, BOOL bookmarked, BOOL quotable,
                              const char *mediaIds, const char *acct,
-                             const char *audioUrl, const char *pollId);
+                             const char *audioUrl, const char *pollId,
+                             const char *videoUrl);
 /* only process have right to send render, ask with notify ProcessREfresh
  * void     ttl_render_self  (Class *cl, Object *o, struct GadgetInfo *gi);
 */

@@ -46,19 +46,29 @@
  * both be open in this same window at once, the image showing while the
  * audio plays underneath.
  *
- * A "Close" / "Save Image..." / "Save Audio..." menu is attached the
- * first time the window opens (classic GadTools menu strip, same pattern
- * as fs3etootview.c's window-local "Toot" menu). Each Save entry copies
- * its own channel's already-downloaded cache file straight to disk (no
- * re-fetch) under an ASL file requester defaulting to RAM: and a
- * meaningful name: that channel's poster @user@instance if
- * FS3EMediaView_ShowUrl()/ShowAudioUrl() was given one, else the cache's
- * hash-id filename, with the correct extension always appended -- from
- * the file's own magic bytes (BmImage_SniffFormat) for the image, from
- * the source URL for audio (cache files are hash-named either way, never
- * trusted from the URL for the image case since it may have no extension
- * at all). Each Save entry silently does nothing if its own channel isn't
- * currently loaded.
+ * A "Close" / "Save Image..." / "Save Audio..." / "Download full
+ * video..." menu is attached the first time the window opens (classic
+ * GadTools menu strip, same pattern as fs3etootview.c's window-local
+ * "Toot" menu). Each Save entry copies its own channel's already-
+ * downloaded cache file straight to disk (no re-fetch) under an ASL file
+ * requester defaulting to RAM: and a meaningful name: that channel's
+ * poster @user@instance if FS3EMediaView_ShowUrl()/ShowAudioUrl() was
+ * given one, else the cache's hash-id filename, with the correct
+ * extension always appended -- from the file's own magic bytes
+ * (BmImage_SniffFormat) for the image, from the source URL for audio
+ * (cache files are hash-named either way, never trusted from the URL for
+ * the image case since it may have no extension at all). Each Save
+ * entry silently does nothing if its own channel isn't currently loaded.
+ * "Download full video..." is different: it's not a local copy at all --
+ * a VIDEO/GIFV attachment's real file (mv->fullVideoUrl, see
+ * FS3EMediaView_SetFullVideoUrl) was never fetched in the first place
+ * (most Amiga configs this app targets can't decode video, so only its
+ * preview-frame thumbnail is ever downloaded, same as any other image
+ * attachment), so this action asks where to save it and THEN fetches it,
+ * via the same ASL-requester+background-download+Network-window
+ * pipeline as ManageUrl()'s "Direct download .zip,.lha" (see
+ * ManageUrl_DownloadToFile in fs3emanageurl.h). Silently does nothing if
+ * the currently shown attachment isn't VIDEO/GIFV.
  */
 
 #include <exec/types.h>
@@ -155,6 +165,18 @@ typedef struct FS3EMediaView {
     char imagePoster[128];
     char audioPoster[128];
 
+    /* The currently-shown attachment's real, full-size video file URL
+     * (see TTIMELINE_LastHotSpotVideoUrl) -- AllocVec'd, NULL unless the
+     * attachment ShowUrl() most recently loaded is TTL_MEDIA_KIND_VIDEO/
+     * GIFV, in which case friendsh3ep.c sets it via
+     * FS3EMediaView_SetFullVideoUrl() right after ShowUrl() returns.
+     * Never fetched automatically -- most Amiga configs this app targets
+     * can't decode video, so the image channel above only ever shows the
+     * preview-frame thumbnail; this is just remembered so the "Download
+     * full video..." menu action has something to hand to
+     * ManageUrl_DownloadToFile() if the user actually asks for it. */
+    char *fullVideoUrl;
+
     /* Audio playback (mp3/wav/ogg attachments) -- counterpart to the
      * picture/BmImage fields above, driven by FS3EMediaView_ShowAudioUrl()
      * instead of ShowUrl(). hasAudio TRUE means tapeDeckGadget/sliderGadget
@@ -226,6 +248,17 @@ void FS3EMediaView_Dispose(FS3EMediaView *mv);
  * channels" comment.
  */
 void FS3EMediaView_ShowUrl(FS3EMediaView *mv, const char *url, const char *posterAcct);
+
+/*
+ * Records url as the currently-shown attachment's full video file, for
+ * the "Download full video..." menu action -- see mv->fullVideoUrl's own
+ * doc comment. Call right after FS3EMediaView_ShowUrl() with
+ * TTIMELINE_LastHotSpotVideoUrl's value (NULL/"" for anything that isn't
+ * TTL_MEDIA_KIND_VIDEO/GIFV, which is exactly what clears any URL left
+ * over from a previously shown video attachment). Frees any previous
+ * value first; NULL/"" just clears it.
+ */
+void FS3EMediaView_SetFullVideoUrl(FS3EMediaView *mv, const char *url);
 
 /*
  * Feed every FS3ENETQ_FETCH_IMAGE reply through here from friendsh3ep.c's

@@ -2437,6 +2437,13 @@ static ULONG FS3ENet_SizeStatusFields(const cJSON *item, const cJSON *src)
                    ? strlen(rurl->valuestring) + 1 : 1;
             total += (bh && cJSON_IsString(bh) && bh->valuestring)
                    ? strlen(bh->valuestring) + 1 : 1;
+            /* fmas_MediaVideoUrls -- a second, independent packed copy of
+             * rurl (only actually used when this slot's kind turns out
+             * to be VIDEO/GIFV, but sized unconditionally here like every
+             * other field above; the fill pass below is what checks
+             * kind). */
+            total += (rurl && cJSON_IsString(rurl) && rurl->valuestring)
+                   ? strlen(rurl->valuestring) + 1 : 1;
         }
     }
 
@@ -2615,6 +2622,7 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
             const char  *ru = (rurl && cJSON_IsString(rurl)) ? rurl->valuestring : NULL;
             const char  *pu;
             BOOL isAudio;
+            BOOL isVideo;
 
             if (!purl || !cJSON_IsString(purl) || !purl->valuestring)
                 purl = att ? cJSON_GetObjectItemCaseSensitive(att, "url") : NULL;
@@ -2665,6 +2673,8 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
             }
 
             isAudio = (dst->fmas_MediaKind[mi] == FS3ENET_MEDIAKIND_AUDIO);
+            isVideo = (dst->fmas_MediaKind[mi] == FS3ENET_MEDIAKIND_VIDEO ||
+                       dst->fmas_MediaKind[mi] == FS3ENET_MEDIAKIND_GIFV);
 
             /* Image/cover channel: for audio, only a genuine, distinct
              * cover url (preview_url actually different from the audio
@@ -2688,12 +2698,20 @@ static void FS3ENet_FillStatusFields(const cJSON *item, const cJSON *src,
 
             str = (bh && cJSON_IsString(bh)) ? bh->valuestring : "";
             FS3ENet_PackStr(&dst->fmas_MediaBlurhash[mi], p, str);
+
+            /* Video channel: the real file url, unconditionally whenever
+             * this slot's kind is VIDEO/GIFV (unlike the audio channel
+             * above, not restricted to a "distinct from preview" case --
+             * see fmas_MediaVideoUrls' doc comment in fs3enet.h). */
+            str = isVideo ? (ru ? ru : "") : "";
+            FS3ENet_PackStr(&dst->fmas_MediaVideoUrls[mi], p, str);
         }
         for (; mi < FS3ENET_MAX_MEDIA; mi++) {
             dst->fmas_MediaUrls[mi]      = NULL;
             dst->fmas_MediaAudioUrls[mi] = NULL;
             dst->fmas_MediaIds[mi]       = NULL;
             dst->fmas_MediaBlurhash[mi]  = NULL;
+            dst->fmas_MediaVideoUrls[mi] = NULL;
             dst->fmas_MediaKind[mi]      = FS3ENET_MEDIAKIND_UNKNOWN;
         }
         dst->fmas_MediaCount = (ULONG)mCount;

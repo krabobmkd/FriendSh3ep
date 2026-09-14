@@ -30,6 +30,7 @@
 #include <inline/mpega.h>
 
 #include "fs3eaudio.h"
+#include "fs3emanageurl.h"
 
 #include <exec/memory.h>
 #include <proto/exec.h>
@@ -298,15 +299,17 @@ static ULONG ASM SAVEDS FS3EMediaPic_Dispatch(
  * ---------------------------------------------------------------------- */
 
 static struct NewMenu s_mvMenuTemplate[] = {
-    { NM_TITLE, (STRPTR)"Media",         NULL,        0, 0, NULL },
-    { NM_ITEM,  (STRPTR)"Close",         (STRPTR)"K", 0, 0, (APTR)1 },
-    { NM_ITEM,  (STRPTR)"Save Image...", (STRPTR)"S", 0, 0, (APTR)2 },
-    { NM_ITEM,  (STRPTR)"Save Audio...", (STRPTR)"A", 0, 0, (APTR)3 },
-    { NM_END,   NULL,                    NULL,        0, 0, NULL },
+    { NM_TITLE, (STRPTR)"Media",               NULL,        0, 0, NULL },
+    { NM_ITEM,  (STRPTR)"Close",               (STRPTR)"K", 0, 0, (APTR)1 },
+    { NM_ITEM,  (STRPTR)"Save Image...",       (STRPTR)"S", 0, 0, (APTR)2 },
+    { NM_ITEM,  (STRPTR)"Save Audio...",       (STRPTR)"A", 0, 0, (APTR)3 },
+    { NM_ITEM,  (STRPTR)"Download full video...", (STRPTR)"D", 0, 0, (APTR)4 },
+    { NM_END,   NULL,                          NULL,        0, 0, NULL },
 };
-#define FS3EMV_MENU_CLOSE       1
-#define FS3EMV_MENU_SAVE_IMAGE  2
-#define FS3EMV_MENU_SAVE_AUDIO  3
+#define FS3EMV_MENU_CLOSE           1
+#define FS3EMV_MENU_SAVE_IMAGE      2
+#define FS3EMV_MENU_SAVE_AUDIO      3
+#define FS3EMV_MENU_DOWNLOAD_VIDEO  4
 
 static char *mediaview_strdup(const char *s)
 {
@@ -768,6 +771,23 @@ static void mediaview_save_audio(FS3EMediaView *mv)
     FreeAslRequest(req);
 }
 
+/* "Download full video..." action -- unlike Save Image/Save Audio above,
+ * this isn't a local copy of something already fetched: mv->fullVideoUrl
+ * (see FS3EMediaView_SetFullVideoUrl) is the attachment's real mp4/webm/
+ * gif file, which was never downloaded at all (only its preview-frame
+ * thumbnail was, same as every other image attachment -- see this
+ * file's own header comment on why: most Amiga configs can't decode
+ * video anyway). Reuses the exact same requester+background-fetch+
+ * Network-window pipeline as ManageUrl()'s "Direct download .zip,.lha"
+ * -- see ManageUrl_DownloadToFile's doc comment in fs3emanageurl.h.
+ * Silently does nothing if the currently shown attachment isn't VIDEO/
+ * GIFV (mv->fullVideoUrl NULL/""). */
+static void mediaview_download_video(FS3EMediaView *mv)
+{
+    if (!mv->fullVideoUrl || !mv->fullVideoUrl[0]) return;
+    ManageUrl_DownloadToFile(mv->fullVideoUrl);
+}
+
 /* Stops whatever audio attachment mv is currently playing/paused (if any)
  * and clears the audio channel's state back to inert -- shared by
  * Dispose()/Close() and ShowAudioUrl() (switching to a different audio
@@ -824,6 +844,7 @@ void FS3EMediaView_Dispose(FS3EMediaView *mv)
     BmImage_Free(&mv->image);
     if (mv->pendingImageUrl) { FreeVec(mv->pendingImageUrl); mv->pendingImageUrl = NULL; }
     if (mv->pendingAudioUrl) { FreeVec(mv->pendingAudioUrl); mv->pendingAudioUrl = NULL; }
+    if (mv->fullVideoUrl)    { FreeVec(mv->fullVideoUrl);    mv->fullVideoUrl    = NULL; }
 }
 
 /* Keeps tapedeck.gadget's two independent attributes -- TDECK_Mode (the
@@ -902,6 +923,13 @@ void FS3EMediaView_ShowUrl(FS3EMediaView *mv, const char *url, const char *poste
      * see fs3emediaview.h's header comment. */
     req = FS3ENetFetchImageReq_Alloc(url, url, FS3E_CACHE_SUBDIR_THUMBNAILS, TRUE, TRUE);
     if (req) FS3EApp_NetSend(FS3ENETQ_FETCH_IMAGE, req, sizeof(*req));
+}
+
+void FS3EMediaView_SetFullVideoUrl(FS3EMediaView *mv, const char *url)
+{
+    if (!mv) return;
+    if (mv->fullVideoUrl) { FreeVec(mv->fullVideoUrl); mv->fullVideoUrl = NULL; }
+    if (url && url[0]) mv->fullVideoUrl = mediaview_strdup(url);
 }
 
 /* Extension -> playback backend, matched against url (not the cache's
@@ -1354,6 +1382,9 @@ BOOL FS3EMediaView_HandleInput(FS3EMediaView *mv)
                             break;
                         case FS3EMV_MENU_SAVE_AUDIO:
                             mediaview_save_audio(mv);
+                            break;
+                        case FS3EMV_MENU_DOWNLOAD_VIDEO:
+                            mediaview_download_video(mv);
                             break;
                         default:
                             break;

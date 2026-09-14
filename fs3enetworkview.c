@@ -128,6 +128,34 @@ static const char *networkview_status_text(UBYTE status)
     }
 }
 
+/* Recomputes and pushes the status-bar text from the row table's current
+ * ACTIVE count -- called from networkview_rebuild_list() below, so every
+ * SetName/OnProgress/OnFinished (and window reopen) keeps it in sync.
+ * Deliberately leaves the status bar alone when activeCount is 0: that's
+ * either the initial MSG_NETWORKV_IDLE text from FS3ENetworkView_Create,
+ * or whatever explicit "Downloaded: %s"/"Download failed: %s" message
+ * notifyMessage() last pushed via FS3ENetworkView_SetStatus() when the
+ * last active row finished -- this function has no more useful "no
+ * activity" message than either of those already showing. */
+static void networkview_update_status(FS3ENetworkView *nv)
+{
+    ULONG i, activeCount = 0;
+    char  text[64];
+
+    if (!nv || !nv->statusBar || !nv->window) return;
+
+    for (i = 0; i < nv->rowCount; i++)
+        if (nv->rows[i].status == FS3ENETV_ROWSTATUS_ACTIVE) activeCount++;
+
+    if (activeCount == 0) return;
+
+    snprintf(text, sizeof(text), LOC(MSG_NETWORKV_DOWNLOADING), (unsigned long)activeCount);
+
+    SetGadgetAttrs((struct Gadget *)nv->statusBar, nv->window, NULL,
+        GA_Text, (ULONG)text, TAG_DONE);
+    RefreshGList((struct Gadget *)nv->statusBar, nv->window, NULL, 1);
+}
+
 /* Detach -> free old nodes -> build new ones -> reattach, same rule (and
  * same reason) as FS3ELoginView_SetAccountsList's own doc comment in
  * fs3eloginview.c. No-op if the window is closed -- see this window's
@@ -172,6 +200,8 @@ static void networkview_rebuild_list(FS3ENetworkView *nv)
         LISTBROWSER_Labels, (ULONG)&nv->rowNodeList,
         TAG_DONE);
     RefreshGList((struct Gadget *)nv->listBrowser, nv->window, NULL, 1);
+
+    networkview_update_status(nv);
 }
 
 void FS3ENetworkView_OnProgress(FS3ENetworkView *nv, const char *key,

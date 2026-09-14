@@ -91,6 +91,7 @@ static FS3EAction s_actions[FS3EACTION_COUNT] = {
     /* FS3EACTION_TOOT_UNICODE_BOLD      */ { Action_TootUnicodeBold,          MSG_TOOTMENU_UNICODE_BOLD,     NULL },
     /* FS3EACTION_TOOT_UNICODE_BOLD_SANS */ { Action_TootUnicodeBoldSansSerif, MSG_TOOTMENU_UNICODE_BOLD2,    NULL },
     /* FS3EACTION_TOOT_UNICODE_COURRIER  */ { Action_TootUnicodeCourrier,      MSG_TOOTMENU_UNICODE_COURRIER, NULL },
+    /* FS3EACTION_TOOT_UNICODE_ITALIC    */ { Action_TootUnicodeItalic,        MSG_TOOTMENU_UNICODE_ITALIC,   NULL },
     /* FS3EACTION_TOOT_UNICODE_REVERSE   */ { Action_TootUnicodeReverse,       MSG_TOOTMENU_UNICODE_REVERSE,  NULL },
 };
 
@@ -939,6 +940,11 @@ BOOL Action_TootUnicodeBoldSansSerif(struct App *ctx)
 BOOL Action_TootUnicodeCourrier(struct App *ctx)
 {
     return FS3ETootUnicodeTrick_Apply(ctx, FS3EUnicodeTricks_Monospace);
+}
+
+BOOL Action_TootUnicodeItalic(struct App *ctx)
+{
+    return FS3ETootUnicodeTrick_Apply(ctx, FS3EUnicodeTricks_Italic);
 }
 
 BOOL Action_TootUnicodeReverse(struct App *ctx)

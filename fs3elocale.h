@@ -104,6 +104,7 @@ enum {
     MSG_TOOTMENU_UNICODE_BOLD2,   /* Mathematical Sans-Serif Bold variant, see
                                     * FS3EUnicodeTricks_BoldSansSerif */
     MSG_TOOTMENU_UNICODE_COURRIER,
+    MSG_TOOTMENU_UNICODE_ITALIC,  /* Mathematical Italic, see FS3EUnicodeTricks_Italic */
     MSG_TOOTMENU_UNICODE_REVERSE,
 
     /* Menu: FriendSh3ep */
@@ -282,6 +283,9 @@ enum {
     MSG_NETWORKV_STATUS_OK,      /* status word: finished */
     MSG_NETWORKV_STATUS_ERROR,   /* status word: failed */
     MSG_NETWORKV_IDLE,           /* default status-bar text, no activity yet */
+    MSG_NETWORKV_DOWNLOADING,    /* status-bar text while >=1 row is still ACTIVE --
+                                    * sprintf'd with the active row count (%lu),
+                                    * see networkview_update_status() */
 
     /* First-use disk-cache-usage warning (friendsh3ep.c, main()) -- shown
      * once via EasyRequestArgs before the network process starts and before

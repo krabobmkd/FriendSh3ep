@@ -95,6 +95,7 @@ typedef enum {
     FS3ETMENU_UNICODE_BOLD,
     FS3ETMENU_UNICODE_BOLD2, /* Mathematical Sans-Serif Bold variant */
     FS3ETMENU_UNICODE_COURRIER,
+    FS3ETMENU_UNICODE_ITALIC,
     FS3ETMENU_UNICODE_REVERSE
 } FS3ETootMenuID;
 
@@ -108,7 +109,7 @@ typedef enum {
 static BOOL FS3ETootView_MenuCreate(FS3ETootView *tv, struct Screen *screen,
                                      struct Window *window)
 {
-    struct NewMenu nm[16];
+    struct NewMenu nm[17];
     int n = 0;
 
     if (!tv || !screen || !window || !GadToolsBase) return FALSE;
@@ -143,6 +144,7 @@ static BOOL FS3ETootView_MenuCreate(FS3ETootView *tv, struct Screen *screen,
     ADD(NM_ITEM,  LOC(MSG_TOOTMENU_UNICODE_BOLD),     0, FS3ETMENU_UNICODE_BOLD);
     ADD(NM_ITEM,  LOC(MSG_TOOTMENU_UNICODE_BOLD2),    0, FS3ETMENU_UNICODE_BOLD2);
     ADD(NM_ITEM,  LOC(MSG_TOOTMENU_UNICODE_COURRIER), 0, FS3ETMENU_UNICODE_COURRIER);
+    ADD(NM_ITEM,  LOC(MSG_TOOTMENU_UNICODE_ITALIC),   0, FS3ETMENU_UNICODE_ITALIC);
     ADD(NM_ITEM,  LOC(MSG_TOOTMENU_UNICODE_REVERSE),  0, FS3ETMENU_UNICODE_REVERSE);
     ADD(NM_END,   NULL,                      0,   0);
 #undef ADD
@@ -1327,6 +1329,12 @@ BOOL FS3ETootView_HandleInput(FS3ETootView *tv)
 
                         case FS3ETMENU_UNICODE_COURRIER:
                             FS3EAction_Execute(FS3EACTION_TOOT_UNICODE_COURRIER, app);
+                            tv->reactivateEditor = reactvalue;
+                            tv->editorToReactivate = tv->bodyEditor;
+                            break;
+
+                        case FS3ETMENU_UNICODE_ITALIC:
+                            FS3EAction_Execute(FS3EACTION_TOOT_UNICODE_ITALIC, app);
                             tv->reactivateEditor = reactvalue;
                             tv->editorToReactivate = tv->bodyEditor;
                             break;

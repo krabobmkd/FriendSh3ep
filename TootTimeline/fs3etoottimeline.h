@@ -141,6 +141,17 @@
  * actual audio file to play). Same buffer/pointer as the accompanying
  * TTIMELINE_HotSpotNotify notification's tag of the same name. */
 #define TTIMELINE_LastHotSpotAudioUrl (TTIMELINE_Base + 42)
+/* [G] STRPTR: the currently-shown attachment's real, full-size video
+ * file URL (see TTLPostSetup.mediaVideoUrls), or NULL/"" if unknown --
+ * only ever set for a TTL_HOT_IMAGE activation whose attachment kind is
+ * TTL_MEDIA_KIND_VIDEO/GIFV (most Amiga configs this app targets can't
+ * decode either, so TTIMELINE_LastHotSpotString for that same click is
+ * still just the preview-frame thumbnail image, same as any other
+ * picture attachment -- this is the separate, real file a "Download
+ * full video..." action can fetch). Same buffer/pointer as the
+ * accompanying TTIMELINE_HotSpotNotify notification's tag of the same
+ * name. */
+#define TTIMELINE_LastHotSpotVideoUrl (TTIMELINE_Base + 53)
 /* [G] STRPTR: the poll's own id (see TTLPostSetup.pollId), or NULL/"" if
  * the post the most recently activated hot-spot belongs to has no poll --
  * distinct from postId/TTIMELINE_LastHotSpotPostId, which for a
@@ -605,6 +616,17 @@ typedef struct TTLPostSetup {
                                * attachment still finds its actual playable
                                * file even though mediaUrls[...] points at
                                * the cover instead. NULL past mediaCount. */
+    const char *mediaVideoUrls[TTL_POST_MAX_MEDIA]; /* attachment's real file
+                               * URL (Mastodon's media_attachments[].url),
+                               * same indexing as mediaUrls -- but only
+                               * ever set for a TTL_MEDIA_KIND_VIDEO/GIFV
+                               * slot (see FS3ENetStatus.fmas_MediaVideoUrls),
+                               * NULL/"" for every other kind. Not shown --
+                               * mediaUrls[i] (the preview frame) is what
+                               * TootTimeline actually draws/opens as a
+                               * thumbnail -- kept only so a "Download full
+                               * video..." action has the real file to
+                               * fetch. NULL past mediaCount. */
     ULONG       mediaKinds[TTL_POST_MAX_MEDIA]; /* TTL_MEDIA_KIND_* per slot,
                                * same indexing as mediaUrls. */
     const char *mediaIds[TTL_POST_MAX_MEDIA]; /* attachment ids (see

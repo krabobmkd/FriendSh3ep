@@ -91,6 +91,7 @@ typedef enum {
     FS3EACTION_TOOT_UNICODE_BOLD,
     FS3EACTION_TOOT_UNICODE_BOLD_SANS, /* "bold 2" -- FS3EUnicodeTricks_BoldSansSerif */
     FS3EACTION_TOOT_UNICODE_COURRIER,
+    FS3EACTION_TOOT_UNICODE_ITALIC,
     FS3EACTION_TOOT_UNICODE_REVERSE,
 
     /* Must be last */
@@ -219,6 +220,7 @@ BOOL Action_FontSizePlus(struct App *ctx);
 BOOL Action_TootUnicodeBold(struct App *ctx);
 BOOL Action_TootUnicodeBoldSansSerif(struct App *ctx);
 BOOL Action_TootUnicodeCourrier(struct App *ctx);
+BOOL Action_TootUnicodeItalic(struct App *ctx);
 BOOL Action_TootUnicodeReverse(struct App *ctx);
 
 /* -------------------------------------------------------------------------

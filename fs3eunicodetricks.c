@@ -102,6 +102,21 @@ static ULONG MonospaceMap(ULONG cp)
     return cp;
 }
 
+/* No digit sub-range exists for Italic in this block -- digits fall
+ * through to the final `return cp` unchanged, unlike Bold/Monospace
+ * above. Lowercase 'h' is left unmapped (falls through to `return cp`
+ * too) rather than substituting U+210E (see this map's own doc comment
+ * in fs3eunicodetricks.h): tested against the fonts bundled with
+ * FriendSh3ep and U+210E has no glyph in them, so it drew as tofu --
+ * plain "h" reads better than a missing-glyph box, same "better than
+ * nothing" tradeoff UpsideDownMap already makes for B/Q. */
+static ULONG ItalicMap(ULONG cp)
+{
+    if (cp >= 'A' && cp <= 'Z') return 0x1D434 + (cp - 'A');
+    if (cp >= 'a' && cp <= 'z' && cp != 'h') return 0x1D44E + (cp - 'a');
+    return cp;
+}
+
 /* Upside-down look-alikes, the same table classic "flip text" generators
  * use: real turned/rotated Latin letters where Unicode has one (IPA
  * Extensions, Latin Extended-B/D, ...), otherwise the closest existing
@@ -254,6 +269,11 @@ char *FS3EUnicodeTricks_BoldSansSerif(const char *utf8In)
 char *FS3EUnicodeTricks_Monospace(const char *utf8In)
 {
     return ApplyMap(utf8In, MonospaceMap, FALSE);
+}
+
+char *FS3EUnicodeTricks_Italic(const char *utf8In)
+{
+    return ApplyMap(utf8In, ItalicMap, FALSE);
 }
 
 char *FS3EUnicodeTricks_UpsideDown(const char *utf8In)

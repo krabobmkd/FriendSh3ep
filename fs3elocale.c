@@ -130,6 +130,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Make selection bold 2",
     /* MSG_TOOTMENU_UNICODE_COURRIER */
     "Make selection Courrier",
+    /* MSG_TOOTMENU_UNICODE_ITALIC */
+    "Make selection italic",
     /* MSG_TOOTMENU_UNICODE_REVERSE */
     "Make selection reverse",
 
@@ -364,6 +366,8 @@ static const char *defaultStrings[MSG_COUNT] = {
     "Error",
     /* MSG_NETWORKV_IDLE */
     "No downloads",
+    /* MSG_NETWORKV_DOWNLOADING */
+    "Downloading %lu file(s)",
     /* MSG_FIRSTUSE_TITLE */
     "FriendSh3ep - First Use Warning",
     /* MSG_FIRSTUSE_TEXT */

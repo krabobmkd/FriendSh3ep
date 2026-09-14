@@ -36,6 +36,18 @@ char *FS3EUnicodeTricks_BoldSansSerif(const char *utf8In);
  * "Courrier" text even though the gadget's own font never changes. */
 char *FS3EUnicodeTricks_Monospace(const char *utf8In);
 
+/* Same block, "Mathematical Italic" look-alikes. No digit sub-range exists
+ * for Italic in Unicode's Mathematical Alphanumeric Symbols block (only
+ * Bold/Double-Struck/Sans-Serif/Sans-Serif Bold/Monospace get one), so
+ * digits pass through unchanged, unlike Bold/Monospace above. Lowercase
+ * 'h' is also left unmapped (plain "h", not italicized): U+1D455 (where
+ * it would otherwise fall) is an unassigned codepoint, and Unicode's own
+ * Mathematical Alphanumeric Symbols block notes say to use U+210E PLANCK
+ * CONSTANT instead as canonically the same glyph -- but the fonts bundled
+ * with FriendSh3ep don't have it, so it drew as tofu; plain "h" reads
+ * better than a missing-glyph box. */
+char *FS3EUnicodeTricks_Italic(const char *utf8In);
+
 /* Maps ASCII letters/digits/punctuation to upside-down Unicode look-alikes
  * (IPA Extensions / Latin Extended-B / Unicode symbols -- the same trick
  * "flip text" generators use, e.g. U+0259 LATIN SMALL LETTER SCHWA stands

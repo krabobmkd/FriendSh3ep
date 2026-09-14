@@ -126,8 +126,13 @@ static BOOL manageurl_is_archive(const char *url)
  * ":" vs "/" join fs3emediaview.c's mediaview_save_media() already
  * handles the same way. Cancelling the requester does nothing further --
  * no fall back to the Ask/OpenURL/Clipboard flow below, same as picking
- * Cancel on any other save-as dialog. */
-static void manageurl_download_archive(const char *url)
+ * Cancel on any other save-as dialog.
+ *
+ * Not static: also called directly by fs3emediaview.c's "Download full
+ * video..." menu action (see ManageUrl_DownloadToFile's doc comment in
+ * fs3emanageurl.h) -- same exact requester+download+Network-window
+ * pipeline, just triggered from a different click than a body-text URL. */
+void ManageUrl_DownloadToFile(const char *url)
 {
     struct FileRequester *req;
     const char *slash;
@@ -186,7 +191,7 @@ void ManageUrl(const char *url)
     if (!url || !url[0]) return;
 
     if (app->settings.directDownloadArchives && manageurl_is_archive(url)) {
-        manageurl_download_archive(url);
+        ManageUrl_DownloadToFile(url);
         return;
     }
 
