@@ -4934,6 +4934,13 @@ static BOOL FS3ENet_Dispatch(FS3ENetMessage *fs3em)
             FS3ENet_HandleNotifications(fs3em);
             break;
 
+        case FS3ENETQ_NOTIF_POLL:
+            /* Same request/reply shape, see FS3ENETQ_NOTIF_POLL's own doc
+             * comment in fs3enet.h -- the distinction only matters to
+             * fs3erequests.c's reply routing. */
+            FS3ENet_HandleNotifications(fs3em);
+            break;
+
         case FS3ENETQ_ACCOUNTS_LIST:
             FS3ENet_HandleAccountsList(fs3em);
             break;

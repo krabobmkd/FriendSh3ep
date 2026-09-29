@@ -50,6 +50,20 @@ enum FS3ENetRequestType
                                * attachment; the returned media id feeds
                                * FS3ENetPostStatusReq's fs3ep_MediaIds. */
     FS3ENETQ_NOTIFICATIONS,  /* fetch a page of notifications */
+    FS3ENETQ_NOTIF_POLL,     /* background "anything newer than min_id?" check --
+                               * bit-for-bit the same request/reply shape as
+                               * FS3ENETQ_NOTIFICATIONS (reuses
+                               * FS3ENetNotificationsReq_Alloc/FS3ENet_HandleNotifications
+                               * unchanged, see fs3enet.c), kept as a distinct
+                               * queue type purely so FS3EApp_HandleNetReply
+                               * (fs3erequests.c) can route it to its own small
+                               * badge-update case instead of the real
+                               * Notifications-channel reply handler -- a
+                               * background poll must NOT inject rows into
+                               * TootTimeline's Notifs channel (would duplicate
+                               * whatever the channel's own real INITIAL/NEWER
+                               * fetch loads the first time the user actually
+                               * opens the tab, since AddPost never dedupes). */
     FS3ENETQ_ACCOUNTS_LIST,  /* fetch a list of accounts: search results, or a
                                * user's followers/following -- see
                                * FS3ENetAccountsListReq/Reply below */

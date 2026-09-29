@@ -21,6 +21,27 @@ void FS3EApp_FetchTimeline(ULONG viewMode);
 /* Fire an older/newer pagination fetch for viewMode. */
 void FS3EApp_FetchTimelinePage(ULONG viewMode, ULONG direction);
 
+/* Fires one FS3ENETQ_NOTIF_POLL check ("anything newer than
+ * app->accountLastSeenNotifId?") if an account is connected and no poll is
+ * already in flight. See its reply case (FS3ENETQ_NOTIF_POLL) in
+ * fs3erequests.c for what happens on success -- updates
+ * app->notifHasUnseen/notifNewestKnownId and the nav button badge (see
+ * FS3EApp_UpdateNotifBadge in friendsh3ep.c). Not normally called
+ * directly -- see FS3EApp_RestartNotifPollTimer below, which drives this
+ * on a repeating timer. */
+void FS3EApp_PollNotifications(void);
+
+/* (Re)starts the repeating FS3ETimer that calls FS3EApp_PollNotifications
+ * every app->settings.tootCheckIntervalSec seconds (see fs3etimer.h's
+ * "repeating timer" idiom -- same one Action_TimelineAutoscrollPlay uses
+ * in fs3eaction.c). Called once at startup (main(), right after
+ * FS3ETimer_Init()) and again whenever the user changes the interval in
+ * Settings (fs3esettingsview.c) so the new value takes effect immediately
+ * instead of only on next launch. Safe to call before an account is
+ * connected -- FS3EApp_PollNotifications itself no-ops without one, same
+ * as FS3EApp_FetchTimeline's own credential guards. */
+void FS3EApp_RestartNotifPollTimer(void);
+
 /* Open (or re-open) a user's profile in the Search channel. */
 void FS3EApp_OpenProfile(const char *acctOrHandle);
 

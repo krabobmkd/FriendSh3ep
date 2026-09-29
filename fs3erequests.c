@@ -38,6 +38,7 @@
 
 #include "network_fs3e/fs3enet.h"
 #include "fs3ethumb.h"
+#include "fs3etimer.h"
 
 #include "fs3erequests.h"
 #include "fs3eaccounts.h"
@@ -654,6 +655,52 @@ void FS3EApp_SearchGoBack(void)
 
     s_searchBackInProgress = FALSE;
     searchStackFreeEntry(&popped);
+}
+
+/* Repeating FS3ETimer driving FS3EApp_PollNotifications -- see
+ * FS3EApp_RestartNotifPollTimer below. A plain static instance, same
+ * ownership convention as fs3eaction.c's s_playModeTimer (caller-owned
+ * storage, no allocation in fs3etimer.c itself). */
+static FS3ETimer s_notifPollTimer;
+
+static void FS3ENotifPoll_Hook(FS3ETimer *t, ULONG ticks)
+{
+    (void)t;
+    (void)ticks;
+    FS3EApp_PollNotifications();
+}
+
+/* See fs3erequests.h's own doc comment. */
+void FS3EApp_RestartNotifPollTimer(void)
+{
+    ULONG secs = (ULONG)app->settings.tootCheckIntervalSec;
+    if (secs < 5) secs = 5; /* matches fs3esettingsview.c's own gadget clamp, defensive */
+    FS3ETimer_Start(&s_notifPollTimer, FS3ENotifPoll_Hook, secs * FS3ETimer_Frequency(), 0);
+}
+
+/* See fs3erequests.h's own doc comment. Deliberately reuses
+ * FS3ENetNotificationsReq_Alloc/FS3ENetNotificationsReply as-is (see
+ * FS3ENETQ_NOTIF_POLL's doc comment in fs3enet.h) -- min_id=
+ * app->accountLastSeenNotifId means the server itself only ever returns
+ * notifications strictly newer than whatever this account was last marked
+ * caught-up-to, so "the reply came back non-empty" is already exactly the
+ * "does the user have anything unseen" answer, recomputed fresh from
+ * scratch on every poll rather than tracked incrementally -- see the
+ * FS3ENETQ_NOTIF_POLL reply case below. */
+void FS3EApp_PollNotifications(void)
+{
+    FS3ENetNotificationsReq *nreq;
+
+    if (!app->accountApiBaseUrl || !app->accountAccessToken) return;
+    if (app->notifPollInFlight) return;
+
+    nreq = FS3ENetNotificationsReq_Alloc(FS3ENETPAGE_INITIAL,
+               app->accountGeneration, app->accountApiBaseUrl,
+               app->accountAccessToken, NULL, app->accountLastSeenNotifId);
+    if (!nreq) return;
+
+    if (FS3EApp_NetSend(FS3ENETQ_NOTIF_POLL, nreq, sizeof(*nreq)))
+        app->notifPollInFlight = TRUE;
 }
 
 /* Opens (or re-opens) a user's profile in the Search channel -- the
@@ -2476,6 +2523,45 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 app->timelineErrorMask   |= bit;
                 app->timelineFetchedMask &= ~bit;
                 app->lastTimelineResult   = msg->fs3em_Result;
+            }
+        }
+        break;
+
+    case FS3ENETQ_NOTIF_POLL:
+        /* Deliberately does NOT touch app->tootTimeline/timelineFetchedMask/
+         * channelPopulatedMask at all -- see FS3ENETQ_NOTIF_POLL's own doc
+         * comment in fs3enet.h for why a background poll must stay
+         * completely separate from the real Notifications-channel content
+         * pipeline just above. A failed poll is silently dropped (no error
+         * indicator, no retry bookkeeping) -- same "best-effort background
+         * refresh" reasoning as FS3ENET_TLSHAPE_SINGLE_REFRESH above; the
+         * next timer tick tries again on its own. */
+        app->notifPollInFlight = FALSE;
+        if (msg->fs3em_Result == FS3ENETR_OK) {
+            FS3ENetNotificationsReply *reply = (FS3ENetNotificationsReply *)msg->fs3em_Data;
+
+            /* Stale reply for an account we've since switched away from --
+             * same accountGeneration guard as every other queue type. */
+            if (reply->fs3en_AccountGeneration == app->accountGeneration) {
+                /* Recomputed fresh from this poll's own result, not
+                 * tracked incrementally -- see FS3EApp_PollNotifications'
+                 * own doc comment for why min_id=accountLastSeenNotifId
+                 * already makes "count > 0" the right answer on its own. */
+                app->notifHasUnseen = (reply->fs3en_Count > 0);
+
+                if (reply->fs3en_Count > 0) {
+                    /* notifs[0] is the newest -- Mastodon returns
+                     * notifications newest-first, see FS3ENETQ_NOTIFICATIONS'
+                     * own reply-walk comment just above. Cached so
+                     * fs3e_setViewMode can stamp accountLastSeenNotifId
+                     * the instant the user switches INTO VIEWMODE_Notifs,
+                     * without waiting on a fresh fetch. */
+                    FS3ENetNotification *notifs = (FS3ENetNotification *)(reply + 1);
+                    if (app->notifNewestKnownId) FreeVec(app->notifNewestKnownId);
+                    app->notifNewestKnownId = NetStrDup(notifs[0].fen_Id);
+                }
+
+                FS3EApp_UpdateNotifBadge();
             }
         }
         break;

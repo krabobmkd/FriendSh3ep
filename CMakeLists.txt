@@ -7,6 +7,9 @@ set(CMAKE_C_STANDARD 11)
 list(APPEND AMIGA_COMPILER_OPTIONS -save-temps -Wall)
 # -mhard-float -ffast-math -msoft-float
 list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020  -O2)
+# infer a few bugs:
+#list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O3 -fno-tree-loop-vectorize)
+
 
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../EmojiGear/sdk/include)
 
@@ -25,7 +28,7 @@ add_subdirectory(network_fs3e)
 # later phases.
 
 set(FRIENDSH3EP_SOURCES
-	bdbprintf.c
+#	bdbprintf.c
     avatarimages.c
     bmimage.c
     fs3etextwrap.c
@@ -144,4 +147,4 @@ target_compile_options(FriendSh3ep PRIVATE
 install(TARGETS FriendSh3ep ARCHIVE DESTINATION bin)
 
 
-target_compile_definitions(FriendSh3ep PRIVATE USE_DEBUG_BDBPRINT=1)
+# target_compile_definitions(FriendSh3ep PRIVATE USE_DEBUG_BDBPRINT=1)

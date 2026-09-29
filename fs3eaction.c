@@ -780,6 +780,7 @@ BOOL Action_FontSizeMinus(struct App *ctx)
 
     if (ctx->settings.fontPointSize > FONTSIZE_MIN)
         ctx->settings.fontPointSize -= FONTSIZE_STEP;
+
     FS3EApp_ApplyFontSettings();
     return TRUE;
 }
@@ -790,6 +791,7 @@ BOOL Action_FontSizePlus(struct App *ctx)
 
     if (ctx->settings.fontPointSize < FONTSIZE_MAX)
         ctx->settings.fontPointSize += FONTSIZE_STEP;
+
     FS3EApp_ApplyFontSettings();
     return TRUE;
 }

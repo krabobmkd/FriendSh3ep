@@ -115,7 +115,7 @@ BOOL RgbImage_LoadBmp(RgbImage *img, const char *path)
     for (y = 0; y < h; y++) {
         UBYTE *dstRow;
         ULONG  x;
-
+        ULONG X;
         if (Read(fh, rowBuf, (LONG)paddedRowBytes) != (LONG)paddedRowBytes) {
             FreeVec(rowBuf);
             FreeVec(outBuf);
@@ -124,10 +124,12 @@ BOOL RgbImage_LoadBmp(RgbImage *img, const char *path)
         }
 
         dstRow = outBuf + (h - 1 - y) * w * 3;
+        X = 0;
         for (x = 0; x < w; x++) {
-            dstRow[x * 3 + 0] = rowBuf[x * 3 + 2]; /* R */
-            dstRow[x * 3 + 1] = rowBuf[x * 3 + 1]; /* G */
-            dstRow[x * 3 + 2] = rowBuf[x * 3 + 0]; /* B */
+            dstRow[X + 0] = rowBuf[X + 2]; /* R */
+            dstRow[X + 1] = rowBuf[X + 1]; /* G */
+            dstRow[X + 2] = rowBuf[X + 0]; /* B */
+            X+=3;
         }
     }
 

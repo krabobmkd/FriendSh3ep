@@ -126,10 +126,7 @@ typedef struct FS3ESettings {
      * hotspot in a toot is clicked. Not yet consumed by anything else;
      * these three fields are the whole feature for now. */
     int   urlLinkAction;           /* FS3E_URLLINK_*, default FS3E_URLLINK_ASK */
-    short directDownloadArchives;  /* TRUE (default) = .zip/.lha links download
-                                     * straight to downloadPath instead of going
-                                     * through urlLinkAction's Ask/OpenURL/Clipboard
-                                     * choice */
+
     char *downloadPath;            /* AllocVec'd, always non-NULL; default "ram:" */
 
     /* FALSE (default) = a single click on a toot action (favorite, boost,
@@ -137,6 +134,11 @@ typedef struct FS3ESettings {
      * guard against misclicks. Lives in the "URL Link" group in
      * fs3esettingsview.c alongside the other click-behavior settings. */
     short tootActionsNeedDoubleClick;
+
+    short directDownloadArchives;  /* TRUE (default) = .zip/.lha links download
+                                     * straight to downloadPath instead of going
+                                     * through urlLinkAction's Ask/OpenURL/Clipboard
+                                     * choice */
 
     /* Last language picked in the New Toot window's language chooser (see
      * FS3ETootView_GetLanguage/languageChooser in fs3etootview.h) -- an ISO

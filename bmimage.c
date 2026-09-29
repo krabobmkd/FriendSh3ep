@@ -252,6 +252,8 @@ BOOL BmImage_Load(BmImage *img, struct Screen *screen)
 {
     if (!img) return FALSE;
 
+
+
     if (!img->filePath || img->filePath[0] == '\0') {
         img->error = BMIMAGE_ERR_NO_PATH;
         return FALSE;

@@ -2,12 +2,79 @@ Short:        Mastodon client for AmigaOS
 Author:       krabobmkd
 Uploader:     victorien.ferry@free.fr
 Type:         comm/net
-Version:      1.0
+Version:      1.1.337
 Architecture: m68k-amigaos >= 3.9
-Requires:     68030, AmigaOS 3.9 or 3.2, Internet stack,
-              AmiSSL v5, EmojiGear v5.2
+Replaces:     comm/net/FriendSh3ep*
+Requires:     68030, AmigaOS 3.9 or 3.2, Internet stack, AmiSSL v5, EmojiGear v6
 
-------------------------- Version 1.0  24/08/2026
+
+------------------------ Version 1.1.337 29/09/2026
+
+ New features:
+ 
+  - The reason for this app to be slow on lower config is it decodes (and may remap)
+    images all the times. An option was added to only decode thumbnails when they
+    are clicked.
+  - That "BlurHash" mastodon thing to be displayed while waiting image is supported.
+     This is about displaying 4x4 color rectangles of the average colors of the image
+    that will be displayed when available. Make the app even more super classy.
+  - If the Media thumbnail is for a video, now a video icon will tag it. Also, opening
+   the thumbnail in the "Media View", then allows to download the 
+   full-featured .mp4 file: there's a menu action for that.
+   
+   Great timing, because "MintVID" 1.4 have just been released for Amiga OS3, and
+   you can perfectly play Mastodon's .mp4 videos with it at full rate on piStorm/Vampire/UAE.
+     
+ - mouse pointer image will change when hovering links, if OS3.2 and mouse correctly
+     configured for this in Sys:Prefs/Pointer.
+ - "Toot" text edition now has menu actions to transform texts in Bold, italic, and 
+   things: Toot texts doesnt have such features on their own, but Unicode allows
+   tricking this with specific characters initialy intented for Math notations.
+   We now provide those characters in the EmojiGear 6 font package, so this is
+   possible. You can really do super neat toot text layouting with all that, better
+   than most existing clients if you ask me.
+ - You now can find a Emoji or folkloric character using its hexadecimal code in
+   the Emoji Box (which itself provides tons of emojis and things...) 
+ - Now server is checked for "New notifications" each n seconds, that is the previously 
+   unused "server check delay" in the configuration. Notification button aspect will
+   change if, let's say a friend call, or someone favorite your toot, or something. 
+   
+ - For thumbnails and icons, Mastodon supports and send Gif,Png,Jpeg and WebP image 
+   formats. If you are an average OS3 user, you may have corresponding "datatypes" 
+   installed for the 3 first. It is now advertised in the .guide that you may install 
+   a WebP picture datatype from Oliver Robert's "Warp Datatypes", that provides the
+   missing WebP format. Installing this will make all image displayed.
+   https://www.warpdt.co.uk/webp.php  
+   Also note this is "Shareware like 30 years ago" and free for one month. 
+   (Note you can use another webp datatype if available or code your own.)
+ 
+ - the last reason why an image wouldnt be displayed is the way Mastodon servers
+   caches other server's images in a cache for just a while. Now if 
+   this happens we show a "image no more available on server cache" message.
+   So there is no more "Why isnt this image displayed ?" mystery.
+   That one is specific to mastodon, not this Amiga client.
+    
+ Corrections:
+ 
+ - Optimisations on boot and theme switching. Starting the App doesnt 
+   "glitch the windows for seconds" when opening anymore and takes less CPU. 
+ - More OS3.9 compatible (window size issues, my gosh OS3.9 has plenty BOOPSI bugs!)
+ - Regular icon when iconized.  
+ - We now rely on EmojiGear 6, which means version 6 for utf8rastport.library
+   for text rendering, and unitexteditor.gadget v6 for text edition. 
+   Since this version, ttf file resources and 8bit pixel modes remap tables are 
+   shared between "text rendering contexts", which takes less memory
+   and less CPU computations, accelerating app inits, and text size change. 
+   This is an invisible but important rewrite for both FriendSh3ep and EmojiGear.
+ 
+------------------------ Version 1.0.1 24/08/2026
+
+ Layouting bugs came up in the toot view with last minute evolutions,
+It needs correction in both FriendSh3ep and UniTextEditor.gadget,
+So you will need to upgrade EmojiGear to 5.3 for full correction, again.
+Sorry !
+
+------------------------- Version 1.0  22/08/2026
 
  FriendSh3ep, a Mastodon / Fediverse client for Amiga OS 3.2
  Finally also for OS3.9.
@@ -27,7 +94,7 @@ Requires:     68030, AmigaOS 3.9 or 3.2, Internet stack,
     Relies on picture.datatype a lot. 
   - A fast Internet stack (Miami, AmiTCP, RoadShow...).
   - AmiSSL v5 (the more recent, the better) it's on Aminet.
-  - EmojiGear v5.2, for modern fonts, emoji rendering 
+  - EmojiGear v5.3, for modern fonts, emoji rendering
     and text editor.
 
  Optional but used if present:

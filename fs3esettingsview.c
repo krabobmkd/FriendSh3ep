@@ -53,6 +53,7 @@
 #include "network_fs3e/fs3enet.h"
 #include "TootTimeline/fs3etoottimeline.h"
 #include "fs3eboopsimessage.h"
+#include "fs3erequests.h"
 #include <intuition/icclass.h>
 
 extern struct Library *GetFileBase;
@@ -838,6 +839,9 @@ BOOL FS3ESettingsView_HandleInput(FS3ESettingsView *sv)
                     if ((LONG)val < 5)    val = 5;
                     if ((LONG)val > 3600) val = 3600;
                     app->settings.tootCheckIntervalSec = (int)val;
+                    /* Take effect immediately -- see FS3EApp_RestartNotifPollTimer's
+                     * own doc comment in fs3erequests.h. */
+                    FS3EApp_RestartNotifPollTimer();
 
                 } else if (gadId == GID_SETTINGSV_PLAY_TOOT_TIME) {
                     ULONG val = 0;

@@ -39,9 +39,21 @@
 
 void wait2sec();
 
+/* Forward decl -- defined further down (multi-account list section), but
+ * FS3EApp_SetAccount below needs it to repopulate app->accountLastSeenNotifId
+ * from the matching accounts[] entry on a real account change. */
+static LONG FS3EApp_FindAccountIndex(const char *apiBaseUrl, const char *acct);
+
 /* Free stored account credentials.
  * Not static: friendsh3ep.c's exitclose() calls this too -- see the
- * extern declaration there. */
+ * extern declaration there. Deliberately does NOT touch
+ * accountLastSeenNotifId -- unlike every other field here, it isn't part
+ * of the identity tuple FS3EApp_SetAccount's callers pass in, so it must
+ * survive this function's own same-account-re-confirm call (VERIFY_
+ * ACCOUNT's backfill calls FS3EApp_SetAccount, hence this, with the same
+ * account every launch) untouched. Freed by FS3EApp_SetAccount's own
+ * !sameAccount block on a genuine account change instead, and once more,
+ * for real, at exitclose(). */
 void FS3EApp_FreeAccount(void)
 {
     if (app->accountApiBaseUrl)  { FreeVec(app->accountApiBaseUrl);  app->accountApiBaseUrl  = NULL; }
@@ -148,6 +160,24 @@ void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,
          * fetched yet either. */
         app->accountProfileFetched       = FALSE;
         app->accountProfileLookupPending = FALSE;
+
+        /* Same "belongs to the account being left" reasoning again --
+         * the unread-notification badge/marker is per-account (see
+         * FS3EAccount.lastSeenNotifId's doc comment). Repopulate from
+         * whatever this account itself last saw, if it's already known
+         * (an existing accounts[] entry -- a brand new login has none
+         * yet, FS3EApp_FindAccountIndex returns -1, left NULL, meaning
+         * "never seen anything", which the next poll interprets
+         * correctly -- see FS3EApp_PollNotifications). */
+        if (app->accountLastSeenNotifId) { FreeVec(app->accountLastSeenNotifId); app->accountLastSeenNotifId = NULL; }
+        if (app->notifNewestKnownId)     { FreeVec(app->notifNewestKnownId);     app->notifNewestKnownId     = NULL; }
+        app->notifHasUnseen = FALSE;
+        {
+            LONG idx = FS3EApp_FindAccountIndex(newApiBaseUrl, newAcct);
+            if (idx >= 0 && app->accounts[idx].lastSeenNotifId)
+                app->accountLastSeenNotifId = NetStrDup(app->accounts[idx].lastSeenNotifId);
+        }
+        FS3EApp_UpdateNotifBadge();
 
         FS3EApp_RequestInstanceInfo();
     }
@@ -356,6 +386,7 @@ static void FS3EApp_FreeAccountEntry(FS3EAccount *a)
     if (a->acct)        { FreeVec(a->acct);        a->acct        = NULL; }
     if (a->avatarURL)   { FreeVec(a->avatarURL);   a->avatarURL   = NULL; }
     if (a->accountId)   { FreeVec(a->accountId);   a->accountId   = NULL; }
+    if (a->lastSeenNotifId) { FreeVec(a->lastSeenNotifId); a->lastSeenNotifId = NULL; }
 }
 
 /* Index of the account matching apiBaseUrl+acct, or -1. Matches on both
@@ -382,7 +413,8 @@ static LONG FS3EApp_FindAccountIndex(const char *apiBaseUrl, const char *acct)
  * for a personal client, so this is not expected in practice). */
 static void FS3EApp_UpsertAccountsList(const char *apiBaseUrl, const char *accessToken,
                                         const char *displayName, const char *acct,
-                                        const char *avatarURL, const char *accountId)
+                                        const char *avatarURL, const char *accountId,
+                                        const char *lastSeenNotifId)
 {
     LONG idx = FS3EApp_FindAccountIndex(apiBaseUrl, acct);
     FS3EAccount *a;
@@ -402,6 +434,7 @@ static void FS3EApp_UpsertAccountsList(const char *apiBaseUrl, const char *acces
     a->acct        = NetStrDup(acct);
     a->avatarURL   = NetStrDup(avatarURL);
     a->accountId   = NetStrDup(accountId);
+    a->lastSeenNotifId = NetStrDup(lastSeenNotifId);
 }
 
 /* First line of the multi-account account.dat format, distinguishing it
@@ -530,7 +563,8 @@ void FS3EApp_SaveAccount(void)
     /* Keep app->accounts[] current before writing it out. */
     FS3EApp_UpsertAccountsList(app->accountApiBaseUrl, app->accountAccessToken,
                                 app->accountDisplayName, app->accountAcct,
-                                app->accountAvatarURL, app->accountId);
+                                app->accountAvatarURL, app->accountId,
+                                app->accountLastSeenNotifId);
     activeIdx = FS3EApp_FindAccountIndex(app->accountApiBaseUrl, app->accountAcct);
 
     if (!FS3EApp_AccountDatPath(path, sizeof(path))) {
@@ -557,6 +591,11 @@ void FS3EApp_SaveAccount(void)
         FPuts(f, a->acct        ? a->acct        : ""); FPuts(f, "\n");
         FPuts(f, a->avatarURL   ? a->avatarURL   : ""); FPuts(f, "\n");
         FPuts(f, a->accountId   ? a->accountId   : ""); FPuts(f, "\n");
+        /* Optional trailing field, added after this format's original 6
+         * lines/account -- see FS3EApp_LoadAccount's tolerant read of it
+         * (same convention as displayName/acct/avatarURL/accountId
+         * themselves being optional there for an even older file). */
+        FPuts(f, a->lastSeenNotifId ? a->lastSeenNotifId : ""); FPuts(f, "\n");
     }
     Close(f);
 }
@@ -587,6 +626,7 @@ BOOL FS3EApp_LoadAccount(void)
     char path[300];
     char apiBaseUrl[256], tokLine[1025], accessToken[512];
     char displayName[128], acct[128], avatarURL[512], accountId[64];
+    char lastSeenNotifId[64];
     ULONG n;
 
     if (!FS3EApp_AccountDatPath(path, sizeof(path))) return FALSE;
@@ -637,9 +677,14 @@ BOOL FS3EApp_LoadAccount(void)
             if (!RLINE(acct))        acct[0]        = '\0';
             if (!RLINE(avatarURL))   avatarURL[0]   = '\0';
             if (!RLINE(accountId))   accountId[0]   = '\0';
+            /* Optional trailing field -- absent in account.dat files
+             * written before this feature existed, same tolerant
+             * "missing = blank" handling as the four fields above. */
+            if (!RLINE(lastSeenNotifId)) lastSeenNotifId[0] = '\0';
 
             FS3EApp_UpsertAccountsList(apiBaseUrl, accessToken, displayName,
-                                        acct, avatarURL, accountId);
+                                        acct, avatarURL, accountId,
+                                        lastSeenNotifId);
         }
         Close(f);
 #undef RLINE
@@ -752,7 +797,7 @@ void FS3EApp_SeedDefaultAnonymousAccount(void)
      * branch). */
     for (i = 0; i < FS3E_DEFAULT_ANON_SERVER_COUNT; i++)
         FS3EApp_UpsertAccountsList(s_defaultAnonServers[i], "", "",
-                                    FS3EACCOUNT_ANON_ACCT, "", "");
+                                    FS3EACCOUNT_ANON_ACCT, "", "", "");
 
     FS3EApp_SetAccount(s_defaultAnonServers[0], "", "",
                         FS3EACCOUNT_ANON_ACCT, "", "");

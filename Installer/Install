@@ -8,14 +8,14 @@
 ;   - FriendSh3ep.readme         -> <dest>/
 ;   - LICENSE                    -> <dest>/
 ;
-; FriendSh3ep itself needs EmojiGear v5.1 (utf8rastport.library,
+; FriendSh3ep itself needs EmojiGear v6.1 (utf8rastport.library,
 ; unitexteditor.gadget, unibutton.gadget) and AmiSSL v5 already installed --
-; see the EmojiGear5.2.lha package and Aminet for AmiSSL. This installer does
+; see the EmojiGear6.1.lha package and Aminet for AmiSSL. This installer does
 ; not bring those in; it only places FriendSh3ep and its own data.
 ;
 
 (set #app-name    "FriendSh3ep")
-(set #app-version "v1.0")
+(set #app-version "v1.1")
 (set #app-default "Work:")
 
 ; ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@
         "Welcome to the " #app-name " " #app-version " installer!\n\n"
         #app-name " is a Mastodon/Fediverse client for AmigaOS 3.2.x.\n\n"
         "Before continuing, make sure you already have:\n"
-        "  - EmojiGear v5.2 installed (utf8rastport.library,\n"
+        "  - EmojiGear v6.1 installed (utf8rastport.library,\n"
         "    unitexteditor.gadget, unibutton.gadget)\n"
         "  - AmiSSL v5 installed\n"
         "  - a working Internet stack\n\n"
@@ -127,7 +127,7 @@
     (cat
         "  * * *  Installation complete!  * * *\n\n"
         "Installed in:  " #dest "\n\n"
-        "Remember, FriendSh3ep needs EmojiGear v5.1 and AmiSSL v5\n"
+        "Remember, FriendSh3ep needs EmojiGear v6.1 and AmiSSL v5\n"
         "already installed on your system to run."
     )
     (quiet)

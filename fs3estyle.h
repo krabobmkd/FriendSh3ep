@@ -13,9 +13,9 @@
  * Usage
  * -----
  *   FS3EStyle_InitDefaults(&fs3eStyle);          // set RGB values + pen=1
- *   FS3EStyle_ApplyColors(&fs3eStyle, screen);   // obtain pens from ColorMap
+ *   FS3EStyle_AllocColors(&fs3eStyle, screen);   // obtain pens from ColorMap
  *   ... draw using FS3E_PEN(&fs3eStyle, FS3E_COLOR_TEXT) ...
- *   FS3EStyle_ApplyColors(&fs3eStyle, screen);   // theme change: re-applies
+ *   FS3EStyle_AllocColors(&fs3eStyle, screen);   // theme change: re-applies
  *   FS3EStyle_ReleasePens(&fs3eStyle);           // at exit or screen close
  *
  * Color values are 0x00RRGGBB (alpha byte ignored).
@@ -107,6 +107,12 @@ typedef enum {
                                       * warning lines + "Show/Hide sensitive content"
                                       * hotspot label (see TTL_HOT_SENSITIVE_TOGGLE) */
 
+    FS3E_COLOR_NOTIF_UNSEEN,        /* Notifications nav button's whole label, drawn
+                                      * in this pen instead of UniButtonBGBM's own
+                                      * class-default text pen while there are unseen
+                                      * notifications waiting -- see
+                                      * FS3EApp_UpdateNotifBadge in friendsh3ep.c. */
+
     FS3E_COLOR_COUNT                /* must be last */
 } FS3EColorRole;
 
@@ -189,6 +195,7 @@ typedef struct {
     char fontCacheFallback2[FS3E_FONTPATH_MAX];
     char fontCacheFallback3[FS3E_FONTPATH_MAX];
     char fontCacheEmoji[FS3E_FONTPATH_MAX];
+    char fontCacheEmojiBt[FS3E_FONTPATH_MAX];
     int  fontCacheValid;
 
     /* Post layout metrics derived from dcNormal line height.
@@ -373,7 +380,7 @@ void FS3EStyle_ResetPatch9Colors(FS3EStyle *st);
 /* Obtain Amiga pens for every color role from scr->ViewPort.ColorMap.
  * Releases any previously held pens first, so safe to call on theme change
  * or when switching screens. */
-void FS3EStyle_ApplyColors(FS3EStyle *st, struct Screen *scr);
+void FS3EStyle_AllocColors(FS3EStyle *st, struct Screen *scr);
 
 /* Release all ObtainBestPenA-allocated pens back to the ColorMap.
  * Call before closing the screen or at program exit. */
@@ -495,4 +502,6 @@ void FS3EStyle_UnloadThemeImages(FS3EStyle *st);
  * alongside FS3EStyle_ReleaseDrawContexts. */
 void FS3EStyle_FreeThemeImages(FS3EStyle *st);
 
+
+void FS3EStyle_UpdateAllDCColorMap(FS3EStyle *st, struct Screen *scr);
 #endif /* FS3ESTYLE_H */

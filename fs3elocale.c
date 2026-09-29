@@ -306,7 +306,7 @@ static const char *defaultStrings[MSG_COUNT] = {
     /* MSG_SETTINGSV_RGBDRAW_INTERNAL_BILINEAR */
     "Internal Bilinear (>=68060)",
     /* MSG_SETTINGSV_THUMBNAILS_RESTART_NOTE */
-    "These settings apply only to thumbnails fetched after restarting FriendSh3ep.",
+    "( These settings need restart)",
     /* MSG_SETTINGSV_TOOTPLAYBACK_GROUP */
     "Toot Timeline Playback",
     /* MSG_SETTINGSV_PLAY_TOOT_TIME */

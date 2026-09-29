@@ -1,12 +1,12 @@
 @DATABASE FriendSh3ep.guide
-@$VER: FriendSh3ep.guide 1.0 (22.08.2026)
+@$VER: FriendSh3ep.guide 1.1.337 (29.09.2026)
 @AUTHOR krabobmkd
 @(C) 2026 krabobmkd
 @MASTER PROGDIR:FriendSh3ep.guide
 @NODE MAIN "FriendSh3ep - Mastodon client for AmigaOS3"
 
-@{b}FriendSh3ep v1.0@{ub}
-A Mastodon / Fediverse client for AmigaOS 3.2.x (68k)
+@{b}FriendSh3ep v1.1.337@{ub}
+A Mastodon / Fediverse client for AmigaOS 3.2.x / 3.9 (68k)
 
 @{i}Toots, timelines, images and emoji -- the Fediverse, Amiga style.@{ui}
 
@@ -48,7 +48,7 @@ decoded live.
      recommended. Mastodon timelines, images and emoji are network-hungry;
      dial-up/serial connections will struggle.
   2. @{b}AmiSSL v5@{ub} -- every Mastodon server speaks HTTPS only.
-  3. The @{b}EmojiGear v5@{ub} font & emoji package -- provides the
+  3. The @{b}EmojiGear v6@{ub} font & emoji package -- provides the
      TrueType/OpenType fonts and colour emoji FriendSh3ep uses by default
      (see @{" Themes & Styles " LINK THEMES}).
 
@@ -58,6 +58,10 @@ decoded live.
      straight to links and attached URLs instead of just reading them.
   2. @{b}AHI@{ub} and @{b}mpega.library@{ub} -- needed to play back
      attached audio.
+  3. A WebP Picture datatype, because your OS install may be bundled with
+      Gif,Png,Jpeg , but WebP may be missing. FriendSh"ep relies on
+      picture datatype to decode images and you may miss images.
+      some WebP datatypes are available on Aminet.
 
 @{" Back to Contents " LINK MAIN}
 @ENDNODE

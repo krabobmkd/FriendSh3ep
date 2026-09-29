@@ -154,6 +154,16 @@ typedef struct FS3EAccount {
     char *acct;
     char *avatarURL;
     char *accountId;
+
+    /* Id of the newest notification this account has ever been marked
+     * caught-up-to (stamped when the user switches INTO VIEWMODE_Notifs
+     * while app->notifHasUnseen was set -- see fs3e_setViewMode). NULL =
+     * never visited/never polled yet. Read as an optional trailing field
+     * (older account.dat entries won't have it, see FS3EApp_LoadAccount)
+     * so no accounts.dat format bump was needed for this. Mirrored into
+     * app->accountLastSeenNotifId for the active account, same convention
+     * as every other field here -- see FS3EApp_SetAccount. */
+    char *lastSeenNotifId;
 } FS3EAccount;
 
 /* Application struct: holds every persistent BOOPSI object and IPC handle. */
@@ -333,6 +343,25 @@ struct App {
     char  *accountId;         /* Mastodon numeric account id (fma_Id); used
                                 * for VIEWMODE_User's accounts/{id}/statuses
                                 * fetch (see ViewModeTimeline). */
+    char  *accountLastSeenNotifId; /* mirrors FS3EAccount.lastSeenNotifId
+                                * for the active account -- see its own
+                                * doc comment. Reset/repopulated on every
+                                * real account change, same as
+                                * accountMaxChars below (see the
+                                * !sameAccount block in FS3EApp_SetAccount). */
+
+    /* Background notification-polling state -- see FS3EApp_PollNotifications/
+     * FS3EApp_RestartNotifPollTimer in fs3erequests.c and FS3EApp_UpdateNotifBadge
+     * in friendsh3ep.c. notifNewestKnownId is the newest notification id
+     * seen by the most recent poll (in-memory only, not persisted --
+     * accountLastSeenNotifId above is the persisted "caught up to" marker);
+     * notifHasUnseen is TRUE whenever that poll found anything newer than
+     * accountLastSeenNotifId, and drives the warning glyph on the
+     * Notifications nav button. notifPollInFlight guards against a second
+     * poll firing while one is still outstanding. */
+    char  *notifNewestKnownId;
+    BOOL   notifHasUnseen;
+    BOOL   notifPollInFlight;
 
     /* TRUE once a FS3ENETQ_VERIFY_ACCOUNT reply comes back FS3ENETR_AUTH_
      * ERROR -- the server positively rejected accountAccessToken (a real
@@ -496,6 +525,8 @@ struct App {
     /* enum fs3eViewMode */
     ULONG     viewMode;
 
+    ULONG   delayColorUpdate;
+
     /* POINTERTYPE_* currently applied to CurrentMainWindow via
      * SetWindowPointer() -- see FS3EApp_HoverPointerType/WMHI_MOUSEMOVE in
      * friendsh3ep.c. Tracked so that handler only calls SetWindowPointer()
@@ -567,7 +598,7 @@ struct App {
      * state instead of a hot-spot notify tag" convention TTL_HOT_UNBLOCK
      * already uses for the profile header's Unblock button. */
     char  *searchInstanceDomain;
-    BOOL   searchInstanceBlocked;
+
 
     /* Back-navigation history for the Search channel -- see
      * FS3EApp_SearchGoBack()/searchStackPush() in fs3erequests.c. A plain
@@ -581,6 +612,9 @@ struct App {
      * (0 is a valid scroll position, so it can't double as the sentinel). */
     FS3ESearchStackEntry searchStack[FS3E_SEARCH_STACK_MAX];
     UBYTE  searchStackDepth;
+    UBYTE  searchInstanceBlocked;
+    UBYTE pad,paaad;
+
     LONG   searchPendingScrollY;
 
     /* TRUE while the Timeline menu's autoscroll is (nominally) running --
@@ -624,6 +658,14 @@ enum {
 void notifyMessage(const char *message, int level);
 
 void fs3e_setViewMode(ULONG viewMode);
+
+/* Swaps GA_Text on nav_btns[VIEWMODE_Notifs] between its normal label and
+ * one with a warning glyph appended, based on app->notifHasUnseen. Safe to
+ * call before the nav bar exists (SetGdAttrs on a NULL object is a no-op).
+ * See fs3erequests.c's FS3ENETQ_NOTIF_POLL reply case and fs3e_setViewMode
+ * (marks caught-up + clears the glyph when the user switches INTO
+ * VIEWMODE_Notifs) for the two callers. */
+void FS3EApp_UpdateNotifBadge(void);
 
 /* Re-applies app->settings' font/rendering options to every draw context
  * (button bar, timeline style). Not static so fs3eboopsimainwindow.c's

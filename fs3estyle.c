@@ -6,10 +6,13 @@
 #include <stdio.h>
 #include <string.h>
 #include <proto/utf8rastport.h>
-
+#include <gadgets/unibutton.h>
+#include <gadgets/unitexteditor.h>
 #include <intuition/gadgetclass.h>
 #include <gadgets/button.h>
 #include <images/bitmap.h>
+#include "UniButtonBGBM/unibuttonbgbm.h"
+#include <classes/window.h>
 #include <proto/bitmap.h>
 #include <graphics/layers.h>
 
@@ -75,6 +78,8 @@ static const ULONG defaultColors[FS3E_COLOR_COUNT] = {
     0x00FFFFFF,   /* FS3E_COLOR_BTBGBM_TEXT_SELECTED */
 
     0x00E0B000,   /* FS3E_COLOR_SENSITIVE_WARNING   warning yellow */
+
+    0x00E03C3C,   /* FS3E_COLOR_NOTIF_UNSEEN        alert red */
 };
 
 /* style.txt key for each FS3EColorRole, in the same order as the enum --
@@ -98,6 +103,8 @@ static const char *colorStyleKeys[FS3E_COLOR_COUNT] = {
     "btbgbm.textcolor.selected",
 
     "timeline.color.sensitivewarning",
+
+    "timeline.color.notifunseen",
 };
 
 /* ------------------------------------------------------------------ */
@@ -257,7 +264,76 @@ static int font_path_changed(const char *cached, const char *cur)
     if (!cur) cur = "";
     return strcmp(cached, cur) != 0;
 }
+extern int windowShouldRethink;
+static void FS3EStyle_updateButtonFontSizeToButton(ULONG pointSize)
+{
+    /* we must tell to all gadgets using those URPDrawContext that the
+     * font we share with them have their size changed so they update their internal layout.
+      all these gadgets share dcNormal
+     */
 
+    /* tell buttons using that font it's been changed too */
+    {
+        int i;
+        for (i = 0; i < 8; i++)
+        {
+             if (app->nav_btns[i])
+                SetAttrs((Object *)(app->nav_btns[i]), UBGBM_PointSize, pointSize, TAG_DONE);
+        }
+        if (app->titlebar_accountBtn) SetAttrs((Object *)(app->titlebar_accountBtn),
+            UBTP9_PointSize, pointSize, TAG_DONE);
+        if (app->titlebar_newtootBtn) SetAttrs((Object *)(app->titlebar_newtootBtn),
+            UBTP9_PointSize, pointSize, TAG_DONE);
+
+    }
+
+    if(app->tootView.contextMessage) SetAttrs(app->tootView.contextMessage,UBT_PointSize,pointSize,TAG_END);
+    if(app->tootView.bodyEditor) SetAttrs(app->tootView.bodyEditor,UTED_PointSize,pointSize,TAG_END);
+    if(app->searchWordEditor) SetAttrs(app->searchWordEditor,UTED_PointSize,pointSize,TAG_END);
+    if(app->tootView.emojiBtn) SetAttrs(app->tootView.emojiBtn,UBT_PointSize,pointSize,TAG_END);
+    if(app->loginView.urlInstructLabel) SetAttrs(app->loginView.urlInstructLabel,UBT_PointSize,pointSize,TAG_END);
+
+    if(app->tootView.window) DoMethod(app->tootView.windowObj, WM_RETHINK);
+    if(app->loginView.window) DoMethod(app->loginView.windowObj, WM_RETHINK);
+    windowShouldRethink = TRUE;
+}
+static void FS3EStyle_ResizeButtonFont(ULONG pointSize)
+{
+    if (!app || !app->buttonDC) return;
+
+    /* hopefully just resize */
+    resize_dc_size_only(app->buttonDC,   pointSize,   0);
+
+    FS3EStyle_updateButtonFontSizeToButton(pointSize);
+}
+
+static void FS3EStyle_ResetButtonFont(ULONG pointSize)
+{
+    if (!app || !app->buttonDC) return;
+
+    URPDC_FlushFonts(app->buttonDC);
+    URPDC_AddFont(app->buttonDC,
+        app->settings.primaryFontPath ? app->settings.primaryFontPath
+                                      : "LiberationSans-Regular.ttf",
+        (int)pointSize, 0);
+    if (app->settings.fallback1FontPath)
+        URPDC_AddFont(app->buttonDC, app->settings.fallback1FontPath, (int)pointSize, 0);
+    if (app->settings.fallback2FontPath)
+        URPDC_AddFont(app->buttonDC, app->settings.fallback2FontPath, (int)pointSize, 0);
+    if (app->settings.fallback3FontPath)
+        URPDC_AddFont(app->buttonDC, app->settings.fallback3FontPath, (int)pointSize, 0);
+    URPDC_AddFont(app->buttonDC,
+        app->settings.emojiFontPath ? app->settings.emojiFontPath
+                                    : "OpenMoji-black-glyf.ttf",
+        (int)pointSize, 0);
+
+
+
+    FS3EStyle_updateButtonFontSizeToButton(pointSize);
+
+}
+/* resizing fonts implies telling the change to buttons,
+ so need relayouting whole windows with WM_RETHINK at the end */
 void FS3EStyle_SetFontSize(FS3EStyle *st,FS3ESettings   *settings)
 {
     int baseSize = settings->fontPointSize;
@@ -266,9 +342,11 @@ void FS3EStyle_SetFontSize(FS3EStyle *st,FS3ESettings   *settings)
     const char *fallback2 = settings->fallback2FontPath;
     const char *fallback3 = settings->fallback3FontPath;
     const char *emoji = settings->colorEmojiFontPath;
+    const char *emojibt = settings->emojiFontPath;
 
     const char *pri = primary ? primary : "LiberationSans-Regular.ttf";
     const char *emo = emoji   ? emoji   : "NotoColorEmoji32.ttf";
+    const char *emobt = emojibt ? emojibt : "OpenMoji-black-glyf.ttf";
     int normalSize   = baseSize;
     int usernameSize = (baseSize * 18)/16;
     int miniSize     = (baseSize *14)/16;
@@ -284,9 +362,11 @@ void FS3EStyle_SetFontSize(FS3EStyle *st,FS3ESettings   *settings)
                    font_path_changed(st->fontCacheFallback1, fallback1) ||
                    font_path_changed(st->fontCacheFallback2, fallback2) ||
                    font_path_changed(st->fontCacheFallback3, fallback3) ||
-                   font_path_changed(st->fontCacheEmoji,     emo);
+                   font_path_changed(st->fontCacheEmoji,     emo) ||
+                   font_path_changed(st->fontCacheEmojiBt,     emobt);
 
     if (fontsChanged) {
+
         resize_dc(st->dcNormal,   normalSize,   pri, fallback1, fallback2, fallback3, emo, 0);
         resize_dc(st->dcUsername, usernameSize, pri, fallback1, fallback2, fallback3, emo, URP_STYLE_BOLD);
         resize_dc(st->dcMini,     miniSize,     pri, fallback1, fallback2, fallback3, emo, 0);
@@ -296,24 +376,24 @@ void FS3EStyle_SetFontSize(FS3EStyle *st,FS3ESettings   *settings)
         strncpy(st->fontCacheFallback2, fallback2 ? fallback2 : "", FS3E_FONTPATH_MAX - 1);
         strncpy(st->fontCacheFallback3, fallback3 ? fallback3 : "", FS3E_FONTPATH_MAX - 1);
         strncpy(st->fontCacheEmoji,     emo,                   FS3E_FONTPATH_MAX - 1);
+        strncpy(st->fontCacheEmojiBt,     emobt,                   FS3E_FONTPATH_MAX - 1);
         st->fontCachePrimary[FS3E_FONTPATH_MAX - 1]   = '\0';
         st->fontCacheFallback1[FS3E_FONTPATH_MAX - 1] = '\0';
         st->fontCacheFallback2[FS3E_FONTPATH_MAX - 1] = '\0';
         st->fontCacheFallback3[FS3E_FONTPATH_MAX - 1] = '\0';
         st->fontCacheEmoji[FS3E_FONTPATH_MAX - 1]     = '\0';
+        st->fontCacheEmojiBt[FS3E_FONTPATH_MAX - 1]     = '\0';
         st->fontCacheValid = TRUE;
+
+        /* also manage special button fonts size */
+        FS3EStyle_ResetButtonFont(normalSize);
+
     } else {
         resize_dc_size_only(st->dcNormal,   normalSize,   0);
         resize_dc_size_only(st->dcUsername, usernameSize, URP_STYLE_BOLD);
         resize_dc_size_only(st->dcMini,     miniSize,     0);
-    }
 
-    /* Re-bind the screen so the DCs can access the colour map for CLUT mode.
-     * URPDC_FlushFonts may reset internal bitmap state. */
-    if (st->screen) {
-        if (st->dcNormal)   URPDC_SetDrawScreen(st->dcNormal,   st->screen);
-        if (st->dcUsername) URPDC_SetDrawScreen(st->dcUsername, st->screen);
-        if (st->dcMini)     URPDC_SetDrawScreen(st->dcMini,     st->screen);
+        FS3EStyle_ResizeButtonFont(normalSize);
     }
 
     compute_layout(st);
@@ -379,7 +459,7 @@ void FS3EStyle_InitDefaults(FS3EStyle *st)
     memset(&st->waitImage, 0, sizeof(st->waitImage));
 }
 
-void FS3EStyle_ApplyColors(FS3EStyle *st, struct Screen *scr)
+void FS3EStyle_AllocColors(FS3EStyle *st, struct Screen *scr)
 {
     struct ColorMap *cm;
     int i;
@@ -399,9 +479,6 @@ void FS3EStyle_ApplyColors(FS3EStyle *st, struct Screen *scr)
         obtain_pens(cm, st->patch9[i].textcolors, PATCH9_NUM_STATES);
     }
 
-    if(st->dcNormal) URPDC_SetDrawScreen(st->dcNormal,scr);
-    if(st->dcMini) URPDC_SetDrawScreen(st->dcMini,scr);
-    if(st->dcUsername) URPDC_SetDrawScreen(st->dcUsername,scr);
 }
 
 void FS3EStyle_ReleasePens(FS3EStyle *st)
@@ -505,15 +582,6 @@ static void ASM SAVEDS FS3EStyle_TitleBarBackFillFunc(
     dstH = (LONG)bfm->bf_Bounds.MaxY - dstY + 1;
     if (dstW <= 0 || dstH <= 0) return;
 
-// bdbprintf("bfhook l:%d t:%d r:%d b:%d ofsx:% ofsy:%d\n",(LONG)bfm->bf_Bounds.MinX,
-// (LONG)bfm->bf_Bounds.MinY,(LONG)bfm->bf_Bounds.MaxX,
-// bfm->bf_Bounds.MaxY,bfm->bf_OffsetX,bfm->bf_OffsetY);
-
-// if(rp->Layer)
-// {
-// bdbprintf("layer:%08x bm:%08x layerflag:%04x\n",rp->Layer, rp->BitMap,rp->Layer->Flags);
-
-// }
     if (tbBgBitmap && tbBgWidth > 0 && tbBgHeight > 0) {
         /* Phase of the pattern at the top-left of the damage rect, anchored
          * to the layer's own origin so tiles stay aligned across separate
@@ -737,10 +805,13 @@ static void fs3estyle_load_patch9_slot(FS3EStyle *st, const StyleFile *sf, int s
 
 void FS3EStyle_UpdateAllDCColorMap(FS3EStyle *st, struct Screen *scr)
 {
+    /* note: now utf8rastport should recreate color map
+     * per screen once and aa table per font */
     if(st->dcMini) URPDC_UpdateColorMap(st->dcMini,scr);
     if(st->dcNormal) URPDC_UpdateColorMap(st->dcNormal,scr);
     if(st->dcUsername) URPDC_UpdateColorMap(st->dcUsername,scr);
     if(app->buttonDC)  URPDC_UpdateColorMap(app->buttonDC,scr);
+
 }
 
 BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)

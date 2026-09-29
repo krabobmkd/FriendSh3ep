@@ -795,7 +795,7 @@ BOOL FS3EEmojiBoxWindow_Create(FS3EEmojiBoxWindow *ebw, struct URPDrawContext *d
         UBT_BevelStyle,     BVS_BUTTON,
         UBT_URPDrawContext, (ULONG)dc,
 //        UBT_URPDrawContext, (ULONG) app->buttonDC,
-        GA_Text,            (ULONG)"\xF0\x9F\xA6\x9C", /* U+1F99C parrot */
+//test        GA_Text,            (ULONG)"\xF0\x9F\xA6\x9C", /* U+1F99C parrot */
         TAG_END);
     if (!ebw->hexButton) return FALSE;
 
@@ -909,7 +909,8 @@ void FS3EEmojiBoxWindow_Open(FS3EEmojiBoxWindow *ebw)
                  WA_Height, (ULONG)ebw->height,
                  TAG_END);
     }
-
+    /* update hexbox emoji at this level, else problem with init */
+    FS3EEmojiBoxWindow_RefreshHexPreview(ebw);
     ebw->window = (struct Window *)DoMethod(ebw->windowObj, WM_OPEN, NULL);
 }
 

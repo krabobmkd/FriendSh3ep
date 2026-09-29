@@ -77,6 +77,7 @@ void FS3EMain_GetWindowPos(FS3EMainWindow *mw, Object *window_obj)
  * from it -- see the doc comment in fs3eboopsimainwindow.h. */
 void FS3EMain_SyncStyleToWidgets(void)
 {
+
     FS3EStyle_SyncTitleBarButtons(&app->style,
         app->titlebar_closeBtn, app->titlebar_iconifyBtn,
         app->titlebar_altposBtn, app->titlebar_depthBtn);
@@ -90,6 +91,7 @@ void FS3EMain_SyncStyleToWidgets(void)
      * (possibly just-changed) colors -- see FS3EApp_ApplyFontSettings_
      * Delayed's own doc comment for why this also needs a real screen
      * bound to the draw contexts, not just a colour change. */
+
     FS3EApp_ApplyFontSettings_Delayed();
 
     /* account/newtoot are UniButtonP9 skinned from a Patch9 slot, not a
@@ -114,6 +116,7 @@ void FS3EMain_SyncStyleToWidgets(void)
                     TAG_END);
         }
     }
+
 }
 
 /* WM_OPEN the persistent window object on CurrentMainScreen. */
@@ -122,8 +125,6 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
 
     if (CurrentMainWindow) return;  /* already open */
     if (!CurrentMainScreen) return; /* need an active screen */
-
-
 
     /* Load title bar button images for this screen. The title bar
      * background (tbbg.png) is handled separately: its GA_BackFill hook
@@ -139,40 +140,30 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
      * this check "no theme" selected via the chooser would keep coming
      * back with whatever the last loaded theme's images were the moment
      * the app got uniconized and restored -- confirmed as a real bug. */
+
+ /* done in _Show() now
     if (app->style.themePath && app->style.themePath[0]) {
+     printf("GenericOpenWindow ->FS3EStyle_LoadThemeImages\n");
         FS3EStyle_LoadThemeImages(&app->style, CurrentMainScreen);
     } else {
         FS3EStyle_ResetColors(&app->style);
         FS3EStyle_ResetPatch9Colors(&app->style);
 
     }
-
+*/
     /* Theme images are the slow part of first startup (datatype decode of
      * every theme bitmap) -- mark it done on the startup progress bar (see
      * FS3EInitStage in friendsh3ep.h). No-op on every later reopen
      * (WM_ICONIFY/WM_UNICONIFY), same as every FS3EApp_InitProgress() call
      * below -- the bar is long closed by then. */
-    FS3EApp_InitProgress(FS3E_INIT_THEME_IMAGES);
+//    FS3EApp_InitProgress(FS3E_INIT_THEME_IMAGES);
 
-    /* Synchronize screen palette colors.
-     * must be done before opening window, and when screen is known.
-     * note: as datatype image reading in FS3EStyle_LoadThemeImages can realloc colors,
-     * better do this after for 8bit indexed palette modes:
-     */
-    FS3EStyle_ApplyColors(&app->style, CurrentMainScreen);
-
-    /* Build the 4 built-in title bar button glyphs (idempotent -- a no-op
-     * past the very first successful call) so FS3EStyle_SyncTitleBarButtons
-     * below never has to fall back to a literal NULL GA_Image for "no
-     * theme" -- see FS3EStyle_CreateDefaultButtonImages' doc comment for
-     * why button.gadget doesn't tolerate that once an image has been
-     * attached at least once. */
-    FS3EStyle_CreateDefaultButtonImages(&app->style, CurrentMainScreen);
 
     /* Loading screen bitmap datatypes allocs/free colors to screen palette */
-    FS3EStyle_UpdateAllDCColorMap(&app->style,CurrentMainScreen);
+
 
     FS3EApp_InitProgress(FS3E_INIT_STYLE_APPLIED);
+
     /* Button cell size may have changed (theme-dependent), so this is
      * followed by a full relayout (WM_RETHINK below). */
     FS3EMain_SyncStyleToWidgets();
@@ -197,6 +188,7 @@ static void GenericOpenWindow(FS3EMainWindow *mw, Object *window_obj)
 
 }
 
+extern int windowShouldRethink;
 void FS3EMain_Show(FS3EMainWindow *mw, Object *window_obj, int upDateStyle)
 {
     LONG x1, y1, w, h;
@@ -207,6 +199,8 @@ void FS3EMain_Show(FS3EMainWindow *mw, Object *window_obj, int upDateStyle)
     if (!mw->lockedScreen)
         mw->lockedScreen = LockPubScreen(NULL);
     if (!mw->lockedScreen) return;
+
+    windowShouldRethink = FALSE; /* reopening also layout */
 
     CurrentMainScreen = mw->lockedScreen;
 
@@ -240,6 +234,10 @@ void FS3EMain_Show(FS3EMainWindow *mw, Object *window_obj, int upDateStyle)
     /*experimental: set theme before open */
     if(upDateStyle)
     {
+
+        /* done once */
+        FS3EStyle_CreateDefaultButtonImages(&app->style, CurrentMainScreen);
+
         FS3EApp_LoadTheme_Immediate(CurrentMainScreen);
     }
 

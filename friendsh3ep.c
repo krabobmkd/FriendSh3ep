@@ -124,6 +124,8 @@
 #include "fs3enetworkhelper.h"
 #include "fs3eprogressview.h"
 
+#include "fs3estyle.h"
+
 #include "UniButtonP9/unibuttonp9.h"
 #include "UniButtonBGBM/unibuttonbgbm.h"
 #include "TitleBarLayout/fs3etitlebar.h"
@@ -159,6 +161,8 @@ int i;
 BOOL windowDragActive      = FALSE;
 WORD windowDragLastScreenX = 0;
 WORD windowDragLastScreenY = 0;
+int windowShouldRethink=FALSE;
+
 
 /* Window resize state — written by TootTimeline GM_HITTEST,
  * read by WMHI_MOUSEMOVE.  Width is snapped to multiples of 16.
@@ -274,6 +278,9 @@ static LibraryEntry libraryTable[] = {
 };
 
 struct App *app = NULL;
+
+/* may re-use icon already defined for prefs as WB "appicon" */
+extern struct DiskObject *AppDiskObject;
 
 /* Startup progress bar (see fs3eprogressview.h) -- file-scope, not a local
  * in main(), so exitclose() can close it too: a cleanexit()/exit() called
@@ -710,58 +717,57 @@ static struct Hook idcmpHook ={
  * Must be called after app and app->buttonDC are initialised.
  * Buttons may or may not exist yet; the null-checks below handle both cases.
  */
-static void FS3EApp_SetButtonFontSize(ULONG pointSize)
-{
-    if (!app || !app->buttonDC) return;
 
-    URPDC_FlushFonts(app->buttonDC);
-    URPDC_AddFont(app->buttonDC,
-        app->settings.primaryFontPath ? app->settings.primaryFontPath
-                                      : "LiberationSans-Regular.ttf",
-        (int)pointSize, 0);
-    if (app->settings.fallback1FontPath)
-        URPDC_AddFont(app->buttonDC, app->settings.fallback1FontPath, (int)pointSize, 0);
-    if (app->settings.fallback2FontPath)
-        URPDC_AddFont(app->buttonDC, app->settings.fallback2FontPath, (int)pointSize, 0);
-    if (app->settings.fallback3FontPath)
-        URPDC_AddFont(app->buttonDC, app->settings.fallback3FontPath, (int)pointSize, 0);
-    URPDC_AddFont(app->buttonDC,
-        app->settings.emojiFontPath ? app->settings.emojiFontPath
-                                    : "OpenMoji-black-glyf.ttf",
-        (int)pointSize, 0);
 
-    /* Notify existing buttons, one macro per real class so each object is
-     * only ever sent tags its own OM_SET understands -- nav_btns[] are
-     * UniButtonBGBM (UBGBM_PointSize triggers its cache invalidation);
-     * titlebar_settingsBtn/accountBtn/newtootBtn are UniButtonP9
-     * (UBTP9_PointSize just retriggers live metrics -- no cache there).
-     * Gadget pointers are NULL before buttons are created, so this is safe. */
-    {
-        int i;
-#define RESIZE_BGBM_BTN(o) if (o) SetAttrs((Object *)(o), \
-            UBGBM_PointSize, pointSize, TAG_DONE)
-#define RESIZE_P9_BTN(o) if (o) SetAttrs((Object *)(o), \
-            UBTP9_PointSize, pointSize, TAG_DONE)
-        for (i = 0; i < 8; i++) RESIZE_BGBM_BTN(app->nav_btns[i]);
-    //olde    RESIZE_P9_BTN(app->titlebar_settingsBtn);
-        RESIZE_P9_BTN(app->titlebar_accountBtn);
-        RESIZE_P9_BTN(app->titlebar_newtootBtn);
-#undef RESIZE_BGBM_BTN
-#undef RESIZE_P9_BTN
 
-    }
-    /* we must tell to all gadgets using those URPDrawContext that the
-     * font we share with them have their size changed so they update their internal layout.
-      all these gadgets share dcNormal
-     */
-    if(app->tootView.contextMessage) SetAttrs(app->tootView.contextMessage,UBT_PointSize,pointSize,TAG_END);
-    if(app->tootView.bodyEditor) SetAttrs(app->tootView.bodyEditor,UTED_PointSize,pointSize,TAG_END);
-    if(app->searchWordEditor) SetAttrs(app->searchWordEditor,UTED_PointSize,pointSize,TAG_END);
-    if(app->tootView.emojiBtn) SetAttrs(app->tootView.emojiBtn,UBT_PointSize,pointSize,TAG_END);
-    if(app->loginView.urlInstructLabel) SetAttrs(app->loginView.urlInstructLabel,UBT_PointSize,pointSize,TAG_END);
-    if(app->tootView.window) DoMethod(app->tootView.windowObj, WM_RETHINK);
-    if(app->loginView.window) DoMethod(app->loginView.windowObj, WM_RETHINK);
-}
+//  SUPER DEPRECATED
+// static void FS3EApp_SetButtonFontSize(ULONG pointSize)
+// {
+//     if (!app || !app->buttonDC) return;
+
+
+//     URPDC_FlushFonts(app->buttonDC);
+//     URPDC_AddFont(app->buttonDC,
+//         app->settings.primaryFontPath ? app->settings.primaryFontPath
+//                                       : "LiberationSans-Regular.ttf",
+//         (int)pointSize, 0);
+//     if (app->settings.fallback1FontPath)
+//         URPDC_AddFont(app->buttonDC, app->settings.fallback1FontPath, (int)pointSize, 0);
+//     if (app->settings.fallback2FontPath)
+//         URPDC_AddFont(app->buttonDC, app->settings.fallback2FontPath, (int)pointSize, 0);
+//     if (app->settings.fallback3FontPath)
+//         URPDC_AddFont(app->buttonDC, app->settings.fallback3FontPath, (int)pointSize, 0);
+//     URPDC_AddFont(app->buttonDC,
+//         app->settings.emojiFontPath ? app->settings.emojiFontPath
+//                                     : "OpenMoji-black-glyf.ttf",
+//         (int)pointSize, 0);
+
+//     /* tell buttons using that font it's been changed too */
+//     {
+//         int i;
+//         for (i = 0; i < 8; i++)
+//         {
+//              if (app->nav_btns[i])
+//                 SetAttrs((Object *)(app->nav_btns[i]), UBGBM_PointSize, pointSize, TAG_DONE);
+//         }
+//         if (app->titlebar_accountBtn) SetAttrs((Object *)(app->titlebar_accountBtn),
+//             UBTP9_PointSize, pointSize, TAG_DONE);
+//         if (app->titlebar_newtootBtn) SetAttrs((Object *)(app->titlebar_newtootBtn),
+//             UBTP9_PointSize, pointSize, TAG_DONE);
+
+//     }
+//     /* we must tell to all gadgets using those URPDrawContext that the
+//      * font we share with them have their size changed so they update their internal layout.
+//       all these gadgets share dcNormal
+//      */
+//     if(app->tootView.contextMessage) SetAttrs(app->tootView.contextMessage,UBT_PointSize,pointSize,TAG_END);
+//     if(app->tootView.bodyEditor) SetAttrs(app->tootView.bodyEditor,UTED_PointSize,pointSize,TAG_END);
+//     if(app->searchWordEditor) SetAttrs(app->searchWordEditor,UTED_PointSize,pointSize,TAG_END);
+//     if(app->tootView.emojiBtn) SetAttrs(app->tootView.emojiBtn,UBT_PointSize,pointSize,TAG_END);
+//     if(app->loginView.urlInstructLabel) SetAttrs(app->loginView.urlInstructLabel,UBT_PointSize,pointSize,TAG_END);
+//     if(app->tootView.window) DoMethod(app->tootView.windowObj, WM_RETHINK);
+//     if(app->loginView.window) DoMethod(app->loginView.windowObj, WM_RETHINK);
+// }
 /* avoid flooding reloading font and remaking all layout when changing font fast */
 static int delayApplyFontSettings = FALSE;
 /* Re-apply font settings from app->settings to all draw contexts.
@@ -804,7 +810,6 @@ void FS3EApp_ApplyFontSettings_Delayed(void)
     if (app->settings.antialias)    prefFlags |= URP_PREF_ANTIALIAS;
     if (app->settings.emojiQuality) prefFlags |= URP_PREF_HIGHFILTERING;
     URPDC_SetPreferenceFlags(app->buttonDC, prefFlags);
-    FS3EApp_SetButtonFontSize((ULONG)app->settings.fontPointSize);
 
     /* --- Timeline style DCs (dcNormal, dcUsername, dcMini) ---
      * Sized proportionally: normal = base, username = base+1, mini = base-2.
@@ -870,9 +875,11 @@ void flushThemeImagesFromButtons()
 
 void FS3EApp_LoadTheme_Immediate(struct Screen *screen)
 {
-    const char *themeName = app ? app->settings.themeName : NULL;
+    const char *themeName;
 
     if (!app) return;
+
+    themeName =  app->settings.themeName;
 
     /* Dispose whatever the previously active theme (or nothing, if none
      * was active) loaded, before deciding what replaces it.
@@ -907,12 +914,10 @@ void FS3EApp_LoadTheme_Immediate(struct Screen *screen)
         FS3EStyle_ResetPatch9Colors(&app->style);
     }
 
-    FS3EStyle_ApplyColors(&app->style, screen);
+    /* this may change palette */
+    FS3EStyle_AllocColors(&app->style, screen);
 
-    /* Loading screen bitmap datatypes allocs/free colors to screen palette */
     FS3EStyle_UpdateAllDCColorMap(&app->style, screen);
-
-
     /* Propagates the (re)loaded/reset style onto every widget that caches
      * its own rendering from it -- title bar buttons, patch9-skinned
      * buttons, the toot timeline's colors, nav bar buttons. Same function
@@ -924,9 +929,35 @@ void FS3EApp_LoadTheme_Immediate(struct Screen *screen)
 }
 
 INLINE void FS3EApp_LoadTheme_Delayed(void) {
+
     FS3EApp_LoadTheme_Immediate(CurrentMainScreen);
 
     delayLoadTheme = FALSE;
+}
+
+/* Notifications nav button label, normal vs. "unseen notifications
+ * waiting" (a warning glyph appended at the right, per the button's own
+ * design). See FS3EApp_UpdateNotifBadge below -- swapping GA_Text is all
+ * that's needed, UniButtonBGBM already frees/rebuilds its cached text
+ * bitmap and redraws itself from inside its own OM_SET handler. */
+#define FS3E_NOTIF_BTN_LABEL        "\xF0\x9F\x9A\x80 Notif."
+#define FS3E_NOTIF_BTN_LABEL_UNSEEN "\xF0\x9F\x9A\x80 Notif. \xE2\x9A\xA0"
+
+/* UniButtonBGBM's own OM_NEW class default for UBGBM_TextPen (see its
+ * inst->txtPen init in unibuttonbgbm_attribs.c) -- nav_btns[] never
+ * customizes this pen otherwise (FS3E_COLOR_BTBGBM_TEXT_ENABLED/SELECTED
+ * are "not wired to any gadget yet", see fs3estyle.h), so reverting to
+ * this literal restores exactly the look every other nav button still has. */
+#define FS3E_NOTIF_BTN_TEXTPEN_NORMAL 1
+
+void FS3EApp_UpdateNotifBadge(void)
+{
+    if (!app->nav_btns[VIEWMODE_Notifs]) return;
+    SetGdAttrs(app->nav_btns[VIEWMODE_Notifs],
+        GA_Text,        (ULONG)(app->notifHasUnseen ? FS3E_NOTIF_BTN_LABEL_UNSEEN : FS3E_NOTIF_BTN_LABEL),
+        UBGBM_TextPen,  (ULONG)(app->notifHasUnseen ? FS3E_PEN(&app->style, FS3E_COLOR_NOTIF_UNSEEN)
+                                                     : FS3E_NOTIF_BTN_TEXTPEN_NORMAL),
+        TAG_END);
 }
 /* Create one UniButtonBGBM (flat-colour, cached-by-state), click arrives
  * via WMHI_GADGETUP. dpiH is reserved for future use; font size is
@@ -1005,6 +1036,19 @@ void fs3e_setViewMode(ULONG viewMode)
     /* now, it's official */
     oldViewMode = app->viewMode;
     app->viewMode = viewMode;
+
+    /* Entering Notifications marks the user caught-up-to whatever the most
+     * recent background poll last saw (app->notifNewestKnownId), the
+     * moment the tab is switched to -- NOT once the fresh page actually
+     * finishes loading. Persisted right away so a crash/quit right after
+     * doesn't lose it. No-op if there was nothing unseen to begin with. */
+    if (viewMode == VIEWMODE_Notifs && app->notifHasUnseen) {
+        app->notifHasUnseen = FALSE;
+        if (app->accountLastSeenNotifId) { FreeVec(app->accountLastSeenNotifId); app->accountLastSeenNotifId = NULL; }
+        if (app->notifNewestKnownId) app->accountLastSeenNotifId = NetStrDup(app->notifNewestKnownId);
+        FS3EApp_UpdateNotifBadge();
+        FS3EApp_SaveAccount();
+    }
 
     /* Remember where we're coming FROM, the moment Search is genuinely
      * entered from somewhere else -- see searchOriginViewMode's own doc
@@ -1380,6 +1424,14 @@ int main(int argc, char **argv)
      * VBlank interrupt Signal()s) -- see fs3etimer.h. */
     if (!FS3ETimer_Init()) cleanexit("Can't install VBlank timer service");
 
+    /* Background "do we have unseen notifications?" polling -- runs
+     * forever from here on (no stop/start tied to login state,
+     * FS3EApp_PollNotifications itself no-ops without a connected
+     * account, same as FS3EApp_FetchTimeline's own guards). Settings are
+     * already loaded above, so this picks up whatever tootCheckIntervalSec
+     * actually is rather than some hardcoded default. */
+    FS3EApp_RestartNotifPollTimer();
+
     FS3EApp_InitProgress(FS3E_INIT_RUNTIME);
 
     /* --- Private BOOPSI classes ---------------------------------------- */
@@ -1401,7 +1453,7 @@ int main(int argc, char **argv)
         if (app->settings.emojiQuality) prefFlags |= URP_PREF_HIGHFILTERING;
         URPDC_SetPreferenceFlags(app->buttonDC, prefFlags);
     }
-    FS3EApp_SetButtonFontSize((ULONG)app->settings.fontPointSize);
+   //olde  FS3EApp_SetButtonFontSize((ULONG)app->settings.fontPointSize);
 
     /* TODO: style/theme settings color and fonts have to be set with loaded settings
         (or from an external theme file ?)
@@ -1634,7 +1686,7 @@ int main(int argc, char **argv)
     app->nav_btns[3] = makeBtn(GID_NAV_FEDERATED,     "\xF0\x9F\x8C\x8E Fed.",      dpiH,TRUE);
 
     app->nav_btns[4] = makeBtn(GID_NAV_SEARCH,        "\xF0\x9F\x94\x8D Search",    dpiH,TRUE);
-    app->nav_btns[5] = makeBtn(GID_NAV_NOTIFICATIONS, "\xF0\x9F\x9A\x80 Notif.",    dpiH,TRUE);
+    app->nav_btns[5] = makeBtn(GID_NAV_NOTIFICATIONS, FS3E_NOTIF_BTN_LABEL,    dpiH,TRUE);
 
     app->nav_btns[6] = makeBtn(GID_NAV_BOOKMARKS, "\xF0\x9F\x94\x96 Bookmark",    dpiH,TRUE);
     app->nav_btns[7] = makeBtn(GID_NAV_NEWS, "\xF0\x9F\x93\xB0 News",    dpiH,TRUE);
@@ -1670,7 +1722,7 @@ int main(int argc, char **argv)
     if (!app->navBarLayout) cleanexit("Can't create nav bar layout");
 
     FS3EApp_InitProgress(FS3E_INIT_TITLEBAR_NAVBAR);
-
+ // URPDC_FlushGlyphCache(NULL);
     /* ================================================================== */
     /* Part C: toot timeline                                               */
     /* ================================================================== */
@@ -1690,7 +1742,7 @@ int main(int argc, char **argv)
                  TAG_DONE);
 
 
-
+  //URPDC_FlushGlyphCache(NULL);
     /* (fake test posts removed — real data comes from FS3ENETQ_TIMELINE replies) */
  flushbdbprint();
 
@@ -1800,6 +1852,15 @@ int main(int argc, char **argv)
 
     app->app_port = CreateMsgPort();
 
+    {
+        ULONG appIconTag = TAG_IGNORE;
+        ULONG appIconValue = 0;
+        if(AppDiskObject)
+        {
+            appIconTag = WINDOW_Icon;
+            appIconValue = (ULONG)AppDiskObject;
+        }
+
     app->window_obj = (Object *)NewObject(WINDOW_GetClass(), NULL,
         WA_Left,    app->mainwindow.left,
         WA_Top,     app->mainwindow.top,
@@ -1819,9 +1880,10 @@ int main(int argc, char **argv)
 
         WINDOW_IDCMPHook,(ULONG)&idcmpHook,
         WINDOW_IDCMPHookBits, IDCMP_MOUSEBUTTONS | IDCMP_RAWKEY /*| IDCMP_VANILLAKEY*/,
-
-
+        appIconTag,appIconValue,
         TAG_END);
+
+    }
     if (!app->window_obj) cleanexit("Can't create window");
 // printf("FS3EApp_ApplyFontSettings_Delayed\n");
     /* synchronize fonts against settings before first layout */
@@ -1896,7 +1958,7 @@ int main(int argc, char **argv)
     fs3e_setViewMode(app->accountAccessToken ? VIEWMODE_Home : VIEWMODE_Local);
 
     flushbdbprint();
-
+  //URPDC_FlushGlyphCache(NULL);
     FS3EMain_Show(&app->mainwindow, app->window_obj,TRUE);
     if (!CurrentMainWindow) cleanexit("Can't open window");
 
@@ -1909,6 +1971,8 @@ int main(int argc, char **argv)
      * above) rather than through the debounced public trigger, since
      * there's no event loop running yet to deliver the deferred signal. */
     //moved FS3EApp_LoadTheme_Delayed();
+
+    app->delayColorUpdate = 1;
 
     FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
 // printf("loop\n");
@@ -1923,6 +1987,7 @@ int main(int argc, char **argv)
 #define reflags_navBtns        16
         GetAttr(WINDOW_SigMask, app->window_obj, &winsignal);
 
+
         while (ok)
         {
             ULONG result, waitedSignals, currentSignals;
@@ -1930,7 +1995,7 @@ int main(int argc, char **argv)
             ULONG refreshFlags = 0;
             flushbdbprint();
             /* flush library output*/
-            //URPDC_FlushGlyphCache(NULL);
+            URPDC_FlushGlyphCache(NULL);
 
             loginSig = FS3ELoginView_GetSignalMask(&app->loginView);
             tootSig  = FS3ETootView_GetSignalMask(&app->tootView);
@@ -1957,6 +2022,9 @@ int main(int argc, char **argv)
             if (currentSignals & FS3ETIMER_SIGNAL)
                 FS3ETimer_Process();
 
+
+
+
             /* A second FriendSh3ep launch asked us to activate -- see
              * FS3E_CheckSingleInstance(). Re-open if iconified, otherwise
              * just bring the window forward. */
@@ -1966,8 +2034,8 @@ int main(int argc, char **argv)
                 while ((sipcMsg = GetMsg(SIPCPort)) != NULL)
                 {
                     if (!CurrentMainWindow)
-                    {
-                        FS3EMain_Show(&app->mainwindow, app->window_obj,FALSE);
+                    {   // uniconify
+                        FS3EMain_Show(&app->mainwindow, app->window_obj,TRUE);
                         if (CurrentMainWindow)
                         {
                             FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
@@ -2017,7 +2085,7 @@ int main(int argc, char **argv)
                         break;
 
                     case WMHI_UNICONIFY:
-                        FS3EMain_Show(&app->mainwindow, app->window_obj,FALSE);
+                        FS3EMain_Show(&app->mainwindow, app->window_obj,TRUE);
                         if (!CurrentMainWindow) cleanexit("can't re-open window");
                         FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
                         if (app->avatarImages)
@@ -3664,25 +3732,31 @@ int main(int argc, char **argv)
 
             // - - - - gather style change and window rethink
             {
-                int shouldrethink=FALSE;
+
                 if(delayApplyFontSettings)
                 {
                     FS3EApp_ApplyFontSettings_Delayed();
                     /* Recompute minimum gadget sizes and relayout the whole window */
-                     shouldrethink = TRUE;
+                     windowShouldRethink = TRUE;
                 }
 
                 if(delayLoadTheme)
                 {
                     FS3EApp_LoadTheme_Delayed();
-                    shouldrethink = TRUE;
+                    windowShouldRethink = TRUE;
                 }
-                if(shouldrethink)
+               // printf("    test windowShouldRethink:%d\n",windowShouldRethink);
+                if(windowShouldRethink && CurrentMainWindow)
                 {
                     DoMethod(app->window_obj, WM_RETHINK);
+                    windowShouldRethink = FALSE;
                 }
 
             }
+
+
+
+
         }  // ed while events
     }// end paragraph
 
@@ -3715,6 +3789,7 @@ void exitclose(void)
      * FS3EProgressView_Open() even ran). */
     FS3EApp_InitProgressDone();
 
+    /* this port is just used for cross-app-instance signals so there's only one instance */
     if (SIPCPort)
     {
         RemPort(SIPCPort);
@@ -3848,6 +3923,8 @@ void exitclose(void)
 
         FS3EApp_FreeLoginState();
         FS3EApp_FreeAccount();
+        if (app->accountLastSeenNotifId) { FreeVec(app->accountLastSeenNotifId); app->accountLastSeenNotifId = NULL; }
+        if (app->notifNewestKnownId)     { FreeVec(app->notifNewestKnownId);     app->notifNewestKnownId     = NULL; }
         if (app->searchProfileAcct)      { FreeVec(app->searchProfileAcct);      app->searchProfileAcct      = NULL; }
         if (app->searchProfileAccountId) { FreeVec(app->searchProfileAccountId); app->searchProfileAccountId = NULL; }
         if (app->searchDiscussionStatusId) { FreeVec(app->searchDiscussionStatusId); app->searchDiscussionStatusId = NULL; }
@@ -3872,6 +3949,7 @@ void exitclose(void)
         CloseLibrary((struct Library *)LocaleBase);
         LocaleBase = NULL;
     }
+    //URPDC_FlushGlyphCache(NULL);
 
     if (BevelBase)  { CloseLibrary(BevelBase);  BevelBase  = NULL; }
     if (BitMapBase) { CloseLibrary(BitMapBase); BitMapBase = NULL; }

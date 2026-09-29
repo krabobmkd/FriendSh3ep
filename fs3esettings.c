@@ -201,7 +201,7 @@ void FS3ESettings_Load(FS3ESettings *s)
     val = ToolTypePrefs_Get(TT_MINIFYTHUMBNAILS);
     if (val) s->minifyThumbnails = (val[0] != '0');
 
-    s->thumbnailsOnlyOnClick = FALSE;
+    s->thumbnailsOnlyOnClick = TRUE; /* finally default is true, better for lower configs */
     val = ToolTypePrefs_Get(TT_THUMBSONLYONCLICK);
     if (val) s->thumbnailsOnlyOnClick = (val[0] != '0');
 
