@@ -16,6 +16,7 @@
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 #include <exec/memory.h>
 #include <proto/exec.h>
@@ -228,17 +229,17 @@ void FS3EHttp_PrintErrors(void)
     // if (!AmiSSLExtBase)
     //     return;
 
-    // /* bdbprintf_now(), not ERR_print_errors()+Output() -- FS3ENet_ProcEntry's
+    // /* bdbprintf(), not ERR_print_errors()+Output() -- FS3ENet_ProcEntry's
     //  * process (fs3enet.c) is a plain CreateNewProcTags() child with no
     //  * controlling window, so Output() goes to a console nobody sees. */
     // while ((errCode = ERR_get_error()) != 0) {
     //     char errBuf[256];
     //     ERR_error_string_n(errCode, errBuf, sizeof(errBuf));
-    //     bdbprintf_now("FS3EHttp: %s\n", errBuf);
+    //     bdbprintf("FS3EHttp: %s\n", errBuf);
     //     any = TRUE;
     // }
     // if (!any)
-    //     bdbprintf_now("FS3EHttp: (no OpenSSL error queue entries)\n");
+    //     bdbprintf("FS3EHttp: (no OpenSSL error queue entries)\n");
 }
 
 /* Reads all of bio into an AllocVec()'d, NUL-terminated buffer. */
@@ -407,10 +408,20 @@ static BOOL FS3EHttp_DoRequest(const char *url, const FS3EHttpHeader *extraHeade
  * only from FS3EHttp_DoRawRequest() below, always from this process' one
  * network task, so no locking is needed. */
 static LONG g_FS3EHttpLastServerEpoch = 0;
+/* Local time(NULL) at the moment g_FS3EHttpLastServerEpoch was captured --
+ * the RTC may be absolute garbage (no battery), but it still ticks, so the
+ * delta since then is good enough to age the server time forward. */
+static LONG g_FS3EHttpLastServerEpochLocal = 0;
 
 LONG FS3EHttp_GetLastServerEpoch(void)
 {
     return g_FS3EHttpLastServerEpoch;
+}
+
+LONG FS3EHttp_GetServerNow(void)
+{
+    if (!g_FS3EHttpLastServerEpoch) return 0;
+    return g_FS3EHttpLastServerEpoch + ((LONG)time(NULL) - g_FS3EHttpLastServerEpochLocal);
 }
 
 static const char *const kFS3EHttpMonths[12] = {
@@ -568,7 +579,7 @@ static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
      * BIO_do_connect_retry(bio, connectTimeoutSecs, ...) -- the same
      * primitive OSSL_HTTP_open() uses internally -- made every single
      * FS3EHttp_GetRange() call fail outright (connect never succeeding,
-     * confirmed via bdbprintf_now tracing: ok=0/status=0 on every attempt,
+     * confirmed via bdbprintf tracing: ok=0/status=0 on every attempt,
      * for every host/path), even though the round-robin chunk engine driving
      * it was otherwise working correctly. Reverted rather than chase a
      * non-blocking-BIO interaction blind on a cross-compiled target with no
@@ -664,7 +675,7 @@ static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
                 }
 
 #ifdef BDBTRACEMULTIPART
-                bdbprintf_now("HttpRaw: %s %s -> status=%d bodyLen=%lu\n",
+                bdbprintf("HttpRaw: %s %s -> status=%d bodyLen=%lu\n",
                                method, curUrl, code, (unsigned long)raw.fhr_BodyLen);
 #endif
 
@@ -707,20 +718,20 @@ static BOOL FS3EHttp_DoRawRequest(const char *method, const char *url,
 
                             isRedirect = TRUE;
 #ifdef BDBTRACEMULTIPART
-                            bdbprintf_now("HttpRaw: following redirect to %s\n", redirectUrl);
+                            bdbprintf("HttpRaw: following redirect to %s\n", redirectUrl);
 #endif
                         }
 #ifdef BDBTRACEMULTIPART
                         else
                         {
-                            bdbprintf_now("HttpRaw: %d with unparseable/oversized Location\n", code);
+                            bdbprintf("HttpRaw: %d with unparseable/oversized Location\n", code);
                         }
 #endif
                     }
 #ifdef BDBTRACEMULTIPART
                     else
                     {
-                        bdbprintf_now("HttpRaw: %d with no Location header\n", code);
+                        bdbprintf("HttpRaw: %d with no Location header\n", code);
                     }
 #endif
                 }
@@ -792,8 +803,10 @@ out_free_bio:
         continue;
     }
 
-    if (ok && out->fhr_ServerEpoch != 0)
-        g_FS3EHttpLastServerEpoch = out->fhr_ServerEpoch;
+    if (ok && out->fhr_ServerEpoch != 0) {
+        g_FS3EHttpLastServerEpoch      = out->fhr_ServerEpoch;
+        g_FS3EHttpLastServerEpochLocal = (LONG)time(NULL);
+    }
 
     return ok;
     } /* for (;;) */

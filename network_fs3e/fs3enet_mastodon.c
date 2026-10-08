@@ -70,6 +70,23 @@ static void FS3EMastodon_CopyJsonString(const cJSON *obj, const char *key,
     }
 }
 
+/* Case-insensitive strstr() -- TRUE if needle occurs in hay. */
+static BOOL FS3EMastodon_ContainsNoCase(const char *hay, const char *needle)
+{
+    ULONG nlen = (ULONG)strlen(needle);
+    for (; *hay; hay++) {
+        ULONG i;
+        for (i = 0; i < nlen; i++) {
+            char a = hay[i], b = needle[i];
+            if (a >= 'A' && a <= 'Z') a += 'a' - 'A';
+            if (b >= 'A' && b <= 'Z') b += 'a' - 'A';
+            if (a != b) break;
+        }
+        if (i == nlen) return TRUE;
+    }
+    return FALSE;
+}
+
 /* AllocVec duplicate of obj[key]; caller must FreeVec() result.
  * Returns NULL if the key is absent or not a string. */
 static char *FS3EMastodon_DupJsonString(const cJSON *obj, const char *key)
@@ -159,9 +176,52 @@ void FS3EMastodon_BuildAuthorizeURL(const char *apiBaseUrl, const char *clientId
         apiBaseUrl, clientId, encRedirect, encScopes);
 }
 
+/* Parses a POST /oauth/token reply (shared by ExchangeCode/RefreshToken).
+ * refresh_token and expires_in are optional: real Mastodon issues neither
+ * (its tokens never expire), Pleroma/Akkoma issue both (30 days by
+ * default, see token_expires_in in their :oauth2 config). Returns TRUE if
+ * an access_token was found; outRejected (may be NULL) is set TRUE when a
+ * real response came back without one. */
+static BOOL FS3EMastodon_ParseTokenReply(const FS3EHttpResponse *resp,
+                                        char *outAccessToken, ULONG outAccessTokenSize,
+                                        char *outRefreshToken, ULONG outRefreshTokenSize,
+                                        ULONG *outExpiresIn, BOOL *outRejected)
+{
+    cJSON *json;
+    BOOL ok = FALSE;
+
+    outAccessToken[0] = '\0';
+    if (outRefreshToken && outRefreshTokenSize) outRefreshToken[0] = '\0';
+    if (outExpiresIn) *outExpiresIn = 0;
+
+    json = cJSON_Parse((char *)resp->fhr_Body);
+    if (json)
+    {
+        FS3EMastodon_CopyJsonString(json, "access_token", outAccessToken, outAccessTokenSize);
+        if (outRefreshToken && outRefreshTokenSize)
+            FS3EMastodon_CopyJsonString(json, "refresh_token", outRefreshToken, outRefreshTokenSize);
+        if (outExpiresIn)
+        {
+            const cJSON *exp = cJSON_GetObjectItemCaseSensitive(json, "expires_in");
+            if (exp && cJSON_IsNumber(exp) && exp->valueint > 0)
+                *outExpiresIn = (ULONG)exp->valueint;
+        }
+
+        ok = (outAccessToken[0] != '\0');
+
+        cJSON_Delete(json);
+    }
+
+    if (!ok && outRejected) *outRejected = TRUE;
+
+    return ok;
+}
+
 BOOL FS3EMastodon_ExchangeCode(const char *apiBaseUrl, const char *clientId,
                               const char *clientSecret, const char *code,
-                              char *outAccessToken, ULONG outAccessTokenSize)
+                              char *outAccessToken, ULONG outAccessTokenSize,
+                              char *outRefreshToken, ULONG outRefreshTokenSize,
+                              ULONG *outExpiresIn)
 {
     char url[256];
     char body[1024];
@@ -169,8 +229,7 @@ BOOL FS3EMastodon_ExchangeCode(const char *apiBaseUrl, const char *clientId,
     char encScopes[64];
     char encCode[256];
     FS3EHttpResponse resp;
-    cJSON *json;
-    BOOL ok = FALSE;
+    BOOL ok;
 
     FS3EMastodon_UrlEncode(FS3EMASTODON_OOB_REDIRECT_URI, encRedirect, sizeof(encRedirect));
     FS3EMastodon_UrlEncode(FS3EMASTODON_SCOPES, encScopes, sizeof(encScopes));
@@ -187,15 +246,52 @@ BOOL FS3EMastodon_ExchangeCode(const char *apiBaseUrl, const char *clientId,
                      body, strlen(body), &resp))
         return FALSE;
 
-    json = cJSON_Parse((char *)resp.fhr_Body);
-    if (json)
-    {
-        FS3EMastodon_CopyJsonString(json, "access_token", outAccessToken, outAccessTokenSize);
+    ok = FS3EMastodon_ParseTokenReply(&resp, outAccessToken, outAccessTokenSize,
+                                     outRefreshToken, outRefreshTokenSize,
+                                     outExpiresIn, NULL);
 
-        ok = (outAccessToken[0] != '\0');
+    FS3EHttp_FreeResponse(&resp);
 
-        cJSON_Delete(json);
-    }
+    return ok;
+}
+
+BOOL FS3EMastodon_RefreshToken(const char *apiBaseUrl, const char *clientId,
+                              const char *clientSecret, const char *refreshToken,
+                              char *outAccessToken, ULONG outAccessTokenSize,
+                              char *outRefreshToken, ULONG outRefreshTokenSize,
+                              ULONG *outExpiresIn, BOOL *outRejected)
+{
+    char url[256];
+    char body[1536];
+    char encRefresh[1024];
+    FS3EHttpResponse resp;
+    BOOL ok;
+
+    if (outRejected) *outRejected = FALSE;
+    outAccessToken[0] = '\0';
+
+    if (!clientId || !clientId[0] || !clientSecret || !clientSecret[0] ||
+        !refreshToken || !refreshToken[0])
+        return FALSE;
+
+    FS3EMastodon_UrlEncode(refreshToken, encRefresh, sizeof(encRefresh));
+
+    snprintf(body, sizeof(body),
+        "client_id=%s&client_secret=%s&grant_type=refresh_token&refresh_token=%s",
+        clientId, clientSecret, encRefresh);
+
+    snprintf(url, sizeof(url), "%s/oauth/token", apiBaseUrl);
+
+    if (!FS3EHttp_Post(url, NULL, "application/x-www-form-urlencoded",
+                     body, strlen(body), &resp))
+        return FALSE;
+
+    ok = FS3EMastodon_ParseTokenReply(&resp, outAccessToken, outAccessTokenSize,
+                                     outRefreshToken, outRefreshTokenSize,
+                                     outExpiresIn, outRejected);
+
+    bdbprintf("FS3EMastodon_RefreshToken: %s (status=%ld) url=%s\n",
+                  ok ? "ok" : "failed", (long)resp.fhr_StatusCode, url);
 
     FS3EHttp_FreeResponse(&resp);
 
@@ -223,7 +319,7 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
     headers[1].fhh_Value = NULL;
 
     if (!FS3EHttp_Get(url, headers, &resp)) {
-        bdbprintf_now("FS3EMastodon_VerifyCredentials: FS3EHttp_Get failed outright, url=%s\n", url);
+        bdbprintf("FS3EMastodon_VerifyCredentials: FS3EHttp_Get failed outright, url=%s\n", url);
         return FALSE;
     }
 
@@ -241,9 +337,18 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
         /* Got a real, parseable response from the server -- just not one
          * with an account "id" in it (Mastodon's own shape for a rejected
          * token is {"error":"The access token is invalid"}). That's a
-         * confirmed rejection of THIS token, not an ambiguous network
-         * failure -- see outRejected's doc comment in the header. */
-        if (!ok && outRejected) *outRejected = TRUE;
+         * confirmed rejection of THIS token -- but only if it really is an
+         * {"error":...} object, and not Mastodon's rate limiter
+         * ({"error":"Too many requests"}, HTTP 429), which is transient.
+         * FS3EHttp_Get gives no status code to tell them apart, and calling
+         * a temporary 429 "token expired" made users re-login for nothing.
+         * See outRejected's doc comment in the header. */
+        if (!ok && outRejected) {
+            char errMsg[128];
+            FS3EMastodon_CopyJsonString(json, "error", errMsg, sizeof(errMsg));
+            if (errMsg[0] && !FS3EMastodon_ContainsNoCase(errMsg, "too many"))
+                *outRejected = TRUE;
+        }
 
         cJSON_Delete(json);
     }
@@ -257,7 +362,7 @@ BOOL FS3EMastodon_VerifyCredentials(const char *apiBaseUrl, const char *accessTo
         } else {
             preview[0] = '\0';
         }
-        bdbprintf_now("FS3EMastodon_VerifyCredentials: rejected (rejected=%s), url=%s body=%s\n",
+        bdbprintf("FS3EMastodon_VerifyCredentials: rejected (rejected=%s), url=%s body=%s\n",
                        (outRejected && *outRejected) ? "yes" : "no", url, preview);
     }
 
@@ -641,7 +746,7 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
 
 
     if (!FS3EHttp_Get(url, headers, &resp)) {
-        bdbprintf_now("FS3EMastodon_GetTimeline: FS3EHttp_Get failed outright, url=%s auth=%s\n",
+        bdbprintf("FS3EMastodon_GetTimeline: FS3EHttp_Get failed outright, url=%s auth=%s\n",
                        url, (accessToken && accessToken[0]) ? "yes" : "no");
         return FALSE;
     }
@@ -703,10 +808,10 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
          * the body preview below is what actually explains the failure. */
         if (!json) {
             const char *errptr = cJSON_GetErrorPtr();
-            bdbprintf_now("FS3EMastodon_GetTimeline: JSON parse failed near \"%.60s\", url=%s\n",
+            bdbprintf("FS3EMastodon_GetTimeline: JSON parse failed near \"%.60s\", url=%s\n",
                            errptr ? errptr : "(unknown)", url);
         } else {
-            bdbprintf_now("FS3EMastodon_GetTimeline: response wasn't an array (shape=%lu), url=%s\n",
+            bdbprintf("FS3EMastodon_GetTimeline: response wasn't an array (shape=%lu), url=%s\n",
                            responseShape, url);
             cJSON_Delete(json);
             json = NULL;
@@ -717,14 +822,14 @@ BOOL FS3EMastodon_GetTimeline(const char *apiBaseUrl, const char *accessToken,
             ULONG plen = resp.fhr_BodyLen < 200 ? resp.fhr_BodyLen : 200;
             CopyMem(resp.fhr_Body, preview, plen);
             preview[plen] = '\0';
-            bdbprintf_now("FS3EMastodon_GetTimeline: body preview (%lu bytes total): %s\n",
+            bdbprintf("FS3EMastodon_GetTimeline: body preview (%lu bytes total): %s\n",
                            resp.fhr_BodyLen, preview);
 
             if (outAuthRequired &&
                 strstr((char *)resp.fhr_Body, FS3EMASTODON_AUTH_REQUIRED_MARKER))
                 *outAuthRequired = TRUE;
         } else {
-            bdbprintf_now("FS3EMastodon_GetTimeline: empty body, url=%s\n", url);
+            bdbprintf("FS3EMastodon_GetTimeline: empty body, url=%s\n", url);
         }
         FS3EHttp_FreeResponse(&resp);
         return FALSE;
@@ -844,7 +949,7 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
             ULONG plen = resp.fhr_BodyLen < 200 ? resp.fhr_BodyLen : 200;
             if (resp.fhr_Body) CopyMem(resp.fhr_Body, preview, plen); else plen = 0;
             preview[plen] = '\0';
-            bdbprintf_now("PostStatus: no status id (status=%lu bodyLen=%lu) body=%s\n",
+            bdbprintf("PostStatus: no status id (status=%lu bodyLen=%lu) body=%s\n",
                            resp.fhr_StatusCode, resp.fhr_BodyLen, preview);
         }
 
@@ -852,7 +957,7 @@ BOOL FS3EMastodon_PostStatus(const char *apiBaseUrl, const char *accessToken,
     }
     else
     {
-        bdbprintf_now("PostStatus: FS3EHttp_PostRaw failed outright\n");
+        bdbprintf("PostStatus: FS3EHttp_PostRaw failed outright\n");
         FS3EHttp_PrintErrors();
     }
 
@@ -1082,7 +1187,7 @@ BOOL FS3EMastodon_UploadMedia(const char *apiBaseUrl, const char *accessToken,
             ULONG plen = resp.fhr_BodyLen < 200 ? resp.fhr_BodyLen : 200;
             if (resp.fhr_Body) CopyMem(resp.fhr_Body, preview, plen); else plen = 0;
             preview[plen] = '\0';
-            bdbprintf_now("UploadMedia: no media id (fileName=%s mimeType=%s "
+            bdbprintf("UploadMedia: no media id (fileName=%s mimeType=%s "
                            "status=%lu bodyLen=%lu) body=%s\n",
                            fileName ? fileName : "?", mimeType ? mimeType : "?",
                            resp.fhr_StatusCode, resp.fhr_BodyLen, preview);
@@ -1091,7 +1196,7 @@ BOOL FS3EMastodon_UploadMedia(const char *apiBaseUrl, const char *accessToken,
     }
     else
     {
-        bdbprintf_now("UploadMedia: FS3EHttp_PostRaw failed outright "
+        bdbprintf("UploadMedia: FS3EHttp_PostRaw failed outright "
                        "(fileName=%s mimeType=%s fileLen=%lu)\n",
                        fileName ? fileName : "?", mimeType ? mimeType : "?", fileLen);
         FS3EHttp_PrintErrors();
@@ -1131,7 +1236,7 @@ BOOL FS3EMastodon_WaitMediaReady(const char *apiBaseUrl, const char *accessToken
 
         if (!FS3EHttp_GetRaw(url, headers, &resp))
         {
-            bdbprintf_now("WaitMediaReady: GetRaw failed outright (mediaId=%s attempt=%u)\n",
+            bdbprintf("WaitMediaReady: GetRaw failed outright (mediaId=%s attempt=%u)\n",
                           mediaId, (unsigned)attempt);
             return FALSE;
         }
@@ -1147,7 +1252,7 @@ BOOL FS3EMastodon_WaitMediaReady(const char *apiBaseUrl, const char *accessToken
             /* Some other status (401/404/...) -- not a "still processing"
              * state we can wait out, so give up now instead of burning
              * the rest of the poll budget. */
-            bdbprintf_now("WaitMediaReady: unexpected status=%lu (mediaId=%s attempt=%u)\n",
+            bdbprintf("WaitMediaReady: unexpected status=%lu (mediaId=%s attempt=%u)\n",
                           status, mediaId, (unsigned)attempt);
             return FALSE;
         }
@@ -1155,7 +1260,7 @@ BOOL FS3EMastodon_WaitMediaReady(const char *apiBaseUrl, const char *accessToken
         Delay(FS3EMASTODON_MEDIA_POLL_DELAY_TICKS);
     }
 
-    bdbprintf_now("WaitMediaReady: still processing after %d attempts, giving up (mediaId=%s)\n",
+    bdbprintf("WaitMediaReady: still processing after %d attempts, giving up (mediaId=%s)\n",
                   FS3EMASTODON_MEDIA_POLL_MAX_ATTEMPTS, mediaId);
     return FALSE;
 }
@@ -1767,14 +1872,14 @@ BOOL FS3EMastodon_TranslateStatus(const char *apiBaseUrl, const char *accessToke
             ULONG plen = resp.fhr_BodyLen < 200 ? resp.fhr_BodyLen : 200;
             if (resp.fhr_Body) CopyMem(resp.fhr_Body, preview, plen); else plen = 0;
             preview[plen] = '\0';
-            bdbprintf_now("TranslateStatus: no content (statusId=%s status=%lu bodyLen=%lu) body=%s\n",
+            bdbprintf("TranslateStatus: no content (statusId=%s status=%lu bodyLen=%lu) body=%s\n",
                           statusId, resp.fhr_StatusCode, resp.fhr_BodyLen, preview);
         }
         FS3EHttp_FreeResponse(&resp);
     }
     else
     {
-        bdbprintf_now("TranslateStatus: FS3EHttp_PostRaw failed outright (statusId=%s)\n", statusId);
+        bdbprintf("TranslateStatus: FS3EHttp_PostRaw failed outright (statusId=%s)\n", statusId);
         FS3EHttp_PrintErrors();
     }
 

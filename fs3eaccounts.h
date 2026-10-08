@@ -40,6 +40,24 @@
 /* Free the currently active account's credentials (app->accountXXX). */
 void FS3EApp_FreeAccount(void);
 
+/* Free the active account's OAuth renewal fields (accountClientId/
+ * accountClientSecret/accountRefreshToken/accountTokenExpiresAt). Not
+ * part of FS3EApp_FreeAccount(), which a same-account re-confirm calls. */
+void FS3EApp_FreeAccountOAuth(void);
+
+/* Set the active account's OAuth renewal fields. expiresAt is absolute,
+ * on the SERVER's clock (computed by the network process, see
+ * FS3ENetLoginFinishReply.fs3enl_ExpiresAt), 0 = never expires.
+ * Call AFTER FS3EApp_SetAccount() (which reloads them from accounts[] on
+ * an account change) and BEFORE FS3EApp_SaveAccount(). */
+void FS3EApp_SetAccountOAuth(const char *clientId, const char *clientSecret,
+                             const char *refreshToken, ULONG expiresAt);
+
+/* Patch a non-active accounts[] row whose token a late VERIFY_ACCOUNT
+ * reply renewed (matched by oldAccessToken). Caller saves. */
+void FS3EApp_UpdateStoredToken(const char *oldAccessToken, const char *newAccessToken,
+                               const char *newRefreshToken, ULONG expiresAt);
+
 /* Store account credentials from a LOGIN_FINISH/VERIFY_ACCOUNT reply as the
  * active account, mirroring them into app->accounts[] too. */
 void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,

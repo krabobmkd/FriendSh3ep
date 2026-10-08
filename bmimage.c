@@ -145,7 +145,7 @@ static BOOL bmimage_open_file_to_screen(BmImage *img, const char *path, struct S
     struct BitMapHeader *bmhd = NULL;
     struct BitMap       *bm   = NULL;
 
-    // bdbprintf_now("bmimage: bmimage_open_file_to_screen entering NewDTObject path=%s screen=%08lx\n",
+    // bdbprintf("bmimage: bmimage_open_file_to_screen entering NewDTObject path=%s screen=%08lx\n",
     //               path ? path : "?", (unsigned long)screen);
 
     if (screen) {
@@ -175,7 +175,7 @@ static BOOL bmimage_open_file_to_screen(BmImage *img, const char *path, struct S
             TAG_DONE);
     }
 
-    // bdbprintf_now("bmimage: bmimage_open_file_to_screen NewDTObject done path=%s dto=%08lx\n",
+    // bdbprintf("bmimage: bmimage_open_file_to_screen NewDTObject done path=%s dto=%08lx\n",
     //               path ? path : "?", (unsigned long)dto);
     if (!dto) {
         img->error = BMIMAGE_ERR_OPEN_FAILED;
@@ -212,10 +212,10 @@ static BOOL bmimage_open_file_to_screen(BmImage *img, const char *path, struct S
      * proven safe elsewhere in this file. gpLayout's fields after
      * MethodID are gpl_GInfo (NULL, no window/gadget context here) and
      * gpl_Initial (TRUE, matching the original DoDTMethod call). */
-    // bdbprintf_now("bmimage: entering DTM_PROCLAYOUT path=%s dto=%08lx\n",
+    // bdbprintf("bmimage: entering DTM_PROCLAYOUT path=%s dto=%08lx\n",
     //               path ? path : "?", (unsigned long)dto);
     DoMethod(dto, DTM_PROCLAYOUT, (ULONG)NULL, (ULONG)TRUE);
-    // bdbprintf_now("bmimage: DTM_PROCLAYOUT done path=%s dto=%08lx\n",
+    // bdbprintf("bmimage: DTM_PROCLAYOUT done path=%s dto=%08lx\n",
     //               path ? path : "?", (unsigned long)dto);
 
     GetDTAttrs(dto, PDTA_BitMapHeader, (ULONG)&bmhd, TAG_DONE);
@@ -314,7 +314,7 @@ static BOOL bmimage_scale_read_source_rgb(BmImage *img, UWORD maxW, UWORD maxH,
     UBYTE               *buf  = NULL;
     ULONG                w, h, rowBytes, nbpix;
 
-    // bdbprintf_now("bmimage: entering NewDTObject path=%s\n",
+    // bdbprintf("bmimage: entering NewDTObject path=%s\n",
     //               img->filePath ? img->filePath : "?");
     dto = NewDTObject((APTR)img->filePath,
         DTA_GroupID,             GID_PICTURE,
@@ -322,7 +322,7 @@ static BOOL bmimage_scale_read_source_rgb(BmImage *img, UWORD maxW, UWORD maxH,
         PDTA_DestMode,           PMODE_V43,
         PDTA_SubClassRendersAll, TRUE,
         TAG_DONE);
-    // bdbprintf_now("bmimage: NewDTObject done path=%s dto=%08lx\n",
+    // bdbprintf("bmimage: NewDTObject done path=%s dto=%08lx\n",
     //               img->filePath ? img->filePath : "?", (unsigned long)dto);
     if (!dto) {
         img->error = BMIMAGE_ERR_OPEN_FAILED;
@@ -368,7 +368,7 @@ static BOOL bmimage_scale_read_source_rgb(BmImage *img, UWORD maxW, UWORD maxH,
     }
 
     /* alib's DoMethod() -- DoDTMethod()/DoDTMethodA() freeze for this method. */
-    // bdbprintf_now("bmimage: entering PDTM_READPIXELARRAY path=%s w=%lu h=%lu\n",
+    // bdbprintf("bmimage: entering PDTM_READPIXELARRAY path=%s w=%lu h=%lu\n",
     //               img->filePath ? img->filePath : "?",
     //               (unsigned long)w, (unsigned long)h);
     nbpix = DoMethod(dto,
@@ -376,7 +376,7 @@ static BOOL bmimage_scale_read_source_rgb(BmImage *img, UWORD maxW, UWORD maxH,
             (ULONG)buf, PBPAFMT_RGB, rowBytes,
             0, 0, w, h,
             TAG_DONE);
-    // bdbprintf_now("bmimage: PDTM_READPIXELARRAY done path=%s nbpix=%lu\n",
+    // bdbprintf("bmimage: PDTM_READPIXELARRAY done path=%s nbpix=%lu\n",
     //               img->filePath ? img->filePath : "?", (unsigned long)nbpix);
     DisposeDTObject(dto);
     if (nbpix == 0) {

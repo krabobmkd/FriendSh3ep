@@ -164,6 +164,14 @@ typedef struct FS3EAccount {
      * app->accountLastSeenNotifId for the active account, same convention
      * as every other field here -- see FS3EApp_SetAccount. */
     char *lastSeenNotifId;
+
+    /* OAuth renewal credentials -- see App.accountRefreshToken. NULL/0
+     * for anonymous accounts, accounts saved before this existed, and
+     * servers whose tokens never expire (real Mastodon). */
+    char *clientId;
+    char *clientSecret;
+    char *refreshToken;
+    ULONG tokenExpiresAt;
 } FS3EAccount;
 
 /* Application struct: holds every persistent BOOPSI object and IPC handle. */
@@ -349,6 +357,21 @@ struct App {
                                 * real account change, same as
                                 * accountMaxChars below (see the
                                 * !sameAccount block in FS3EApp_SetAccount). */
+
+    /* OAuth token renewal for the active account. Some servers (Pleroma/
+     * Akkoma: 30 days by default) expire access tokens and hand out a
+     * refresh token instead; FS3EApp_VerifyStoredAccount() uses these to
+     * renew the access token without a browser round-trip. Same lifetime
+     * rules as accountLastSeenNotifId: untouched by FS3EApp_FreeAccount()
+     * (a same-account re-confirm must keep them), repopulated from
+     * accounts[] on a real account change, set by FS3EApp_SetAccountOAuth().
+     * accountTokenExpiresAt is absolute Unix seconds on the SERVER's clock
+     * (the network process computes and compares it, so a battery-less
+     * Amiga RTC never matters), 0 = never expires/unknown. */
+    char  *accountClientId;
+    char  *accountClientSecret;
+    char  *accountRefreshToken;
+    ULONG  accountTokenExpiresAt;
 
     /* Background notification-polling state -- see FS3EApp_PollNotifications/
      * FS3EApp_RestartNotifPollTimer in fs3erequests.c and FS3EApp_UpdateNotifBadge

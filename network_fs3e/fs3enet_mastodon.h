@@ -77,10 +77,31 @@ void FS3EMastodon_BuildAuthorizeURL(const char *apiBaseUrl, const char *clientId
  * POST /oauth/token - exchanges the code the user pasted back (after
  * authorizing via the URL from FS3EMastodon_BuildAuthorizeURL()) for an
  * access token. On success fills outAccessToken and returns TRUE.
+ * outRefreshToken/outExpiresIn are filled too when the server sends them
+ * ("" / 0 otherwise -- real Mastodon tokens never expire and come with no
+ * refresh token; Pleroma/Akkoma tokens expire after 30 days by default
+ * and must be renewed with FS3EMastodon_RefreshToken()).
  */
 BOOL FS3EMastodon_ExchangeCode(const char *apiBaseUrl, const char *clientId,
                               const char *clientSecret, const char *code,
-                              char *outAccessToken, ULONG outAccessTokenSize);
+                              char *outAccessToken, ULONG outAccessTokenSize,
+                              char *outRefreshToken, ULONG outRefreshTokenSize,
+                              ULONG *outExpiresIn);
+
+/*
+ * POST /oauth/token with grant_type=refresh_token - trades a refresh token
+ * (from ExchangeCode or a previous refresh) for a new access token, no
+ * browser round-trip. Same out params as ExchangeCode; outRefreshToken may
+ * come back "" (server kept the old one valid -- caller should then keep
+ * using it). outRejected (may be NULL) is TRUE only when the server
+ * answered without a token (refresh token revoked/expired too), FALSE on
+ * no response at all. Returns FALSE immediately if any input is empty.
+ */
+BOOL FS3EMastodon_RefreshToken(const char *apiBaseUrl, const char *clientId,
+                              const char *clientSecret, const char *refreshToken,
+                              char *outAccessToken, ULONG outAccessTokenSize,
+                              char *outRefreshToken, ULONG outRefreshTokenSize,
+                              ULONG *outExpiresIn, BOOL *outRejected);
 
 /*
  * GET /api/v1/accounts/verify_credentials - confirms accessToken is valid
@@ -88,8 +109,9 @@ BOOL FS3EMastodon_ExchangeCode(const char *apiBaseUrl, const char *clientId,
  *
  * outRejected (may be NULL if the caller doesn't care) is set TRUE only
  * when the server actually answered but the answer wasn't a valid account
- * (a Doorkeeper-style {"error":"The access token is invalid"} body, or any
- * other object/response missing "id") -- i.e. a confirmed rejection of
+ * (a Doorkeeper-style {"error":"The access token is invalid"} body -- any
+ * {"error":...} object except the rate limiter's "Too many requests") --
+ * i.e. a confirmed rejection of
  * THIS token, not just "couldn't reach the server". Left FALSE (never set
  * TRUE) when the request didn't get a response at all (FS3EHttp_Get
  * itself failed -- DNS/connect/TLS failure, no internet, ...), since that

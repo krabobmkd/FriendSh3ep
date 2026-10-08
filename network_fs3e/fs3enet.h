@@ -224,6 +224,9 @@ FS3ENetLoginFinishReq *FS3ENetLoginFinishReq_Alloc(const char *apiBaseUrl,
 typedef struct FS3ENetLoginFinishReply
 {
     char               *fs3enl_AccessToken;
+    char               *fs3enl_RefreshToken; /* "" if the server issued none */
+    ULONG               fs3enl_ExpiresAt;    /* absolute, SERVER clock (Unix secs),
+                                              * 0 = never expires/unknown */
     FS3EMastodonAccount  fs3enl_Account;
 } FS3ENetLoginFinishReply;
 
@@ -234,6 +237,14 @@ typedef struct FS3ENetLoginFinishReply
  * (e.g. fma_Id, needed by VIEWMODE_User's accounts/{id}/statuses fetch) --
  * see FS3EApp_LoadAccount() in friendsh3ep.c.
  *
+ * Also renews the token when it can (ClientId/ClientSecret/RefreshToken all
+ * non-empty): first, before verifying, if fs3eva_ExpiresAt is within
+ * FS3ENET_TOKEN_REFRESH_MARGIN of the SERVER's current time (never the
+ * Amiga's own RTC, which may have no battery -- see FS3EHttp_GetServerNow);
+ * otherwise only after verify_credentials rejected the access token.
+ * Either way the new token comes back in fs3eva_NewAccessToken -- see
+ * FS3EApp_VerifyStoredAccount().
+ *
  * On FS3ENETR_OK, fs3em_Data is replaced with an FS3ENetVerifyAccountReply.
  * On error, fs3em_Data still points at the original request block.
  */
@@ -241,15 +252,28 @@ typedef struct FS3ENetVerifyAccountReq
 {
     char *fs3eva_ApiBaseUrl;
     char *fs3eva_AccessToken;
+    char *fs3eva_ClientId;      /* "" = no refresh possible */
+    char *fs3eva_ClientSecret;
+    char *fs3eva_RefreshToken;
+    ULONG fs3eva_ExpiresAt;     /* see FS3ENetLoginFinishReply.fs3enl_ExpiresAt */
 } FS3ENetVerifyAccountReq;
 
-/* Allocates a flat request block for VERIFY_ACCOUNT. FreeVec() when done. */
+/* Allocates a flat request block for VERIFY_ACCOUNT. FreeVec() when done.
+ * clientId/clientSecret/refreshToken may be NULL (no refresh attempted). */
 FS3ENetVerifyAccountReq *FS3ENetVerifyAccountReq_Alloc(const char *apiBaseUrl,
-    const char *accessToken);
+    const char *accessToken, const char *clientId, const char *clientSecret,
+    const char *refreshToken, ULONG expiresAt);
 
 typedef struct FS3ENetVerifyAccountReply
 {
     FS3EMastodonAccount fs3eva_Account;
+    char  *fs3eva_OldAccessToken;   /* echoed from the request, so the GUI can
+                                     * tell which account this reply is for
+                                     * (it may have switched meanwhile) */
+    char  *fs3eva_NewAccessToken;   /* "" unless a refresh happened */
+    char  *fs3eva_NewRefreshToken;  /* "" = keep using the old refresh token */
+    ULONG  fs3eva_ExpiresAt;        /* with NewAccessToken: absolute server
+                                     * time, 0 = never expires/unknown */
 } FS3ENetVerifyAccountReply;
 
 /*

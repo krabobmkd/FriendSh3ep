@@ -18,6 +18,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <time.h>
 
 #include "bdbprintf.h"
 
@@ -25,7 +26,7 @@
 #define FS3ENET_PROC_NAME  "FriendSh3ep-net"
 
 /* App name FriendSh3ep registers itself under via FS3EMastodon_CreateApp(). */
-#define FS3ENET_CLIENT_NAME "AmigaOS3 FriendSh3ep Beta"
+#define FS3ENET_CLIENT_NAME "AmigaOS3 FriendSh3ep"
 
 /* ---- Flat-block helpers --------------------------------------------------
  * All IPC structs are a single AllocVec block: [struct header][string data].
@@ -139,19 +140,27 @@ FS3ENetLoginFinishReq *FS3ENetLoginFinishReq_Alloc(const char *apiBaseUrl,
 }
 
 FS3ENetVerifyAccountReq *FS3ENetVerifyAccountReq_Alloc(const char *apiBaseUrl,
-    const char *accessToken)
+    const char *accessToken, const char *clientId, const char *clientSecret,
+    const char *refreshToken, ULONG expiresAt)
 {
     ULONG total = sizeof(FS3ENetVerifyAccountReq)
                 + FS3ENet_PackLen(apiBaseUrl)
-                + FS3ENet_PackLen(accessToken);
+                + FS3ENet_PackLen(accessToken)
+                + FS3ENet_PackLen(clientId)
+                + FS3ENet_PackLen(clientSecret)
+                + FS3ENet_PackLen(refreshToken);
     FS3ENetVerifyAccountReq *req =
         (FS3ENetVerifyAccountReq *)AllocVec(total, MEMF_ANY| MEMF_PUBLIC);
     char *p;
 
     if (!req) return NULL;
     p = (char *)req + sizeof(*req);
-    FS3ENet_PackStr(&req->fs3eva_ApiBaseUrl,  &p, apiBaseUrl);
-    FS3ENet_PackStr(&req->fs3eva_AccessToken, &p, accessToken);
+    FS3ENet_PackStr(&req->fs3eva_ApiBaseUrl,   &p, apiBaseUrl);
+    FS3ENet_PackStr(&req->fs3eva_AccessToken,  &p, accessToken);
+    FS3ENet_PackStr(&req->fs3eva_ClientId,     &p, clientId);
+    FS3ENet_PackStr(&req->fs3eva_ClientSecret, &p, clientSecret);
+    FS3ENet_PackStr(&req->fs3eva_RefreshToken, &p, refreshToken);
+    req->fs3eva_ExpiresAt = expiresAt;
     return req;
 }
 
@@ -1012,7 +1021,7 @@ BOOL FS3ENet_SetCacheDir(struct MsgPort *requestPort, struct MsgPort *replyPort,
  * any of them. Disable()/Enable() brackets the walk against a concurrent
  * PutMsg() from the main process (Exec's documented safe way to inspect a
  * MsgPort's message list without taking it off). Only used for the
- * bdbprintf_now() backlog tracing in FS3ENet_ProcEntry below. */
+ * bdbprintf() backlog tracing in FS3ENet_ProcEntry below. */
 static ULONG FS3ENet_CountPending(struct MsgPort *port)
 {
     struct Node *n;
@@ -1072,7 +1081,7 @@ static void FS3ENet_ProcEntry(void)
         if (!g_FS3EActiveDownloads)
             WaitPort(requestPort);
 #ifdef BDBTRACEMULTIPART
-         bdbprintf_now("FS3ENet: woke up, %lu request(s) waiting\n",
+         bdbprintf("FS3ENet: woke up, %lu request(s) waiting\n",
                        (unsigned long)FS3ENet_CountPending(requestPort));
 #endif
         /* FS3ENet_Stop() Signal()s this before the shutdown message even
@@ -1225,6 +1234,40 @@ static void FS3ENet_HandleLoginStart(FS3ENetMessage *fs3em)
     fs3em->fs3em_Result  = FS3ENETR_OK;
 }
 
+/* Renew a token ahead of time when it has less than this left -- 3 days,
+ * generous enough for an Amiga that's only switched on once in a while,
+ * harmless for Pleroma/Akkoma's 30-day default. */
+#define FS3ENET_TOKEN_REFRESH_MARGIN (3UL * 24 * 3600)
+
+/* "Now" for OAuth token expiry, on the SERVER's clock: every expiresAt is
+ * computed and compared with this, so a battery-less Amiga's RTC never
+ * enters into it. FS3EHttp_Get/Post (verify_credentials, /oauth/token)
+ * don't read the Date header, only the raw-BIO calls do -- so if none of
+ * those has run yet this session, make one cheap raw GET just for its
+ * Date. Falls back to the local clock only if even that fails. */
+static ULONG FS3ENet_TokenClockNow(const char *apiBaseUrl)
+{
+    LONG now = FS3EHttp_GetServerNow();
+
+    if (!now) {
+        char url[256];
+        FS3EHttpHeader headers[1];
+        FS3EHttpResponse resp;
+
+        headers[0].fhh_Name  = NULL;
+        headers[0].fhh_Value = NULL;
+        snprintf(url, sizeof(url), "%s/api/v1/instance", apiBaseUrl);
+        if (FS3EHttp_GetRaw(url, headers, &resp))
+            FS3EHttp_FreeResponse(&resp);
+        now = FS3EHttp_GetServerNow();
+        bdbprintf("[token] net: no server time yet, fetched it via %s -> %s\n",
+                      url, now ? "OK" : "FAILED (using local clock)");
+    }
+    if (!now) now = (LONG)time(NULL);
+
+    return (ULONG)now;
+}
+
 /* FS3ENETQ_LOGIN_FINISH - exchange the OOB code for an access token and
  * verify it. */
 static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
@@ -1233,6 +1276,8 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
     FS3ENetLoginFinishReply *reply;
     FS3EMastodonAccount      tmpAcc = {0};
     char accessToken[512];
+    char refreshToken[512];
+    ULONG expiresIn = 0;
     ULONG total;
     char *p;
 
@@ -1245,7 +1290,8 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
 
     if (!FS3EMastodon_ExchangeCode(req->fs3enl_ApiBaseUrl, req->fs3enl_ClientId,
             req->fs3enl_ClientSecret, req->fs3enl_Code,
-            accessToken, sizeof(accessToken)))
+            accessToken, sizeof(accessToken),
+            refreshToken, sizeof(refreshToken), &expiresIn))
     {
         fs3em->fs3em_Result = FS3ENETR_AUTH_ERROR;
         return;
@@ -1266,6 +1312,7 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
 
     total = sizeof(FS3ENetLoginFinishReply)
           + FS3ENet_PackLen(accessToken)
+          + FS3ENet_PackLen(refreshToken)
           + FS3ENet_PackLen(tmpAcc.fma_Id)
           + FS3ENet_PackLen(tmpAcc.fma_Username)
           + FS3ENet_PackLen(tmpAcc.fma_Acct)
@@ -1282,6 +1329,12 @@ static void FS3ENet_HandleLoginFinish(FS3ENetMessage *fs3em)
 
     p = (char *)reply + sizeof(*reply);
     FS3ENet_PackStr(&reply->fs3enl_AccessToken,             &p, accessToken);
+    FS3ENet_PackStr(&reply->fs3enl_RefreshToken,            &p, refreshToken);
+    reply->fs3enl_ExpiresAt = expiresIn
+        ? FS3ENet_TokenClockNow(req->fs3enl_ApiBaseUrl) + expiresIn : 0;
+    bdbprintf("[token] net: login token refreshToken=%s expires_in=%lu expiresAt=%lu\n",
+                  refreshToken[0] ? "yes" : "no", (unsigned long)expiresIn,
+                  (unsigned long)reply->fs3enl_ExpiresAt);
     FS3ENet_PackStr(&reply->fs3enl_Account.fma_Id,          &p, tmpAcc.fma_Id);
     FS3ENet_PackStr(&reply->fs3enl_Account.fma_Username,    &p, tmpAcc.fma_Username);
     FS3ENet_PackStr(&reply->fs3enl_Account.fma_Acct,        &p, tmpAcc.fma_Acct);
@@ -1309,6 +1362,13 @@ static void FS3ENet_HandleVerifyAccount(FS3ENetMessage *fs3em)
     FS3ENetVerifyAccountReply *reply;
     FS3EMastodonAccount        tmpAcc = {0};
     BOOL                       rejected = FALSE;
+    BOOL                       refreshed = FALSE;
+    BOOL                       canRefresh;
+    BOOL                       forceRefresh = FALSE;
+    char  newAccessToken[512];
+    char  newRefreshToken[512];
+    ULONG expiresIn = 0;
+    const char *useToken;
     ULONG total;
     char *p;
 
@@ -1318,15 +1378,88 @@ static void FS3ENet_HandleVerifyAccount(FS3ENetMessage *fs3em)
         return;
     }
 
+    newAccessToken[0]  = '\0';
+    newRefreshToken[0] = '\0';
+    useToken = req->fs3eva_AccessToken;
+    canRefresh = req->fs3eva_ClientId[0] && req->fs3eva_ClientSecret[0] &&
+                 req->fs3eva_RefreshToken[0];
 
-    if (!FS3EMastodon_VerifyCredentials(req->fs3eva_ApiBaseUrl, req->fs3eva_AccessToken, &tmpAcc, &rejected))
+    if (canRefresh && req->fs3eva_ExpiresAt) {
+        ULONG now = FS3ENet_TokenClockNow(req->fs3eva_ApiBaseUrl);
+        forceRefresh = (now + FS3ENET_TOKEN_REFRESH_MARGIN >= req->fs3eva_ExpiresAt);
+        bdbprintf("[token] net: server now=%lu expiresAt=%lu left=%ld s (%ld days) -> %s\n",
+                      (unsigned long)now, (unsigned long)req->fs3eva_ExpiresAt,
+                      (long)(req->fs3eva_ExpiresAt - now),
+                      (long)(req->fs3eva_ExpiresAt - now) / 86400,
+                      forceRefresh ? "renew now" : "still fine");
+    } else {
+        bdbprintf("[token] net: no expiry check (canRefresh=%s expiresAt=%lu)\n",
+                      canRefresh ? "yes" : "no", (unsigned long)req->fs3eva_ExpiresAt);
+    }
+
+    /* Proactive: about to expire. A failure here is not fatal -- the old
+     * token may still have a few days left, so just go on verifying it. */
+    if (forceRefresh &&
+        FS3EMastodon_RefreshToken(req->fs3eva_ApiBaseUrl, req->fs3eva_ClientId,
+            req->fs3eva_ClientSecret, req->fs3eva_RefreshToken,
+            newAccessToken, sizeof(newAccessToken),
+            newRefreshToken, sizeof(newRefreshToken), &expiresIn, NULL))
+    {
+        refreshed = TRUE;
+        useToken  = newAccessToken;
+    }
+    if (forceRefresh)
+        bdbprintf("[token] net: proactive refresh %s (expires_in=%lu)\n",
+                      refreshed ? "OK" : "FAILED", (unsigned long)expiresIn);
+
+    if (!FS3EMastodon_VerifyCredentials(req->fs3eva_ApiBaseUrl, useToken, &tmpAcc, &rejected))
     {
         FS3EMastodonAccount_Free(&tmpAcc);
-        fs3em->fs3em_Result = rejected ? FS3ENETR_AUTH_ERROR : FS3ENETR_NETWORK_ERROR;
-        return;
+
+        /* Reactive: the access token is dead (typically Pleroma/Akkoma's
+         * 30-day default lifetime) -- try once to renew it before telling
+         * the GUI it was rejected. */
+        bdbprintf("[token] net: verify_credentials failed (rejected=%s, refreshed=%s, canRefresh=%s)\n",
+                      rejected ? "yes" : "no", refreshed ? "yes" : "no", canRefresh ? "yes" : "no");
+
+        if (rejected && canRefresh && !refreshed &&
+            FS3EMastodon_RefreshToken(req->fs3eva_ApiBaseUrl, req->fs3eva_ClientId,
+                req->fs3eva_ClientSecret, req->fs3eva_RefreshToken,
+                newAccessToken, sizeof(newAccessToken),
+                newRefreshToken, sizeof(newRefreshToken), &expiresIn, NULL))
+        {
+            refreshed = TRUE;
+            rejected  = FALSE;
+            if (!FS3EMastodon_VerifyCredentials(req->fs3eva_ApiBaseUrl, newAccessToken, &tmpAcc, &rejected))
+                FS3EMastodonAccount_Free(&tmpAcc);
+            bdbprintf("[token] net: reactive refresh OK (expires_in=%lu), re-verify %s\n",
+                          (unsigned long)expiresIn,
+                          tmpAcc.fma_Id ? "OK" : (rejected ? "REJECTED" : "network error"));
+        }
+
+        /* A refreshed token that couldn't be verified only because the
+         * network hiccuped must still reach the GUI: the server may have
+         * spent the old refresh token, so dropping the new pair here would
+         * force a browser re-login. The reply then carries an empty
+         * fs3eva_Account (fma_Id ""), which the GUI treats as "store the
+         * tokens, leave the profile alone". */
+        if (!tmpAcc.fma_Id && !(refreshed && !rejected))
+        {
+            fs3em->fs3em_Result = rejected ? FS3ENETR_AUTH_ERROR : FS3ENETR_NETWORK_ERROR;
+            return;
+        }
+    }
+
+    if (!refreshed) {
+        newAccessToken[0]  = '\0';
+        newRefreshToken[0] = '\0';
+        expiresIn = 0;
     }
 
     total = sizeof(FS3ENetVerifyAccountReply)
+          + FS3ENet_PackLen(req->fs3eva_AccessToken)
+          + FS3ENet_PackLen(newAccessToken)
+          + FS3ENet_PackLen(newRefreshToken)
           + FS3ENet_PackLen(tmpAcc.fma_Id)
           + FS3ENet_PackLen(tmpAcc.fma_Username)
           + FS3ENet_PackLen(tmpAcc.fma_Acct)
@@ -1347,6 +1480,11 @@ static void FS3ENet_HandleVerifyAccount(FS3ENetMessage *fs3em)
     FS3ENet_PackStr(&reply->fs3eva_Account.fma_Acct,        &p, tmpAcc.fma_Acct);
     FS3ENet_PackStrClean(&reply->fs3eva_Account.fma_DisplayName, &p, tmpAcc.fma_DisplayName);
     FS3ENet_PackStr(&reply->fs3eva_Account.fma_AvatarURL,   &p, tmpAcc.fma_AvatarURL);
+    FS3ENet_PackStr(&reply->fs3eva_OldAccessToken,          &p, req->fs3eva_AccessToken);
+    FS3ENet_PackStr(&reply->fs3eva_NewAccessToken,          &p, newAccessToken);
+    FS3ENet_PackStr(&reply->fs3eva_NewRefreshToken,         &p, newRefreshToken);
+    reply->fs3eva_ExpiresAt = (refreshed && expiresIn)
+        ? FS3ENet_TokenClockNow(req->fs3eva_ApiBaseUrl) + expiresIn : 0;
 
     FS3EMastodonAccount_Free(&tmpAcc);
 
@@ -1515,7 +1653,7 @@ static void FS3ENet_HandleInstanceDetails(FS3ENetMessage *fs3em)
  * immediately with whatever was received, same as the old single-shot
  * behavior for that one resource.
  *
- * Verified against static.piaille.fr (bdbprintf_now trace, superlog.txt) --
+ * Verified against static.piaille.fr (bdbprintf trace, superlog.txt) --
  * server does honor Range (206 throughout) and does split across multiple
  * FS3ENET_CHUNK_SIZE requests once a file exceeds it, e.g.:
  *   StepDL: .../2657ea0aa2067d98.png offset=0      status=206 totalLen=247089 gotLen=196608
@@ -1747,7 +1885,7 @@ static void FS3ENet_FinishDownload(FS3ENetActiveDownload *dl, ULONG result)
 {
     FS3ENetMessage *fs3em = dl->fs3ead_OrigMsg;
 #ifdef BDBTRACEMULTIPART
-    bdbprintf_now("FinishDL: url=%s result=%lu bytesSoFar=%lu path=%s\n",
+    bdbprintf("FinishDL: url=%s result=%lu bytesSoFar=%lu path=%s\n",
                    dl->fs3ead_Req->fs3enf_Url, (unsigned long)result,
                    (unsigned long)dl->fs3ead_BytesSoFar, dl->fs3ead_LocalPath);
 #endif
@@ -1859,7 +1997,7 @@ static void FS3ENet_StepActiveDownloads(void)
                            dl->fs3ead_BytesSoFar, FS3ENET_CHUNK_SIZE,
                            &status, &totalLen, &resp);
 #ifdef BDBTRACEMULTIPART
-    bdbprintf_now("StepDL: url=%s offset=%lu ok=%ld status=%lu totalLen=%lu gotLen=%lu retry=%u\n",
+    bdbprintf("StepDL: url=%s offset=%lu ok=%ld status=%lu totalLen=%lu gotLen=%lu retry=%u\n",
                    dl->fs3ead_Req->fs3enf_Url, (unsigned long)dl->fs3ead_BytesSoFar,
                    (long)ok, (unsigned long)status, (unsigned long)totalLen,
                    (unsigned long)(ok ? resp.fhr_BodyLen : 0), (unsigned)dl->fs3ead_RetryCount);
@@ -1874,7 +2012,7 @@ static void FS3ENet_StepActiveDownloads(void)
              * BDBTRACEMULTIPART needed to see WHY a FETCH_IMAGE came back
              * FS3ENETR_HTTP_ERROR. */
              /*
-            bdbprintf_now("StepDL: giving up on %s after %u failed chunks\n",
+            bdbprintf("StepDL: giving up on %s after %u failed chunks\n",
                            dl->fs3ead_Req->fs3enf_Url, (unsigned)dl->fs3ead_RetryCount);
                            */
             finished      = TRUE;
@@ -1907,7 +2045,7 @@ static void FS3ENet_StepActiveDownloads(void)
                 preview[i] = (c >= 32 && c < 127) ? (char)c : '.';
             }
             preview[n] = '\0';
-            bdbprintf_now("StepDL: first chunk url=%s status=%lu totalLen=%lu gotLen=%lu preview=\"%s\"\n",
+            bdbprintf("StepDL: first chunk url=%s status=%lu totalLen=%lu gotLen=%lu preview=\"%s\"\n",
                            dl->fs3ead_Req->fs3enf_Url, (unsigned long)status,
                            (unsigned long)totalLen, (unsigned long)gotLen, preview);
         }
@@ -1917,7 +2055,7 @@ static void FS3ENet_StepActiveDownloads(void)
             Write(dl->fs3ead_FH, resp.fhr_Body, (LONG)gotLen) != (LONG)gotLen)
         {
             /* Terminal failure -- see the retry-exhausted comment above. */
-           /* bdbprintf_now("StepDL: Write() failed for %s, IoErr=%ld\n",
+           /* bdbprintf("StepDL: Write() failed for %s, IoErr=%ld\n",
                            dl->fs3ead_Req->fs3enf_Url, (long)IoErr());
                            */
             finished     = TRUE;
@@ -2014,7 +2152,7 @@ static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
         return TRUE;
     }
 #ifdef BDBTRACEMULTIPART
-    bdbprintf_now("FetchImage: url=%s subdir=%s keep=%ld\n",
+    bdbprintf("FetchImage: url=%s subdir=%s keep=%ld\n",
                    req->fs3enf_Url, req->fs3enf_Subdir, (long)req->fs3enf_KeepOriginal);
 #endif
     /* fs3enf_ExactLocalPath (see its doc comment in fs3enet.h): the caller
@@ -2143,7 +2281,7 @@ static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
                 FS3ENetPendingFetch *pending =
                     (FS3ENetPendingFetch *)AllocVec(sizeof(*pending), MEMF_ANY | MEMF_CLEAR);
 #ifdef BDBTRACEMULTIPART
-                bdbprintf_now("FetchImage: at concurrency cap (%lu), queuing %s\n",
+                bdbprintf("FetchImage: at concurrency cap (%lu), queuing %s\n",
                                (unsigned long)g_FS3EActiveDownloadCount, req->fs3enf_Url);
 #endif
                 FS3ENet_FreePathPair(localPath, cachePath);
@@ -2168,7 +2306,7 @@ static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
                 /* Terminal failure -- always worth a line, same reasoning
                  * as the two StepActiveDownloads ones above. */
                  /*
-                bdbprintf_now("FetchImage: FS3ECache_EnsureRAMTempDir failed for %s\n", req->fs3enf_Url);
+                bdbprintf("FetchImage: FS3ECache_EnsureRAMTempDir failed for %s\n", req->fs3enf_Url);
                 */
                 FS3ENet_FreePathPair(localPath, cachePath);
                 fs3em->fs3em_Result = FS3ENETR_HTTP_ERROR;
@@ -2178,7 +2316,7 @@ static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
             fh = Open(localPath, MODE_NEWFILE);
             if (!fh)
             {   /*
-                bdbprintf_now("FetchImage: Open(%s, MODE_NEWFILE) failed, IoErr=%ld\n",
+                bdbprintf("FetchImage: Open(%s, MODE_NEWFILE) failed, IoErr=%ld\n",
                                localPath, (long)IoErr());
                                */
                 FS3ENet_FreePathPair(localPath, cachePath);
@@ -2207,7 +2345,7 @@ static BOOL FS3ENet_HandleFetchImage(FS3ENetMessage *fs3em)
             g_FS3EActiveDownloads  = dl;
             g_FS3EActiveDownloadCount++;
 #ifdef BDBTRACEMULTIPART
-            bdbprintf_now("FetchImage: registered chunked dl for %s -> %s (count=%lu)\n",
+            bdbprintf("FetchImage: registered chunked dl for %s -> %s (count=%lu)\n",
                            req->fs3enf_Url, localPath, (unsigned long)g_FS3EActiveDownloadCount);
 #endif
             return FALSE; /* deferred -- FS3ENet_FinishDownload() replies later */

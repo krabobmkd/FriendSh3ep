@@ -150,6 +150,11 @@ void FS3EHttp_FreeResponse(FS3EHttpResponse *out);
  * returns a file-scope LONG, no I/O. */
 LONG FS3EHttp_GetLastServerEpoch(void);
 
+/* FS3EHttp_GetLastServerEpoch() aged forward by the local clock's elapsed
+ * seconds since it was captured -- "server time now", valid even on an
+ * Amiga with no battery-backed clock. 0 if no server time seen yet. */
+LONG FS3EHttp_GetServerNow(void);
+
 /* Dumps the current OpenSSL error queue to Output(), for diagnostics when
  * FS3EHttp_Get()/FS3EHttp_Post() return FALSE. */
 void FS3EHttp_PrintErrors(void);

@@ -18,6 +18,12 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../amigacommonlibs/extrasdk/Open
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../amigacommonlibs/extrasdk/ OpenURL/include)
 
 
+# Debug log (bdbprintf/bdbprintf_now, see bdbprintf.h) for BOTH the GUI and
+# the network library -- the network process can't printf itself, its lines
+# go out through the main process's console (pr_COS), so launch from a Shell
+# to see them. Configure with -DFS3E_DEBUG_LOG=ON.
+option(FS3E_DEBUG_LOG "Enable bdbprintf debug output (GUI + network)" OFF)
+
 # ---- Network process static library --------------------------------------
 # Standalone, no GUI includes; runs in its own CreateNewProc() task.
 add_subdirectory(network_fs3e)
@@ -136,7 +142,15 @@ set(FRIENDSH3EP_HEADERS
     TootTimeline/fs3etoottimeline_private.h
 )
 
+if(FS3E_DEBUG_LOG)
+    list(APPEND FRIENDSH3EP_SOURCES bdbprintf.c)
+endif()
+
 add_executable(FriendSh3ep ${FRIENDSH3EP_SOURCES} ${FRIENDSH3EP_HEADERS})
+
+if(FS3E_DEBUG_LOG)
+    target_compile_definitions(FriendSh3ep PRIVATE USE_DEBUG_BDBPRINT=1)
+endif()
 
 target_link_libraries(FriendSh3ep PRIVATE fs3enet)
 

@@ -211,7 +211,7 @@ void FS3EThumb_FreeMessage(FS3EThumbMessage *msg)
 }
 
 /* Debug: human-readable name for a sniffed/detected BmImageFormat, purely
- * for bdbprintf_now() tracing below -- not the format-guessing logic
+ * for bdbprintf() tracing below -- not the format-guessing logic
  * itself (see BmImage_SniffFormat in bmimage.c for that). */
 static const char *FS3EThumb_FormatName(BmImageFormat fmt)
 {
@@ -410,7 +410,7 @@ static void FS3EThumb_HandleMake(FS3EThumbMessage *msg)
 /* Debug: peek how many requests are queued on requestPort without removing
  * any of them -- see the matching FS3ENet_CountPending comment in
  * network_fs3e/fs3enet.c for why Disable()/Enable() brackets the walk.
- * Only used for the bdbprintf_now() backlog tracing in
+ * Only used for the bdbprintf() backlog tracing in
  * FS3EThumb_ProcEntry below. */
 static ULONG FS3EThumb_CountPending(struct MsgPort *port)
 {
@@ -451,7 +451,7 @@ static void FS3EThumb_ProcEntry(void)
 
         WaitPort(requestPort);
 
-        // bdbprintf_now("FS3EThumb: woke up, %lu request(s) waiting\n",
+        // bdbprintf("FS3EThumb: woke up, %lu request(s) waiting\n",
         //               (unsigned long)FS3EThumb_CountPending(requestPort));
 
         if (!stopping && FS3ETHUMB_STOP_SIGMASK &&

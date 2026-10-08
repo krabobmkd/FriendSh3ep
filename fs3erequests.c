@@ -1865,6 +1865,18 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                                reply->fs3enl_Account.fma_Acct,
                                reply->fs3enl_Account.fma_AvatarURL,
                                reply->fs3enl_Account.fma_Id);
+            /* Keep what's needed to renew the token later without a
+             * browser round-trip (servers with expiring tokens only --
+             * see FS3EApp_VerifyStoredAccount). Before FreeLoginState,
+             * which frees loginClientId/Secret. */
+            FS3EApp_SetAccountOAuth(app->loginClientId, app->loginClientSecret,
+                                    reply->fs3enl_RefreshToken,
+                                    reply->fs3enl_ExpiresAt);
+            bdbprintf("[token] login %s: refreshToken=%s expiresAt=%lu%s\n",
+                          app->accountAcct ? app->accountAcct : "?",
+                          reply->fs3enl_RefreshToken[0] ? "yes" : "no",
+                          (unsigned long)reply->fs3enl_ExpiresAt,
+                          reply->fs3enl_ExpiresAt ? "" : " (never expires)");
             FS3EApp_SaveAccount();
             FS3EApp_FreeLoginState();
             app->loginPhase = FS3ELOGIN_DONE;
@@ -1901,27 +1913,79 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
          * are new). */
         if (msg->fs3em_Result == FS3ENETR_OK) {
             FS3ENetVerifyAccountReply *reply = (FS3ENetVerifyAccountReply *)msg->fs3em_Data;
-            FS3EApp_SetAccount(app->accountApiBaseUrl,
-                               app->accountAccessToken,
-                               reply->fs3eva_Account.fma_DisplayName,
-                               reply->fs3eva_Account.fma_Acct,
-                               reply->fs3eva_Account.fma_AvatarURL,
-                               reply->fs3eva_Account.fma_Id);
-            FS3EApp_SaveAccount();
-            FS3EApp_RefreshLoginAccountsList();
-            /* In case the user is already sitting on a channel that
-             * couldn't fetch without an id (VIEWMODE_User). */
-            FS3EApp_FetchTimeline(app->viewMode);
-        } else if (msg->fs3em_Result == FS3ENETR_AUTH_ERROR) {
+            /* The account switch may have moved on while this was in
+             * flight -- only touch app->accountXXX if this reply is still
+             * about the active account's token. */
+            BOOL isActive = app->accountAccessToken &&
+                            !strcmp(app->accountAccessToken, reply->fs3eva_OldAccessToken);
+
+            if (reply->fs3eva_NewAccessToken[0]) {
+                /* The network side renewed the token (about to expire, or
+                 * already rejected) -- see FS3ENetVerifyAccountReq. The
+                 * server may have spent the old refresh token, so this
+                 * must reach account.dat no matter what. */
+                if (isActive) {
+                    FS3EApp_SetAccount(app->accountApiBaseUrl,
+                                       reply->fs3eva_NewAccessToken,
+                                       app->accountDisplayName,
+                                       app->accountAcct,
+                                       app->accountAvatarURL,
+                                       app->accountId);
+                    FS3EApp_SetAccountOAuth(app->accountClientId, app->accountClientSecret,
+                                            reply->fs3eva_NewRefreshToken[0]
+                                                ? reply->fs3eva_NewRefreshToken
+                                                : app->accountRefreshToken,
+                                            reply->fs3eva_ExpiresAt);
+                    bdbprintf("[token] renewed token applied to active account %s: "
+                                  "newRefreshToken=%s expiresAt=%lu\n",
+                                  app->accountAcct ? app->accountAcct : "?",
+                                  reply->fs3eva_NewRefreshToken[0] ? "yes" : "no (kept old)",
+                                  (unsigned long)app->accountTokenExpiresAt);
+                    FS3EApp_CheckConnectionState();
+                } else {
+                    FS3EApp_UpdateStoredToken(reply->fs3eva_OldAccessToken,
+                                              reply->fs3eva_NewAccessToken,
+                                              reply->fs3eva_NewRefreshToken,
+                                              reply->fs3eva_ExpiresAt);
+                }
+                FS3EApp_SaveAccount();
+            }
+
+            /* fma_Id "" = token renewed but not verified (network hiccup
+             * right after the refresh) -- nothing to update the profile
+             * from. */
+            bdbprintf("[token] verify OK (active=%s renewed=%s)\n",
+                      isActive ? "yes" : "no (account switched meanwhile)",
+                      reply->fs3eva_NewAccessToken[0] ? "yes" : "no");
+            if (isActive && reply->fs3eva_Account.fma_Id[0]) {
+                FS3EApp_SetAccount(app->accountApiBaseUrl,
+                                   app->accountAccessToken,
+                                   reply->fs3eva_Account.fma_DisplayName,
+                                   reply->fs3eva_Account.fma_Acct,
+                                   reply->fs3eva_Account.fma_AvatarURL,
+                                   reply->fs3eva_Account.fma_Id);
+                FS3EApp_SaveAccount();
+                FS3EApp_RefreshLoginAccountsList();
+                /* In case the user is already sitting on a channel that
+                 * couldn't fetch without an id (VIEWMODE_User). */
+                FS3EApp_FetchTimeline(app->viewMode);
+            }
+        } else if (msg->fs3em_Result == FS3ENETR_AUTH_ERROR &&
+                   app->accountAccessToken &&
+                   !strcmp(app->accountAccessToken,
+                           ((FS3ENetVerifyAccountReq *)msg->fs3em_Data)->fs3eva_AccessToken)) {
             /* A real response came back rejecting this exact token (see
              * FS3EMastodon_VerifyCredentials' outRejected) -- not just
              * "couldn't reach the server". Tell the user plainly instead
              * of silently leaving "Account connected." showing forever;
              * FS3EApp_CheckConnectionState() picks this up from every
              * channel until a fresh login clears it (FS3EApp_SetAccount). */
+            bdbprintf("[token] verify: token rejected and could not be renewed -- login needed\n");
             app->accountTokenRejected = TRUE;
             FS3EApp_CheckConnectionState();
         } else {
+            bdbprintf("[token] verify: inconclusive (result=%ld), token left as is\n",
+                          (long)msg->fs3em_Result);
             /* Inconclusive (offline right now, DNS hiccup, ...) -- don't
              * claim the token is dead over that; just leave whatever
              * accountTokenRejected already was. A later channel switch's

@@ -3923,6 +3923,7 @@ void exitclose(void)
 
         FS3EApp_FreeLoginState();
         FS3EApp_FreeAccount();
+        FS3EApp_FreeAccountOAuth();
         if (app->accountLastSeenNotifId) { FreeVec(app->accountLastSeenNotifId); app->accountLastSeenNotifId = NULL; }
         if (app->notifNewestKnownId)     { FreeVec(app->notifNewestKnownId);     app->notifNewestKnownId     = NULL; }
         if (app->searchProfileAcct)      { FreeVec(app->searchProfileAcct);      app->searchProfileAcct      = NULL; }

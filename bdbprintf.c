@@ -17,40 +17,19 @@ static volatile int bdb_position = 0;
 
 extern struct Task *myTask;
 
-/* See the header comment: writes straight to myTask's own pr_COS via
- * FPuts (an explicit-filehandle DOS call), never through Output()/Printf(),
- * which resolve against whatever the CALLING task's own DOS process
- * context happens to be -- not necessarily valid, and not necessarily
- * myTask, if this is reached from a different task's BOOPSI dispatch. */
-int bdbprintf_now(const char *format, ...)
-{
-    char    buf[512];
-    va_list args;
-    int     written;
-
-    va_start(args, format);
-    written = vsnprintf(buf, sizeof(buf), format, args);
-    va_end(args);
-
-    if (myTask) {
-        BPTR fh = ((struct Process *)myTask)->pr_COS;
-        FPuts(fh, buf);
-        Flush(fh); /* FPuts only queues into the filehandle's own DOS-level
-                     * buffer -- without this, output written right before a
-                     * crash can still be lost, same problem one level down. */
-    }
-
-    return written;
-}
-
 int bdbprintf(const char *format, ...)
 {
     va_list args;
     int remaining;
     int written;
 
+    /* Called from several processes (main, network, thumb...): the
+     * read-position/append/advance must not interleave with another
+     * bdbprintf() or with flushbdbprint()'s reset, or lines get lost or
+     * overwritten. vsnprintf() never Wait()s, so Forbid() is safe here. */
+    Forbid();
     remaining = BDB_BUFFER_SIZE - bdb_position - 1;
-    if (remaining <= 0) return 0;
+    if (remaining <= 0) { Permit(); return 0; }
 
     va_start(args, format);
     written = vsnprintf(bdb_buffer + bdb_position, remaining + 1, format, args);
@@ -58,6 +37,7 @@ int bdbprintf(const char *format, ...)
 
     if (written > remaining) written = remaining;
     if (written > 0) bdb_position += written;
+    Permit();
 
     if (myTask) Signal(myTask, SIGBREAKF_CTRL_F);
     return written;
@@ -65,23 +45,39 @@ int bdbprintf(const char *format, ...)
 
 void flushbdbprint(void)
 {
-    if (bdb_position > 0) {
-        bdb_buffer[bdb_position] = '\0';
-        /* bdb_buffer holds arbitrary logged text (URLs, etc.) -- never pass
-         * it as Printf()'s own format string, or a stray '%' in logged data
-         * makes Printf() read nonexistent varargs off the stack (format-
-         * string bug, easy Address Error trigger on m68k). */
-        Printf("%s", bdb_buffer);
-        fflush(stdout);
+    /* Main process only. Take the text out under Forbid() and print the
+     * copy afterwards: Printf() can block on the console, and another
+     * process's bdbprintf() appending meanwhile used to be wiped by the
+     * reset that followed it. */
+    static char out[BDB_BUFFER_SIZE];
+    int len;
+
+    Forbid();
+    len = bdb_position;
+    if (len > 0) {
+        CopyMem(bdb_buffer, out, len);
         bdb_position = 0;
         bdb_buffer[0] = '\0';
+    }
+    Permit();
+
+    if (len > 0) {
+        out[len] = '\0';
+        /* out holds arbitrary logged text (URLs, etc.) -- never pass it as
+         * Printf()'s own format string, or a stray '%' in logged data
+         * makes Printf() read nonexistent varargs off the stack (format-
+         * string bug, easy Address Error trigger on m68k). */
+        Printf("%s", out);
+        fflush(stdout);
     }
 }
 
 void clearbdbprint(void)
 {
+    Forbid();
     bdb_position = 0;
     bdb_buffer[0] = '\0';
+    Permit();
 }
 
 int bdbavailable(void)

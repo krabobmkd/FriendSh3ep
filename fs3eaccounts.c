@@ -64,6 +64,58 @@ void FS3EApp_FreeAccount(void)
     if (app->accountId)          { FreeVec(app->accountId);          app->accountId          = NULL; }
 }
 
+/* Free the active account's OAuth renewal fields (accountClientId/
+ * accountClientSecret/accountRefreshToken/accountTokenExpiresAt). */
+void FS3EApp_FreeAccountOAuth(void)
+{
+    if (app->accountClientId)     { FreeVec(app->accountClientId);     app->accountClientId     = NULL; }
+    if (app->accountClientSecret) { FreeVec(app->accountClientSecret); app->accountClientSecret = NULL; }
+    if (app->accountRefreshToken) { FreeVec(app->accountRefreshToken); app->accountRefreshToken = NULL; }
+    app->accountTokenExpiresAt = 0;
+}
+
+/* Dups before freeing, same aliasing reason as FS3EApp_SetAccount. */
+void FS3EApp_SetAccountOAuth(const char *clientId, const char *clientSecret,
+                             const char *refreshToken, ULONG expiresAt)
+{
+    char *newClientId     = NetStrDup(clientId);
+    char *newClientSecret = NetStrDup(clientSecret);
+    char *newRefreshToken = NetStrDup(refreshToken);
+
+    FS3EApp_FreeAccountOAuth();
+    app->accountClientId       = newClientId;
+    app->accountClientSecret   = newClientSecret;
+    app->accountRefreshToken   = newRefreshToken;
+    app->accountTokenExpiresAt = expiresAt;
+}
+
+/* A VERIFY_ACCOUNT reply renewed a token for an account that is no longer
+ * the active one (the user switched while it was in flight): patch its
+ * accounts[] row, matched by the access token it replaces. The caller
+ * saves. newRefreshToken "" = keep the old one. */
+void FS3EApp_UpdateStoredToken(const char *oldAccessToken, const char *newAccessToken,
+                               const char *newRefreshToken, ULONG expiresAt)
+{
+    ULONG i;
+    for (i = 0; i < app->accountCount; i++) {
+        FS3EAccount *a = &app->accounts[i];
+        if (a->accessToken && !strcmp(a->accessToken, oldAccessToken)) {
+            char *tok = NetStrDup(newAccessToken);
+            FreeVec(a->accessToken);
+            a->accessToken = tok;
+            if (newRefreshToken && newRefreshToken[0]) {
+                char *rt = NetStrDup(newRefreshToken);
+                if (a->refreshToken) FreeVec(a->refreshToken);
+                a->refreshToken = rt;
+            }
+            a->tokenExpiresAt = expiresAt;
+            bdbprintf("[token] renewed token stored for inactive account %s, expiresAt=%lu\n",
+                          a->acct ? a->acct : "?", (unsigned long)a->tokenExpiresAt);
+            return;
+        }
+    }
+}
+
 /* Store account credentials from a LOGIN_FINISH reply.
  * Not static: fs3erequests.c's FS3EApp_HandleNetReply calls this too --
  * see the extern declaration there. */
@@ -172,10 +224,18 @@ void FS3EApp_SetAccount(const char *apiBaseUrl, const char *accessToken,
         if (app->accountLastSeenNotifId) { FreeVec(app->accountLastSeenNotifId); app->accountLastSeenNotifId = NULL; }
         if (app->notifNewestKnownId)     { FreeVec(app->notifNewestKnownId);     app->notifNewestKnownId     = NULL; }
         app->notifHasUnseen = FALSE;
+        FS3EApp_FreeAccountOAuth();
         {
             LONG idx = FS3EApp_FindAccountIndex(newApiBaseUrl, newAcct);
             if (idx >= 0 && app->accounts[idx].lastSeenNotifId)
                 app->accountLastSeenNotifId = NetStrDup(app->accounts[idx].lastSeenNotifId);
+            /* Same for the OAuth renewal fields -- a fresh LOGIN_FINISH
+             * overrides them right after this with FS3EApp_SetAccountOAuth. */
+            if (idx >= 0)
+                FS3EApp_SetAccountOAuth(app->accounts[idx].clientId,
+                                        app->accounts[idx].clientSecret,
+                                        app->accounts[idx].refreshToken,
+                                        app->accounts[idx].tokenExpiresAt);
         }
         FS3EApp_UpdateNotifBadge();
 
@@ -387,6 +447,10 @@ static void FS3EApp_FreeAccountEntry(FS3EAccount *a)
     if (a->avatarURL)   { FreeVec(a->avatarURL);   a->avatarURL   = NULL; }
     if (a->accountId)   { FreeVec(a->accountId);   a->accountId   = NULL; }
     if (a->lastSeenNotifId) { FreeVec(a->lastSeenNotifId); a->lastSeenNotifId = NULL; }
+    if (a->clientId)        { FreeVec(a->clientId);        a->clientId        = NULL; }
+    if (a->clientSecret)    { FreeVec(a->clientSecret);    a->clientSecret    = NULL; }
+    if (a->refreshToken)    { FreeVec(a->refreshToken);    a->refreshToken    = NULL; }
+    a->tokenExpiresAt = 0;
 }
 
 /* Index of the account matching apiBaseUrl+acct, or -1. Matches on both
@@ -414,7 +478,9 @@ static LONG FS3EApp_FindAccountIndex(const char *apiBaseUrl, const char *acct)
 static void FS3EApp_UpsertAccountsList(const char *apiBaseUrl, const char *accessToken,
                                         const char *displayName, const char *acct,
                                         const char *avatarURL, const char *accountId,
-                                        const char *lastSeenNotifId)
+                                        const char *lastSeenNotifId,
+                                        const char *clientId, const char *clientSecret,
+                                        const char *refreshToken, ULONG tokenExpiresAt)
 {
     LONG idx = FS3EApp_FindAccountIndex(apiBaseUrl, acct);
     FS3EAccount *a;
@@ -435,6 +501,10 @@ static void FS3EApp_UpsertAccountsList(const char *apiBaseUrl, const char *acces
     a->avatarURL   = NetStrDup(avatarURL);
     a->accountId   = NetStrDup(accountId);
     a->lastSeenNotifId = NetStrDup(lastSeenNotifId);
+    a->clientId        = NetStrDup(clientId);
+    a->clientSecret    = NetStrDup(clientSecret);
+    a->refreshToken    = NetStrDup(refreshToken);
+    a->tokenExpiresAt  = tokenExpiresAt;
 }
 
 /* First line of the multi-account account.dat format, distinguishing it
@@ -443,8 +513,14 @@ static void FS3EApp_UpsertAccountsList(const char *apiBaseUrl, const char *acces
  * that still wrote accessToken in plaintext) -- all of which stored a
  * token with no machine-key binding at all, and are therefore refused
  * rather than read, see FS3EApp_LoadAccount. This format's accessToken
- * is instead hex+XOR-encoded with FS3EMachineId_GetKey() (see below). */
-#define FS3EAPP_ACCOUNTS_MAGIC "FS3EACCOUNTS2"
+ * is instead hex+XOR-encoded with FS3EMachineId_GetKey() (see below).
+ * "FS3EACCOUNTS3" is the same format plus 4 OAuth renewal lines per
+ * account (clientId, encoded clientSecret, encoded refreshToken,
+ * tokenExpiresAt) -- a real bump rather than another optional trailing
+ * field, since a V2 reader can't tell those lines from the next account's.
+ * V2 files are still read (renewal fields left empty). */
+#define FS3EAPP_ACCOUNTS_MAGIC    "FS3EACCOUNTS3"
+#define FS3EAPP_ACCOUNTS_MAGIC_V2 "FS3EACCOUNTS2"
 
 /* Machine-derived XOR key (see fs3emachineid.h -- NOT cryptography, just a
  * deterrent against a copied account.dat's tokens working verbatim on a
@@ -564,7 +640,9 @@ void FS3EApp_SaveAccount(void)
     FS3EApp_UpsertAccountsList(app->accountApiBaseUrl, app->accountAccessToken,
                                 app->accountDisplayName, app->accountAcct,
                                 app->accountAvatarURL, app->accountId,
-                                app->accountLastSeenNotifId);
+                                app->accountLastSeenNotifId,
+                                app->accountClientId, app->accountClientSecret,
+                                app->accountRefreshToken, app->accountTokenExpiresAt);
     activeIdx = FS3EApp_FindAccountIndex(app->accountApiBaseUrl, app->accountAcct);
 
     if (!FS3EApp_AccountDatPath(path, sizeof(path))) {
@@ -596,6 +674,18 @@ void FS3EApp_SaveAccount(void)
          * (same convention as displayName/acct/avatarURL/accountId
          * themselves being optional there for an even older file). */
         FPuts(f, a->lastSeenNotifId ? a->lastSeenNotifId : ""); FPuts(f, "\n");
+        /* FS3EACCOUNTS3 OAuth renewal fields -- secrets encoded the same
+         * way as the access token. */
+        FPuts(f, a->clientId ? a->clientId : ""); FPuts(f, "\n");
+        FS3EApp_EncodeToken(a->clientSecret ? a->clientSecret : "", encTok, sizeof(encTok));
+        FPuts(f, encTok); FPuts(f, "\n");
+        FS3EApp_EncodeToken(a->refreshToken ? a->refreshToken : "", encTok, sizeof(encTok));
+        FPuts(f, encTok); FPuts(f, "\n");
+        {
+            char numLine[16];
+            snprintf(numLine, sizeof(numLine), "%lu", (unsigned long)a->tokenExpiresAt);
+            FPuts(f, numLine); FPuts(f, "\n");
+        }
     }
     Close(f);
 }
@@ -627,6 +717,8 @@ BOOL FS3EApp_LoadAccount(void)
     char apiBaseUrl[256], tokLine[1025], accessToken[512];
     char displayName[128], acct[128], avatarURL[512], accountId[64];
     char lastSeenNotifId[64];
+    char clientId[128], clientSecret[128], refreshToken[512], expiresLine[16];
+    BOOL hasOAuthLines;
     ULONG n;
 
     if (!FS3EApp_AccountDatPath(path, sizeof(path))) return FALSE;
@@ -641,7 +733,11 @@ BOOL FS3EApp_LoadAccount(void)
 
     if (!RLINE(apiBaseUrl)) { Close(f); return FALSE; }
 
-    if (strcmp(apiBaseUrl, FS3EAPP_ACCOUNTS_MAGIC) != 0) {
+    if (!strcmp(apiBaseUrl, FS3EAPP_ACCOUNTS_MAGIC))
+        hasOAuthLines = TRUE;
+    else if (!strcmp(apiBaseUrl, FS3EAPP_ACCOUNTS_MAGIC_V2))
+        hasOAuthLines = FALSE;
+    else {
         Close(f);
         return FALSE;
     }
@@ -682,9 +778,19 @@ BOOL FS3EApp_LoadAccount(void)
              * "missing = blank" handling as the four fields above. */
             if (!RLINE(lastSeenNotifId)) lastSeenNotifId[0] = '\0';
 
+            clientId[0] = clientSecret[0] = refreshToken[0] = expiresLine[0] = '\0';
+            if (hasOAuthLines) {
+                if (!RLINE(clientId)) clientId[0] = '\0';
+                if (RLINE(tokLine)) FS3EApp_DecodeToken(tokLine, clientSecret, sizeof(clientSecret));
+                if (RLINE(tokLine)) FS3EApp_DecodeToken(tokLine, refreshToken, sizeof(refreshToken));
+                if (!RLINE(expiresLine)) expiresLine[0] = '\0';
+            }
+
             FS3EApp_UpsertAccountsList(apiBaseUrl, accessToken, displayName,
                                         acct, avatarURL, accountId,
-                                        lastSeenNotifId);
+                                        lastSeenNotifId,
+                                        clientId, clientSecret, refreshToken,
+                                        (ULONG)strtoul(expiresLine, NULL, 10));
         }
         Close(f);
 #undef RLINE
@@ -753,7 +859,19 @@ void FS3EApp_VerifyStoredAccount(void)
     if (!app->accountApiBaseUrl || !app->accountAccessToken)
         return;
 
-    req = FS3ENetVerifyAccountReq_Alloc(app->accountApiBaseUrl, app->accountAccessToken);
+    /* The network side decides whether to renew ahead of time, against
+     * the server's clock (see FS3ENetVerifyAccountReq), and also renews
+     * reactively when verify_credentials rejects the token outright. */
+    req = FS3ENetVerifyAccountReq_Alloc(app->accountApiBaseUrl, app->accountAccessToken,
+                                        app->accountClientId, app->accountClientSecret,
+                                        app->accountRefreshToken, app->accountTokenExpiresAt);
+
+    bdbprintf("[token] verify %s @ %s: refreshToken=%s clientCreds=%s expiresAt=%lu\n",
+                  app->accountAcct ? app->accountAcct : "?",
+                  app->accountApiBaseUrl,
+                  app->accountRefreshToken ? "yes" : "no",
+                  (app->accountClientId && app->accountClientSecret) ? "yes" : "no",
+                  (unsigned long)app->accountTokenExpiresAt);
     if (!req) return;
 
     FS3EApp_NetSend(FS3ENETQ_VERIFY_ACCOUNT, req,
@@ -797,7 +915,8 @@ void FS3EApp_SeedDefaultAnonymousAccount(void)
      * branch). */
     for (i = 0; i < FS3E_DEFAULT_ANON_SERVER_COUNT; i++)
         FS3EApp_UpsertAccountsList(s_defaultAnonServers[i], "", "",
-                                    FS3EACCOUNT_ANON_ACCT, "", "", "");
+                                    FS3EACCOUNT_ANON_ACCT, "", "", "",
+                                    "", "", "", 0);
 
     FS3EApp_SetAccount(s_defaultAnonServers[0], "", "",
                         FS3EACCOUNT_ANON_ACCT, "", "");
@@ -1070,6 +1189,7 @@ void FS3EApp_DeleteSelectedAccount(void)
     memset(&app->accounts[app->accountCount], 0, sizeof(FS3EAccount)); /* the now-unused tail slot */
 
     FS3EApp_FreeAccount(); /* the active-account mirror -- it's gone */
+    FS3EApp_FreeAccountOAuth();
     app->accountTokenRejected = FALSE;
     app->loginPhase = FS3ELOGIN_IDLE;
 

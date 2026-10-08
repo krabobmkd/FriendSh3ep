@@ -57,7 +57,7 @@
  * long, and unlike the CIA-backed MICROHZ/ECLOCK units it doesn't drift
  * under load). A reproducible near-instant false-positive first firing
  * (TR_ADDREQUEST for 3 seconds coming back in under a millisecond with
- * tr_node.io_Error == IOERR_ABORTED, confirmed via bdbprintf_now tracing:
+ * tr_node.io_Error == IOERR_ABORTED, confirmed via bdbprintf tracing:
  * elapsed time, loop count, distinct non-colliding signal bits, io_Error on
  * both sides) looked at first like interference from fs3etimer.c's own
  * AddIntServer(INTB_VERTB, ...) handler on the same interrupt chain -- but
@@ -155,7 +155,7 @@ typedef struct
  * timer.device request run alongside it (st->timerPort/timerReq, opened
  * once for the task's whole lifetime -- see FS3EAudio_ProcEntry()). A plain
  * WaitIO() has no such bound, and a wedged/unresponsive ahi.device request
- * is exactly what was traced (superlog.txt, bdbprintf_now tracing added
+ * is exactly what was traced (superlog.txt, bdbprintf tracing added
  * while chasing this) as the cause of "mp3 frozen, can't relaunch, app
  * hangs on exit": once stuck in WaitIO() forever, this task can never get
  * back to its message loop to process Stop/Play/Shutdown at all.
@@ -195,7 +195,7 @@ static BOOL FS3EAudio_WaitIOTimeout(FS3EAudioState *st, struct IORequest *ioreq)
     SendIO((struct IORequest *)st->timerReq);
     timerArmed = TRUE;
 
-    /* Traced (bdbprintf_now, superlog.txt) with elapsed-time/io_Error
+    /* Traced (bdbprintf, superlog.txt) with elapsed-time/io_Error
      * diagnostics: this timer.device build replies to the very first
      * TR_ADDREQUEST after OpenDevice() almost instantly (<2ms, not the
      * requested FS3EAUDIO_IO_TIMEOUT_SECS) with io_Error==IOERR_ABORTED,
