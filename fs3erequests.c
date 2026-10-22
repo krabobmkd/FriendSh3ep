@@ -17,6 +17,7 @@
 #include <proto/exec.h>
 #include <proto/intuition.h>
 #include <proto/utility.h>
+#include <proto/alib.h>
 
 #include <gadgets/unitexteditor.h>
 #include <gadgets/chooser.h>
@@ -2086,9 +2087,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     FS3EApp_NetSend(FS3ENETQ_DOMAIN_BLOCK_STATE, dbReq, sizeof(*dbReq));
             }
 
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
+            FS3EApp_RefreshTimeline();
         }
         break;
 
@@ -2104,9 +2103,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 upd.domain  = reply->fs3edbs_Domain;
                 upd.blocked = reply->fs3edbs_Blocked;
                 SetAttrs(app->tootTimeline, TTIMELINE_UpdateInstanceBlocked, (ULONG)&upd, TAG_DONE);
-                if (CurrentMainWindow)
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
+                FS3EApp_RefreshTimeline();
             }
         }
         break;
@@ -2127,9 +2124,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 upd.domain  = reply->fs3edbt_Domain;
                 upd.blocked = reply->fs3edbt_Blocked;
                 SetAttrs(app->tootTimeline, TTIMELINE_UpdateInstanceBlocked, (ULONG)&upd, TAG_DONE);
-                if (CurrentMainWindow)
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
+                FS3EApp_RefreshTimeline();
             }
         }
         break;
@@ -2182,9 +2177,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     SetAttrs(app->tootTimeline, TTIMELINE_RefreshPost, (ULONG)&post, TAG_DONE);
                     FS3EApp_TriggerMediaFetchesForStatus(&statuses[0]);
                 }
-                if (CurrentMainWindow)
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
+                FS3EApp_RefreshTimeline();
                 break;
             }
 
@@ -2299,9 +2292,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     searchApplyPendingScroll();
             }
 
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
+            FS3EApp_RefreshTimeline();
         } else if (msg->fs3em_Result != FS3ENETR_OK) {
             FS3ENetTimelineReq *req = (FS3ENetTimelineReq *)msg->fs3em_Data;
             ULONG bit = req ? (1UL << req->fs3et_ViewModeBit) : 0;
@@ -2568,9 +2559,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             if (reply->fs3en_PageDirection == FS3ENETPAGE_INITIAL)
                 SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
 
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
+            FS3EApp_RefreshTimeline();
         } else if (msg->fs3em_Result != FS3ENETR_OK) {
             FS3ENetNotificationsReq *req = (FS3ENetNotificationsReq *)msg->fs3em_Data;
             ULONG bit = (1UL << VIEWMODE_Notifs);
@@ -2706,9 +2695,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             if (!older)
                 SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
 
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
+            FS3EApp_RefreshTimeline();
         } else if (msg->fs3em_Result != FS3ENETR_OK) {
             FS3ENetNewsReq *req = (FS3ENetNewsReq *)msg->fs3em_Data;
             ULONG bit = (1UL << VIEWMODE_News);
@@ -2857,9 +2844,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 }
             }
 
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
+            FS3EApp_RefreshTimeline();
         } else if (msg->fs3em_Result != FS3ENETR_OK) {
             FS3ENetAccountsListReq *req = (FS3ENetAccountsListReq *)msg->fs3em_Data;
             ULONG bit = (1UL << VIEWMODE_Search);
@@ -2919,9 +2904,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
             searchApplyPendingScroll();
 
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
+            FS3EApp_RefreshTimeline();
         } else if (msg->fs3em_Result != FS3ENETR_OK) {
             FS3ENetDomainBlocksReq *req = (FS3ENetDomainBlocksReq *)msg->fs3em_Data;
             ULONG bit = (1UL << VIEWMODE_Search);
@@ -3127,9 +3110,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 upd.postId = app->tootView.composePostId;
                 upd.flags  = TTL_POSTUPD_REPLIES;
                 SetAttrs(app->tootTimeline, TTIMELINE_UpdatePost, (ULONG)&upd, TAG_DONE);
-                if (CurrentMainWindow)
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
+                FS3EApp_RefreshTimeline();
             }
 
             /* Just replied -- jump straight to that discussion, same as
@@ -3203,9 +3184,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             upd.channel = TTL_SEARCH_CHANNEL;
             SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileBio, (ULONG)&upd, TAG_DONE);
 
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
+            FS3EApp_RefreshTimeline();
 
             FS3ETootView_Close(&app->tootView);
         } else {
@@ -3311,9 +3290,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             if (reply && reply->fs3ed_StatusId) {
                 SetAttrs(app->tootTimeline, TTIMELINE_RemovePost,
                          (ULONG)reply->fs3ed_StatusId, TAG_DONE);
-                if (CurrentMainWindow)
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
+                FS3EApp_RefreshTimeline();
             }
         }
         break;
@@ -3331,9 +3308,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             upd.flags      = TTL_POSTUPD_FAVOURITED;
             upd.favourited = reply->fs3efa_Favourited;
             SetAttrs(app->tootTimeline, TTIMELINE_UpdatePost, (ULONG)&upd, TAG_DONE);
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
+            FS3EApp_RefreshTimeline();
         }
         break;
 
@@ -3347,9 +3322,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             upd.flags      = TTL_POSTUPD_BOOKMARKED;
             upd.bookmarked = reply->fs3ebk_Bookmarked;
             SetAttrs(app->tootTimeline, TTIMELINE_UpdatePost, (ULONG)&upd, TAG_DONE);
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
+            FS3EApp_RefreshTimeline();
         }
         break;
 
@@ -3436,9 +3409,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             if (!older)
                 SetAttrs(app->tootTimeline, TTIMELINE_ScrollToNewest, TRUE, TAG_DONE);
 
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
+            FS3EApp_RefreshTimeline();
         } else if (msg->fs3em_Result != FS3ENETR_OK) {
             FS3ENetBookmarksLocalReq *req = (FS3ENetBookmarksLocalReq *)msg->fs3em_Data;
             ULONG bit = (1UL << VIEWMODE_Bookmarks);
@@ -3467,9 +3438,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             upd.flags     = TTL_POSTUPD_REBLOGGED;
             upd.reblogged = reply->fs3ere_Reblogged;
             SetAttrs(app->tootTimeline, TTIMELINE_UpdatePost, (ULONG)&upd, TAG_DONE);
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
+            FS3EApp_RefreshTimeline();
         }
         break;
 
@@ -3530,9 +3499,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                         }
                     }
 
-                    if (CurrentMainWindow)
-                        RefreshGList((struct Gadget *)app->tootTimeline,
-                                     CurrentMainWindow, NULL, 1);
+                    FS3EApp_RefreshTimeline();
                 }
             }
             break;
@@ -3633,9 +3600,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                     }
                 }
 
-                if (CurrentMainWindow)
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
+                FS3EApp_RefreshTimeline();
             }
         }
         break;
@@ -3656,9 +3621,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 bupd.accountId = reply->fs3erl_AccountId;
                 bupd.blocked   = reply->fs3erl_Blocking;
                 SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileBlocked, (ULONG)&bupd, TAG_DONE);
-                if (CurrentMainWindow)
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
+                FS3EApp_RefreshTimeline();
             }
         }
         break;
@@ -3690,9 +3653,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 SetAttrs(app->tootTimeline, TTIMELINE_UpdatePost, (ULONG)&upd, TAG_DONE);
             }
 
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
+            FS3EApp_RefreshTimeline();
         }
         break;
 
@@ -3707,9 +3668,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 upd.accountId = reply->fs3efo_AccountId;
                 upd.following = reply->fs3efo_Following;
                 SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileFollow, (ULONG)&upd, TAG_DONE);
-                if (CurrentMainWindow)
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
+                FS3EApp_RefreshTimeline();
             }
         }
         break;
@@ -3736,9 +3695,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 fupd.accountId = reply->fs3eblk_AccountId;
                 fupd.following = reply->fs3eblk_Following;
                 SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileFollow, (ULONG)&fupd, TAG_DONE);
-                if (CurrentMainWindow)
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
+                FS3EApp_RefreshTimeline();
             }
         }
         break;
@@ -3761,9 +3718,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
                 bupd.accountId = reply->fs3eub_AccountId;
                 bupd.blocked   = FALSE;
                 SetAttrs(app->tootTimeline, TTIMELINE_UpdateProfileBlocked, (ULONG)&bupd, TAG_DONE);
-                if (CurrentMainWindow)
-                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                 CurrentMainWindow, NULL, 1);
+                FS3EApp_RefreshTimeline();
             }
         }
         break;
@@ -3779,9 +3734,7 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
             setup.postId         = reply->fs3ets_StatusId;
             setup.translatedText = reply->fs3ets_TranslatedContent;
             SetAttrs(app->tootTimeline, TTIMELINE_ApplyTranslation, (ULONG)&setup, TAG_DONE);
-            if (CurrentMainWindow)
-                RefreshGList((struct Gadget *)app->tootTimeline,
-                             CurrentMainWindow, NULL, 1);
+            FS3EApp_RefreshTimeline();
         }
         break;
 
@@ -3798,7 +3751,14 @@ void FS3EApp_HandleNetReply(FS3ENetMessage *msg)
  * remains on the GUI task is a cheap direct read of that already-small
  * file's pixels; scaling to the live display size happens at draw time
  * (RgbImage_DrawScaled), not here. */
-void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
+void FS3EApp_RefreshTimeline(void)
+{
+    if (!app->tootTimeline || !CurrentMainWindow) return;
+    DoMethod(app->tootTimeline, TTLM_Prepare, (ULONG)CurrentMainWindow);
+    RefreshGList((struct Gadget *)app->tootTimeline, CurrentMainWindow, NULL, 1);
+}
+
+BOOL FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
 {
     FS3EThumbMakeReply *reply = (FS3EThumbMakeReply *)msg->fs3etm_Data;
 
@@ -3807,7 +3767,7 @@ void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
      * this was for, so there's nothing to do but drop it (same best-effort
      * "an allocation failure isn't worth failing over" precedent as
      * network_fs3e/fs3enet.c's FS3ENet_SendProgress). */
-    if (!reply) return;
+    if (!reply) return FALSE;
 
     /* A raw-decode reply (fs3etmy_RawPixels non-NULL) has an empty
      * fs3etmy_ThumbPath -- nothing was written to disk (see
@@ -3862,15 +3822,15 @@ void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
         }
         if (app->tootTimeline) {
             /* This image just became available in the cache -- one-shot
-             * event, not a poll: tell the timeline to invalidate its
-             * currently rendered tiles so whichever of them drew a
-             * placeholder for this avatar/thumbnail get redrawn with the
-             * real image on the next render (see TTIMELINE_InvalidateImages). */
-            SetAttrs(app->tootTimeline, TTIMELINE_InvalidateImages, TRUE, TAG_DONE);
+             * event, not a poll: invalidate only the tiles whose rows
+             * use this key (see TTIMELINE_InvalidateImageKey), so they
+             * get redrawn with the real image instead of the placeholder.
+             * No redraw here: the main loop's drain does one
+             * FS3EApp_RefreshTimeline() for the whole burst. */
+            SetAttrs(app->tootTimeline, TTIMELINE_InvalidateImageKey,
+                     (ULONG)reply->fs3etmy_Key, TAG_DONE);
+            return TRUE;
         }
-        if (CurrentMainWindow)
-            RefreshGList((struct Gadget *)app->tootTimeline,
-                         CurrentMainWindow, NULL, 1);
     }
     else if (msg->fs3etm_Result == FS3ETHUMBR_ERROR && app->avatarImages &&
              reply->fs3etmy_Key[0])
@@ -3893,11 +3853,12 @@ void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg)
         else
             AvatarImages_MarkFailed(app->avatarImages, reply->fs3etmy_Key, fmt);
 
-        if (app->tootTimeline)
-            SetAttrs(app->tootTimeline, TTIMELINE_InvalidateImages, TRUE, TAG_DONE);
-        if (CurrentMainWindow)
-            RefreshGList((struct Gadget *)app->tootTimeline,
-                         CurrentMainWindow, NULL, 1);
+        if (app->tootTimeline) {
+            SetAttrs(app->tootTimeline, TTIMELINE_InvalidateImageKey,
+                     (ULONG)reply->fs3etmy_Key, TAG_DONE);
+            return TRUE;
+        }
     }
+    return FALSE;
 }
 

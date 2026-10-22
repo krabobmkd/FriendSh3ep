@@ -961,6 +961,7 @@ ULONG TTL_OnGet    (Class *cl, Object *o, struct opGet *msg);
 ULONG TTL_OnLayout (Class *cl, Object *o, struct gpLayout *msg);
 ULONG TTL_OnRender (Class *cl, Object *o, struct gpRender *msg);
 ULONG TTL_OnDomain (Class *cl, Object *o, struct gpDomain *msg);
+ULONG TTL_OnPrepare(Class *cl, Object *o, struct ttlpPrepare *msg);
 
 /* fs3etoottimeline_input.c */
 ULONG TTL_OnHitTest    (Class *cl, Object *o, struct gpHitTest *msg);

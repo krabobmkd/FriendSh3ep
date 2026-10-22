@@ -44,6 +44,8 @@ ULONG ASM SAVEDS TootTimeline_Dispatch(
             return TTL_OnRender (cl, o, (struct gpRender *)msg);
         case GM_DOMAIN:
             return TTL_OnDomain (cl, o, (struct gpDomain *)msg);
+        case TTLM_Prepare:
+            return TTL_OnPrepare(cl, o, (struct ttlpPrepare *)msg);
 
         case GM_HITTEST:
             return TTL_OnHitTest    (cl, o, (struct gpHitTest *)msg);

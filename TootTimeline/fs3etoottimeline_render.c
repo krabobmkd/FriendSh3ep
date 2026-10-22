@@ -8,19 +8,31 @@
  * lastTileWidth the tile pool is freed and rebuilt, and all posts are
  * re-laid-out so their heights reflect the new column width.
  *
- * GM_RENDER
- * ---------
+ * TTLM_Prepare (main task, before RefreshGList -- see fs3etoottimeline.h)
+ * ------------
  * 1. Detect size change and call ttl_do_layout if needed.
- * 2. Apply any pending scroll delta (set by GM_HANDLEINPUT).
+ * 2. Apply any pending scroll delta (set by TTIMELINE_ScrollY/ScrollBy).
  * 3. Evict tiles outside the warm window:
  *    [scrollY - TTL_TILE_BUF*TTL_TILE_HEIGHT,
  *     scrollY + gadHeight + TTL_TILE_BUF*TTL_TILE_HEIGHT)
- * 4. For each tile row in the warm window:
- *    a. Acquire a tile (takes a free one or evicts the farthest).
- *    b. If dirty: call ttl_render_tile().
- *    c. BltBitMapRastPort to the gadget RastPort.
- * 5. Fill empty space above or below all posts with bgPen.
- * 6. Draw text-selection overlay (COMPLEMENT mode) — placeholder.
+ * 4. Acquire every tile of the warm window (visible ones first) and
+ *    ttl_render_tile() the dirty ones -- listSem is dropped between tiles.
+ *
+ * Why this is not in GM_RENDER: Intuition runs GM_RENDER with the
+ * window's layer locked, and while it is held input.device stalls
+ * (pointer freeze on slow CPUs). Rendering a dozen tiles of FreeType text
+ * and images there made every timeline refresh freeze the mouse.
+ *
+ * GM_RENDER
+ * ---------
+ * 1./2. Same as above (cheap no-op when TTLM_Prepare already ran).
+ * 3. For each tile row intersecting the VISIBLE area only: acquire it,
+ *    render it inline only if still dirty (fallback for refreshes
+ *    Intuition/layout.gadget trigger themselves -- resize, damage), then
+ *    BltBitMapRastPort to the gadget RastPort. The warm buffer rows are
+ *    left to the next TTLM_Prepare.
+ * 4. Fill empty space above or below all posts with bgPen.
+ * 5. Draw text-selection overlay (COMPLEMENT mode) — placeholder.
  */
 
 #include <proto/exec.h>
@@ -71,6 +83,112 @@ static void ttl_do_layout(Class *cl, Object *o, WORD newW, WORD newH, struct Ras
         if (active->scrollY < minScroll) active->scrollY = minScroll;
         if (active->scrollY > maxScroll) active->scrollY = maxScroll;
     }
+}
+
+/* Relayout if the gadget size changed (or GM_LAYOUT asked for it), then
+ * apply any pending scroll. Shared by TTLM_Prepare and GM_RENDER; caller
+ * holds listSem. Cheap when there's nothing to do. */
+static void ttl_layout_and_scroll(Class *cl, Object *o, struct RastPort *rp)
+{
+    TTLData       *inst = TTL_DATA(cl, o);
+    struct Gadget *g    = G(o);
+
+    if (inst->LastLayoutedWidth != g->Width ||
+        inst->LastLayoutedHeight != g->Height)
+    {
+        inst->layoutToDo = TRUE;
+    }
+
+    if (inst->layoutToDo)
+    {
+        ttl_do_layout(cl, o, g->Width, g->Height, rp);
+
+        inst->LastLayoutedWidth = g->Width;
+        inst->LastLayoutedHeight = g->Height;
+        inst->layoutToDo = FALSE;
+    }
+
+    if (!ttl_is_waiting(inst) && inst->pendingScroll) {
+        TTLChannel *active = ttl_active(inst);
+        LONG minScroll = ttl_channel_min_scroll(active);
+        LONG maxScroll = active->contentBottomY - g->Height;
+        if (maxScroll < minScroll) maxScroll = minScroll;
+        active->scrollY = inst->pendingScrollY;
+        if (active->scrollY < minScroll) active->scrollY = minScroll;
+        if (active->scrollY > maxScroll) active->scrollY = maxScroll;
+        inst->pendingScroll = FALSE;
+    }
+}
+
+/* ------------------------------------------------------------------ */
+/* TTLM_Prepare                                                         */
+/* ------------------------------------------------------------------ */
+
+ULONG TTL_OnPrepare(Class *cl, Object *o, struct ttlpPrepare *msg)
+{
+    TTLData       *inst = TTL_DATA(cl, o);
+    struct Gadget *g    = G(o);
+    struct Window *win  = msg->ttlp_Window;
+    ULONG          visibleRendered = 0;
+    LONG           firstIdx, lastIdx, visFirst, visLast, tileIdx;
+    int            pass;
+
+    if (!win || !win->RPort || !win->RPort->BitMap ||
+        g->Width <= 0 || g->Height <= 0 || inst->style == NULL ||
+        FindTask(NULL) != inst->callerTask)
+        return 0;
+
+    inst->screen = win->WScreen;
+
+    ObtainSemaphore(&inst->listSem);
+
+    ttl_layout_and_scroll(cl, o, win->RPort);
+
+    if (ttl_is_waiting(inst) || inst->tileCount == 0) {
+        ReleaseSemaphore(&inst->listSem);
+        return 0;
+    }
+
+    {
+        TTLChannel *active = ttl_active(inst);
+        LONG warmTop = active->scrollY - (LONG)TTL_TILE_BUF * TTL_TILE_HEIGHT;
+        LONG warmBot = active->scrollY + g->Height + (LONG)TTL_TILE_BUF * TTL_TILE_HEIGHT;
+
+        ttl_tile_evict_out_of_range(inst, warmTop, warmBot);
+
+        firstIdx = ttl_tile_index(warmTop);
+        lastIdx  = ttl_tile_index(warmBot - 1);
+        visFirst = ttl_tile_index(active->scrollY);
+        visLast  = ttl_tile_index(active->scrollY + g->Height - 1);
+    }
+
+    ReleaseSemaphore(&inst->listSem);
+
+    /* Pass 0: visible rows, pass 1: the warm buffer rows around them.
+     * One tile per listSem hold, so a concurrent GM_HANDLEINPUT/GM_GOACTIVE
+     * on input.device never waits for more than a single tile render. The
+     * tile pool itself is only ever touched on this task (GM_RENDER off
+     * callerTask defers, see TTL_OnRender), so the indices computed above
+     * stay valid; a drag-scroll meanwhile just means a row or two of the
+     * warm window gets prepared one refresh late. */
+    for (pass = 0; pass < 2; pass++) {
+        for (tileIdx = firstIdx; tileIdx <= lastIdx; tileIdx++) {
+            BOOL     isVisible = (tileIdx >= visFirst && tileIdx <= visLast);
+            TTLTile *tile;
+
+            if (isVisible != (pass == 0)) continue;
+
+            ObtainSemaphore(&inst->listSem);
+            tile = ttl_tile_acquire(inst, ttl_tile_base(tileIdx));
+            if (tile && tile->dirty) {
+                ttl_render_tile(inst, tile);
+                if (isVisible) visibleRendered++;
+            }
+            ReleaseSemaphore(&inst->listSem);
+        }
+    }
+
+    return visibleRendered;
 }
 
 /* ------------------------------------------------------------------ */
@@ -219,22 +337,9 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
      * rebuilds Y positions for every channel, not just the active one. */
     ObtainSemaphore(&inst->listSem);
 
-    /* do layout from correct proces if not done*/
-    if(inst->LastLayoutedWidth != g->Width ||
-        inst->LastLayoutedHeight != g->Height)
-    {
-        inst->layoutToDo = TRUE;
-    }
-
-    if(inst->layoutToDo)
-    {
-//    bdbprintf("ttl_do_layout\n");
-        ttl_do_layout(cl, o, g->Width, g->Height,rp );
-
-        inst->LastLayoutedWidth = g->Width;
-        inst->LastLayoutedHeight = g->Height;
-        inst->layoutToDo = FALSE;
-    }
+    /* Normally already done by TTLM_Prepare -- still needed here for the
+     * refreshes Intuition/layout.gadget trigger on their own (resize). */
+    ttl_layout_and_scroll(cl, o, rp);
 
     if (ttl_is_waiting(inst)) {
         ttl_render_wait(inst, rp, g);
@@ -245,17 +350,6 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
 
     {
     TTLChannel *active = ttl_active(inst);
-
-    /* Apply pending scroll */
-    if (inst->pendingScroll) {
-        LONG minScroll = ttl_channel_min_scroll(active);
-        LONG maxScroll = active->contentBottomY - gadH;
-        if (maxScroll < minScroll) maxScroll = minScroll;
-        active->scrollY = inst->pendingScrollY;
-        if (active->scrollY < minScroll) active->scrollY = minScroll;
-        if (active->scrollY > maxScroll) active->scrollY = maxScroll;
-        inst->pendingScroll = FALSE;
-    }
 
     if (inst->tileCount == 0) {
         /* Pool not ready – paint solid background */
@@ -273,9 +367,12 @@ ULONG TTL_OnRender(Class *cl, Object *o, struct gpRender *msg)
     /* Evict cold tiles */
     ttl_tile_evict_out_of_range(inst, warmTop, warmBot);
 
-    /* Acquire and render tiles in the warm window */
-    firstIdx = ttl_tile_index(warmTop);
-    lastIdx  = ttl_tile_index(warmBot - 1);
+    /* Blit only the visible rows -- the warm buffer rows are rendered
+     * ahead of time by TTLM_Prepare, outside the layer lock. A row still
+     * dirty here (refresh that didn't go through TTLM_Prepare) is
+     * rendered inline as a fallback, so the display is never stale. */
+    firstIdx = ttl_tile_index(active->scrollY);
+    lastIdx  = ttl_tile_index(active->scrollY + gadH - 1);
 
     for (tileIdx = firstIdx; tileIdx <= lastIdx; tileIdx++) {
         LONG      tileBaseY = ttl_tile_base(tileIdx);

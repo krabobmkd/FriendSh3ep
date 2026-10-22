@@ -14,6 +14,55 @@
 #include "fs3etoottimeline_private.h"
 #include "../bdbprintf.h"
 #include "../clipboard.h"
+/* TTIMELINE_InvalidateImageKey: does this row draw the image cached under
+ * key? Mirrors every AvatarImages_Get/GetMedia/GetCard() lookup the item
+ * renderers do: avatars by acct/quoteAuthorAcct, media by mediaUrls[]
+ * (any slot, not only mediaCurrentIndex -- cheap and browsing-proof),
+ * link cards by cardImageUrl. */
+static BOOL ttl_post_uses_image_key(const TTLPost *post, const char *key)
+{
+    ULONG i;
+
+    if ((post->acct && strcmp(post->acct, key) == 0) ||
+        (post->quoteAuthorAcct && strcmp(post->quoteAuthorAcct, key) == 0) ||
+        (post->cardImageUrl && strcmp(post->cardImageUrl, key) == 0))
+        return TRUE;
+
+    for (i = 0; i < post->mediaCount && i < TTL_POST_MAX_MEDIA; i++)
+        if (post->mediaUrls[i] && strcmp(post->mediaUrls[i], key) == 0)
+            return TRUE;
+
+    return FALSE;
+}
+
+/* Invalidate the warm-window tiles of every active-channel row (profile
+ * header included) that uses key. Rows outside the warm window have no
+ * tile to invalidate -- they're rendered fresh whenever they get one. */
+static void ttl_invalidate_image_key(TTLData *inst, const char *key)
+{
+    TTLChannel *active = ttl_active(inst);
+    LONG        warmTop, warmBot;
+    TTLPost    *p;
+
+    if (!key || !key[0]) return;
+
+    warmTop = active->scrollY - (LONG)TTL_TILE_BUF * TTL_TILE_HEIGHT;
+    warmBot = active->scrollY + inst->gadHeight + (LONG)TTL_TILE_BUF * TTL_TILE_HEIGHT;
+
+    if (active->headerPost && ttl_post_uses_image_key(active->headerPost, key))
+        ttl_tiles_invalidate_range(inst, active->headerPost->timelineY,
+                                   active->headerPost->timelineY + active->headerPost->height);
+
+    for (p = (TTLPost *)active->posts.mlh_Head;
+         p->node.mln_Succ;
+         p = (TTLPost *)p->node.mln_Succ)
+    {
+        if (p->timelineY + p->height <= warmTop || p->timelineY >= warmBot) continue;
+        if (ttl_post_uses_image_key(p, key))
+            ttl_tiles_invalidate_range(inst, p->timelineY, p->timelineY + p->height);
+    }
+}
+
 /* ------------------------------------------------------------------ */
 /* Apply a tag list to the instance data                                */
 /* ------------------------------------------------------------------ */
@@ -1056,6 +1105,11 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
                 used = 1;
                 break;
 
+            case TTIMELINE_InvalidateImageKey:
+                ttl_invalidate_image_key(inst, (const char *)tag->ti_Data);
+                used = 1;
+                break;
+
             case ICA_TARGET:
                 inst->target = (Object *)tag->ti_Data;
                 used = 1;
@@ -1074,7 +1128,19 @@ ULONG ttl_apply_tags(Class *cl, Object *o, struct opSet *msg, int couldRefreshDr
 
     if(couldRefreshDraw && msg->ops_GInfo && redraw)
     {
-        struct RastPort *rp = ObtainGIRPort(msg->ops_GInfo);
+        struct RastPort *rp;
+
+        /* Heavy tile work first, before ObtainGIRPort() locks the layer
+         * -- see TTLM_Prepare. TTL_OnPrepare is itself a no-op off
+         * callerTask; GM_RENDER below then defers in that case anyway. */
+        if (msg->ops_GInfo->gi_Window) {
+            struct ttlpPrepare pm;
+            pm.MethodID    = TTLM_Prepare;
+            pm.ttlp_Window = msg->ops_GInfo->gi_Window;
+            TTL_OnPrepare(cl, o, &pm);
+        }
+
+        rp = ObtainGIRPort(msg->ops_GInfo);
         if (rp) {
             struct gpRender gpr;
             gpr.MethodID   = GM_RENDER;

@@ -1053,8 +1053,7 @@ void FS3EApp_ResetPerAccountState(void)
 {
     if (app->tootTimeline) {
         SetAttrs(app->tootTimeline, TTIMELINE_ClearAllChannels, TRUE, TAG_DONE);
-        if (CurrentMainWindow)
-            RefreshGList((struct Gadget *)app->tootTimeline, CurrentMainWindow, NULL, 1);
+        FS3EApp_RefreshTimeline();
     }
 
     /* Search-channel profile/discussion state belonged to the outgoing account too. */

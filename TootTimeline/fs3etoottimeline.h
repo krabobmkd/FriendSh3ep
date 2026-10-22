@@ -104,6 +104,37 @@
  * exactly once per "an image arrived" event (e.g. from the thumbnail
  * process reply handler), not poll the cache on a timer. */
 #define TTIMELINE_InvalidateImages (TTIMELINE_Base + 12)
+/* [S] STRPTR: targeted variant of TTIMELINE_InvalidateImages -- one image
+ * cache key (avatar acct, media URL or card image URL, i.e. whatever the
+ * thumbnail reply's fs3etmy_Key was) just became ready. Only tiles showing
+ * a post that references that key (acct, quoteAuthorAcct, any mediaUrls[],
+ * cardImageUrl) in the current warm window are invalidated, instead of all
+ * of them. No redraw of its own -- follow with TTLM_Prepare + RefreshGList
+ * (FS3EApp_RefreshTimeline()). */
+#define TTIMELINE_InvalidateImageKey (TTIMELINE_Base + 54)
+
+/* ------------------------------------------------------------------ */
+/* TTLM_Prepare -- custom method, main (callerTask) task only           */
+/*                                                                      */
+/* Does all the heavy per-frame work GM_RENDER used to do itself:       */
+/* relayout after a size change, pending scroll, and rendering every    */
+/* dirty tile of the warm (visible + TTL_TILE_BUF) window into its      */
+/* off-screen bitmap. Runs OUTSIDE GM_RENDER, so no layer lock is held  */
+/* by Intuition meanwhile, and listSem is released between tiles -- so  */
+/* input.device (pointer, GM_HANDLEINPUT drag) waits at most one tile,  */
+/* never the whole redraw. GM_RENDER then only blits ready tiles.       */
+/* Call it right before RefreshGList() on the timeline. Returns the     */
+/* number of tiles it (re)rendered that intersect the visible area      */
+/* (0 means a RefreshGList would show nothing new). No-op off           */
+/* callerTask.                                                          */
+/* ------------------------------------------------------------------ */
+#define TTLM_Prepare (TTIMELINE_Base + 0x400)
+
+struct Window;
+struct ttlpPrepare {
+    ULONG          MethodID;     /* TTLM_Prepare */
+    struct Window *ttlp_Window;  /* window the timeline lives in (friend bitmap/screen source) */
+};
 /* [G] STRPTR: hs->data from the most recently activated hot-spot, copied
  * into a persistent buffer the gadget owns (valid until the next
  * activation overwrites it) -- NULL for hot-spot types that carry no

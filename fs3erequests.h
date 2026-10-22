@@ -149,7 +149,19 @@ void FS3EApp_TriggerMediaThumbFetch(const char *url);
 /* Handle one reply message from the network process. */
 void FS3EApp_HandleNetReply(FS3ENetMessage *msg);
 
-/* Handle one reply message from the thumbnail process. */
-void FS3EApp_HandleThumbReply(FS3EThumbMessage *msg);
+/* Handle one reply message from the thumbnail process. Only invalidates
+ * the timeline tiles that use the arrived image; returns TRUE when the
+ * timeline needs a redraw, so the main loop's drain can do a single
+ * FS3EApp_RefreshTimeline() for a whole burst of replies instead of one
+ * full redraw per image. */
+BOOL FS3EApp_HandleThumbReply(FS3EThumbMessage *msg);
+
+/* Redraw the toot timeline: TTLM_Prepare (dirty tile rendering, outside
+ * any Intuition lock -- see fs3etoottimeline.h) then RefreshGList (which
+ * then only blits). Use this instead of a bare RefreshGList() on
+ * app->tootTimeline, or the tile work lands back inside GM_RENDER under
+ * the layer lock and freezes the pointer on slow CPUs. Safe to call with
+ * no window/timeline. */
+void FS3EApp_RefreshTimeline(void);
 
 #endif /* FS3EREQUESTS_H */

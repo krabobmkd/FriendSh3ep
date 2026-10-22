@@ -2297,10 +2297,13 @@ int main(int argc, char **argv)
                 (currentSignals & (1L << app->thumbReplyPort->mp_SigBit)))
             {
                 FS3EThumbMessage *thumbMsg;
+                BOOL timelineNeedsRefresh = FALSE;
                 while ((thumbMsg = (FS3EThumbMessage *)GetMsg(app->thumbReplyPort)) != NULL) {
-                    FS3EApp_HandleThumbReply(thumbMsg);
+                    if (FS3EApp_HandleThumbReply(thumbMsg)) timelineNeedsRefresh = TRUE;
                     FS3EThumb_FreeMessage(thumbMsg);
                 }
+                /* One redraw for however many images arrived together. */
+                if (timelineNeedsRefresh) FS3EApp_RefreshTimeline();
             }
 
             /* Drain audio-process replies/notifies -- acks for the PLAY/
@@ -3222,9 +3225,7 @@ int main(int argc, char **argv)
                                                 setup.translatedText = NULL;
                                                 SetAttrs(app->tootTimeline, TTIMELINE_ApplyTranslation,
                                                          (ULONG)&setup, TAG_DONE);
-                                                if (CurrentMainWindow)
-                                                    RefreshGList((struct Gadget *)app->tootTimeline,
-                                                                 CurrentMainWindow, NULL, 1);
+                                                FS3EApp_RefreshTimeline();
                                             } else {
                                                 FS3EApp_TranslateStatus(hotSpotId);
                                             }
@@ -3701,9 +3702,19 @@ int main(int argc, char **argv)
                 RefreshGList((struct Gadget *)app->tootView.bodyEditor,
                              app->tootView.window, NULL, 1);
 
-            if ((refreshFlags & reflags_tootTimeLine) && CurrentMainWindow && app->tootTimeline )
+            if (refreshFlags & reflags_tootTimeLine)
+                FS3EApp_RefreshTimeline();
+            else if (app->tootTimeline && CurrentMainWindow &&
+                     DoMethod(app->tootTimeline, TTLM_Prepare, (ULONG)CurrentMainWindow))
+            {
+                /* Catch-up pass, cheap when every tile is clean: refreshes
+                 * Intuition/layout.gadget drive themselves (resize,
+                 * RethinkLayout) skip FS3EApp_RefreshTimeline(), so this
+                 * re-fills the warm tile buffer GM_RENDER no longer
+                 * renders, and redraws if a visible tile was still dirty. */
                 RefreshGList((struct Gadget *)app->tootTimeline,
                              CurrentMainWindow, NULL, 1);
+            }
 
             /* One redraw for however many of the 8 nav_btns[] reported
              * UBGBM_RefreshNeeded in this drain pass -- see the
