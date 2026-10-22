@@ -7,7 +7,7 @@
 ; (titlebar.title.x, titlebar.title.y) offset from the title bar's top-left.
 titlebar.title = titlebig.iff
 ;titlebar.title = titlebigsheep.png
-titlebar.title.x = 70
+titlebar.title.x = 80
 titlebar.title.y = 6
 
 ; titlebar border images, color 0 transparent, drawn at native size with

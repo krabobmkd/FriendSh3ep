@@ -58,6 +58,17 @@
 /* Fallback padding around the icon (top, bottom, left) when no
  * TBLAYOUT_Style is set -- normally TBLAYOUT_Style's avatarGap is used. */
 #define TBLAYOUT_ICON_MARGIN     2
+/* Row 2 is tightened vertically: the user icon (and the 5-button right
+ * cluster with it) is drawn TBLAYOUT_ROW2_RAISE pixels higher than
+ * "row 1 bottom + avatarGap", and the margin below them is
+ * TBLAYOUT_ROW2_BOTTOM_TRIM pixels smaller than avatarGap -- so the whole
+ * bar declares RAISE + BOTTOM_TRIM fewer pixels of height (see
+ * tbl_total_height). X positions/widths are unaffected. */
+#define TBLAYOUT_ROW2_RAISE       10
+#define TBLAYOUT_ROW2_BOTTOM_TRIM  4
+/* The user icon itself is raised a bit less than the row (tuned by eye
+ * on real themes) -- only its drawing position, not the bar height. */
+#define TBLAYOUT_ICON_RAISE        6
 
 #include <proto/exec.h>
 #include <proto/intuition.h>
@@ -133,10 +144,12 @@ static WORD tbl_row2_height(UWORD dpiH, UWORD avatarSize, FS3EStyle *style)
     return (iconRow > (WORD)dpiH) ? iconRow : (WORD)dpiH;
 }
 
-/* Total fixed height of the title bar */
+/* Total fixed height of the title bar -- minus the row-2 tightening, see
+ * TBLAYOUT_ROW2_RAISE/BOTTOM_TRIM. */
 static WORD tbl_total_height(UWORD dpiH, FS3EStyle *style, UWORD avatarSize)
 {
-    return tbl_row1_height(dpiH, style) + tbl_row2_height(dpiH, avatarSize, style);
+    return tbl_row1_height(dpiH, style) + tbl_row2_height(dpiH, avatarSize, style)
+           - (TBLAYOUT_ROW2_RAISE + TBLAYOUT_ROW2_BOTTOM_TRIM);
 }
 
 typedef struct {
@@ -372,18 +385,20 @@ static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
         setBounds(inst->children[1], left + w - btnW*3 - gap*3,           y1, btnW, btnH);
 
     /* Row 2 -------------------------------------------------------- */
-    /* User icon: iconSz × iconSz, avatarGap padding on the left and top
-     * (see tbl_row2_height for the matching bottom margin). Not a child
+    /* User icon: iconSz × iconSz, avatarGap padding on the left, raised
+     * by TBLAYOUT_ICON_RAISE from row 1's bottom + avatarGap (see
+     * tbl_total_height for the matching height reduction). Not a child
      * gadget -- just remember where TitleBarLayout_OnRender should draw
      * it (see the file header comment). */
     inst->avatarX    = left + avGap*2;
-    inst->avatarY    = y2   + avGap;
+    inst->avatarY    = y2   + avGap - TBLAYOUT_ICON_RAISE;
     inst->avatarSize = iconSz;
 
     /* Row 2 right cluster: new-toot (rightmost), accounts, play-mode,
      * scroll-up, network-led -- packed right-to-left, avatarGap between
-     * each pair, all bottom-aligned with avatarGap padding from the
-     * bottom. accounts/new-toot are UniButtonP9 (auto-sized from their own
+     * each pair, all bottom-aligned with (avatarGap - TBLAYOUT_ROW2_
+     * BOTTOM_TRIM) padding from the bottom -- i.e. raised by
+     * TBLAYOUT_ROW2_RAISE together with the user icon. accounts/new-toot are UniButtonP9 (auto-sized from their own
      * GM_DOMAIN, same as before); the 3 deck buttons are plain
      * button.gadget sized directly from TBLAYOUT_Style's
      * tbDeckButtonWidth/Height (see tbl_deck_button_size), same "fixed
@@ -399,7 +414,8 @@ static ULONG TitleBarLayout_OnLayout(Class *cl, Object *o, struct gpLayout *msg)
         struct Gadget *gnewtbt   = (struct Gadget *) inst->children[8];
         struct gpDomain dmAccountBt, dmntbt;
         WORD deckBtnW, deckBtnH;
-        WORD bottomY = G(o)->TopEdge + G(o)->Height - inst->style->avatarGap;
+        WORD bottomY = G(o)->TopEdge + G(o)->Height
+                       - (inst->style->avatarGap - TBLAYOUT_ROW2_BOTTOM_TRIM);
         WORD rightEdge;
 
         tbl_deck_button_size(inst->dpiHeight, inst->style, &deckBtnW, &deckBtnH);
