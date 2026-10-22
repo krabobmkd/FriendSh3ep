@@ -6,7 +6,8 @@ set(CMAKE_C_STANDARD 11)
 # Assembler output for debug; picked up by the network subdirectory via scope.
 list(APPEND AMIGA_COMPILER_OPTIONS -save-temps -Wall)
 # -mhard-float -ffast-math -msoft-float
-list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020  -O2)
+list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O2)
+#  -O3 -fno-expensive-optimizations -freorder-blocks-algorithm=simple
 # -fno-expensive-optimizations -freorder-blocks-algorithm=simple
 # infer a few bugs:
 #list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O3 -fno-tree-loop-vectorize)

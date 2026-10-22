@@ -217,15 +217,27 @@ typedef struct {
      * only image button.gadget needs (assigned to GA_Image). */
     struct Image *tbImages[FS3ESTYLE_TBBUTTON_COUNT];
 
-    /* The 4 built-in penmap.image glyphs used for whichever tbImages[]
-     * slot(s) aren't loaded from a theme -- i.e. the "no theme" state, and
-     * any slot a theme's tbbuttons.png doesn't cover. Unlike tbImages[],
+    /* The 4 built-in glyphs used for whichever tbImages[] slot(s) aren't
+     * loaded from a theme -- i.e. the "no theme" state, and any slot a
+     * theme's tbbuttons.png doesn't cover. The OS's own window-border
+     * sysiclass images (close/iconify/zoom/depth) when available, else a
+     * penmap.image fallback glyph -- see fs3etbdefaultbtn.h. Unlike tbImages[],
      * these are created once (FS3EStyle_CreateDefaultButtonImages, called
      * from GenericOpenWindow) and persist for the whole app run, disposed
      * only by FS3EStyle_FreeThemeImages() at final teardown -- see
      * fs3etbdefaultbtn.h for why button.gadget needs a real image here
      * instead of a literal NULL GA_Image. */
     struct Image *tbDefaultImages[FS3ESTYLE_TBBUTTON_COUNT];
+    /* DrawInfo (and the screen it came from) the sysiclass glyphs above
+     * were built with -- kept for their whole lifetime, released together
+     * with them. */
+    struct DrawInfo *tbDefaultDri;
+    struct Screen   *tbDefaultScreen;
+    /* Largest Width/Height among tbDefaultImages[] -- TitleBarLayout's
+     * button cell size when no theme sets tbButtonWidth/Height (system
+     * images don't fit a dpiHeight square). 0 if none built. */
+    WORD tbDefaultButtonWidth;
+    WORD tbDefaultButtonHeight;
 
     /* Title bar button cell size, derived from tbbuttons.png as
      * (width / 2, height / FS3ESTYLE_TBBUTTON_COUNT) by
@@ -242,7 +254,7 @@ typedef struct {
     BmImage        btDeck;
     struct Image  *btDeckImages[FS3ESTYLE_BTDECK_COUNT];
 
-    /* The 3 built-in penmap.image glyphs used for whichever btDeckImages[]
+    /* The 3 built-in glyphs used for whichever btDeckImages[]
      * slot(s) aren't loaded from a theme -- same "no theme" / "button.gadget
      * can't go back to a NULL GA_Image once a real one was attached"
      * reasoning as tbDefaultImages above, just for the second (btdeck.iff)
@@ -250,6 +262,14 @@ typedef struct {
      * FS3EStyle_CreateDefaultButtonImages) and persist for the whole app
      * run, disposed only by FS3EStyle_FreeThemeImages() at final teardown. */
     struct Image  *btDeckDefaultImages[FS3ESTYLE_BTDECK_COUNT];
+    /* Their backing store: bitmap.image objects over a small sheet
+     * rendered from fs3etbdefaultbtn.c's pixel tables (same 2-column
+     * sheet layout as btdeck.iff), its mask plane and the screen pens
+     * obtained for its palette -- see FS3ETBDefaultBtn_CreateDeck. */
+    struct BitMap   *btDeckDefaultBitMap;
+    PLANEPTR         btDeckDefaultMask;
+    struct ColorMap *btDeckDefaultCM;
+    LONG             btDeckDefaultPens[5];   /* [1..4] = deck palette pens, -1 if none */
 
     /* Cell size derived from btDeck as (width / 2, height / 3) by
      * FS3EStyle_LoadThemeImages. 0 when no theme image is loaded --

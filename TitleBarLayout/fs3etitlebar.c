@@ -104,12 +104,21 @@ extern WORD windowDragLastScreenY;
 #include "../friendsh3ep.h"
 
 /* Title bar button cell size: from the theme image when loaded
- * (FS3EStyle_LoadThemeImages sets tbButtonWidth/Height > 0), else a
- * dpiH x dpiH square. */
+ * (FS3EStyle_LoadThemeImages sets tbButtonWidth/Height > 0), else from
+ * the built-in default images (OS sysiclass glyphs, see
+ * fs3etbdefaultbtn.h), else a dpiH x dpiH square. */
 static void tbl_button_size(UWORD dpiH, FS3EStyle *style, WORD *btnW, WORD *btnH)
 {
-    *btnW = (style && style->tbButtonWidth  > 0) ? style->tbButtonWidth  : (WORD)dpiH;
-    *btnH = (style && style->tbButtonHeight > 0) ? style->tbButtonHeight : (WORD)dpiH;
+    *btnW = (WORD)dpiH;
+    *btnH = (WORD)dpiH;
+    if (!style) return;
+    if (style->tbButtonWidth > 0 && style->tbButtonHeight > 0) {
+        *btnW = style->tbButtonWidth;
+        *btnH = style->tbButtonHeight;
+    } else if (style->tbDefaultButtonWidth > 0 && style->tbDefaultButtonHeight > 0) {
+        *btnW = style->tbDefaultButtonWidth;
+        *btnH = style->tbDefaultButtonHeight;
+    }
 }
 
 /* Same fallback rule as tbl_button_size() above, for the row-2 deck

@@ -434,6 +434,14 @@ void FS3EStyle_InitDefaults(FS3EStyle *st)
     memset(&st->tbButtons, 0, sizeof(st->tbButtons));
     memset(st->tbImages, 0, sizeof(st->tbImages));
     memset(st->tbDefaultImages, 0, sizeof(st->tbDefaultImages));
+    st->tbDefaultDri          = NULL;
+    st->tbDefaultScreen       = NULL;
+    st->tbDefaultButtonWidth  = 0;
+    st->tbDefaultButtonHeight = 0;
+    memset(st->btDeckDefaultImages, 0, sizeof(st->btDeckDefaultImages));
+    st->btDeckDefaultBitMap = NULL;
+    st->btDeckDefaultMask   = NULL;
+    st->btDeckDefaultCM     = NULL;
     st->tbButtonWidth  = 0;
     st->tbButtonHeight = 0;
     memset(&st->btDeck, 0, sizeof(st->btDeck));
@@ -1088,8 +1096,8 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
 void FS3EStyle_CreateDefaultButtonImages(FS3EStyle *st, struct Screen *scr)
 {
     if (!st) return;
-    FS3ETBDefaultBtn_Create(st->tbDefaultImages, scr);
-    FS3ETBDefaultBtn_CreateDeck(st->btDeckDefaultImages, scr);
+    FS3ETBDefaultBtn_Create(st, scr);
+    FS3ETBDefaultBtn_CreateDeck(st, scr);
 }
 
 /* Always acts, whether or not st->tbImages[N] is currently loaded --
@@ -1293,8 +1301,8 @@ void FS3EStyle_FreeThemeImages(FS3EStyle *st)
      * glyphs from FS3EStyle_CreateDefaultButtonImages) are NOT touched by
      * FS3EStyle_UnloadThemeImages() above -- they must survive every theme
      * switch and only go away here, at final app exit. */
-    FS3ETBDefaultBtn_Dispose(st->tbDefaultImages);
-    FS3ETBDefaultBtn_DisposeDeck(st->btDeckDefaultImages);
+    FS3ETBDefaultBtn_Dispose(st);
+    FS3ETBDefaultBtn_DisposeDeck(st);
     BmImage_Free(&st->tbButtons);
     BmImage_Free(&st->btDeck);
     BmImage_Free(&st->tbBg);
