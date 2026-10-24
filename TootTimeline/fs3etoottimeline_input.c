@@ -187,7 +187,7 @@ BOOL ttl_hit_hotspot(TTLData *inst, WORD gadX, WORD gadY,
  * its behavior when hovered: POINTERTYPE_LINK for anything that navigates
  * to different content elsewhere in the app (a mention/hashtag/URL token,
  * an avatar, a link-preview or quote card, the followers/following counts,
- * a notification's actor line, a blocked-server row), POINTERTYPE_HAND for
+ * a notification's actor line, a blocked-server row), POINTERTYPE_LINK for
  * everything else that's still a plain "click me" action (action-bar
  * buttons, media browse arrows, poll votes, load more/newer, the
  * sensitive-content toggle, ...). */
@@ -206,7 +206,7 @@ static ULONG ttl_hotspot_pointer_type(UBYTE hotType)
         case TTL_HOT_DOMAIN:
             return POINTERTYPE_LINK;
         default:
-            return POINTERTYPE_HAND;
+            return POINTERTYPE_LINK;
     }
 }
 

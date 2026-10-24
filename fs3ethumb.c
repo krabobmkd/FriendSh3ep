@@ -507,6 +507,13 @@ static void FS3EThumb_ProcEntry(void)
     if (g_FS3EThumbStopSigBit >= 0) { FreeSignal(g_FS3EThumbStopSigBit); g_FS3EThumbStopSigBit = -1; }
     g_FS3EThumbTask = NULL;
 
+    /* Forbid() first: ReplyMsg() wakes the main process, which can then
+     * finish quitting and UnLoadSeg() the executable while this task still
+     * has its epilogue/exit glue to run IN that executable -- instantly so
+     * for a lower-priority child, which the reply preempts. Forbid()den,
+     * this task can't lose the CPU until it has exited (RemTask() ends the
+     * Forbid), the same idiom as the Workbench startup message reply. */
+    Forbid();
     if (shutdownMsg)
         ReplyMsg((struct Message *)shutdownMsg);
 }

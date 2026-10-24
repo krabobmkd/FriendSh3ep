@@ -24,7 +24,6 @@ typedef struct FS3EMainWindow {
     LONG top, left, width, height;
 
     struct Screen   *lockedScreen; /* locked while the window is open */
-    struct DrawInfo *drawInfo;
 
     char title[80];
 } FS3EMainWindow;

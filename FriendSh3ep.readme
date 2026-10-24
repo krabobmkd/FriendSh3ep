@@ -2,19 +2,46 @@ Short:        Mastodon client for AmigaOS
 Author:       krabobmkd
 Uploader:     victorien.ferry@free.fr
 Type:         comm/net
-Version:      1.1.337
-Architecture: m68k-amigaos >= 3.9
+Version:      1.1.338
+Architecture: m68k-amigaos >= 3.2
 Replaces:     comm/net/FriendSh3ep*
-Requires:     68030, AmigaOS 3.9 or 3.2, Internet stack, AmiSSL v5, EmojiGear v6
+Requires:     68060, OS3.2, Internet, AmiSSL5, EmojiGear6
 
 
+------------------------ Version 1.1.338 24/10/2026
+
+ - In previous versions you had to recreate a "connection token" each months,
+  for each account. From now on it should length way longer (years?), 
+  but you have to recreate a token once with this new version. 
+  "Automatic token refresh" protocol is implemented, yet not fully tested.
+
+ - Reasons for constant mouse freeze under 68060 50Mhz is resolved,
+ now FriendSh3ep is way more reactive on that configuration.
+ 
+ - Mastodon servers sends gif/png/jpeg images for which you have datatypes,
+  but it also sends webp images and you may not have DT for this one.
+  Now the installer will propose to install such webp datatype if it is 
+  missing in your OS, with a brand new free version, from this package. 
+ 
+ - Again a few layout optimisations, and the header part of the window is now
+  14 pixels shorter. Also "no theme" option is a bit less ugly.
+ 
+ - We don't support OS3.9 anymore because of BOOPSI bugs in its intuition,
+   and version 1.1.337 was already not compatible: Upgrade.
+   Also: remember this is a LGPL project you can fork and participate in.
+
+ Note: on pistorm/emu68 It was confirmed that new video player "MintVID" could play
+ both the .mp4 files posted on Mastodon and Youtube video links. You can just
+ download the .mp4 files with the "FriendSh3ep Media" menu to play them,
+ and you can copy paste the youtube URL to copy them in MintVID youtube mode.
+    
 ------------------------ Version 1.1.337 29/09/2026
 
  New features:
  
   - The reason for this app to be slow on lower config is it decodes (and may remap)
     images all the times. An option was added to only decode thumbnails when they
-    are clicked.
+    are clicked, unclick it in settings to have all images loaded at once.
   - That "BlurHash" mastodon thing to be displayed while waiting image is supported.
      This is about displaying 4x4 color rectangles of the average colors of the image
     that will be displayed when available. Make the app even more super classy.
@@ -77,11 +104,9 @@ Sorry !
 ------------------------- Version 1.0  22/08/2026
 
  FriendSh3ep, a Mastodon / Fediverse client for Amiga OS 3.2
- Finally also for OS3.9.
 
- Mastodon is a free, open, decentralised alternative to the 
- usual walled-garden social networks: 
- no ads, no biased algorithm, no single company owning your
+ Mastodon is a free, open, decentralised alternative to the usual walled-garden
+ social networks: no ads, no biased algorithm, no single company owning your
  data, moderation decided per server. 
  
  FriendSh3ep is a native Amiga client for it, 
@@ -89,13 +114,11 @@ Sorry !
 
  Needed to work:
 
-  - AmigaOS 3.9 or 3.2, a 68030 50Mhz should be OK, 
-    a 68060 or better is, well, better.
+  - AmigaOS 3.2, 68060 or better.
     Relies on picture.datatype a lot. 
   - A fast Internet stack (Miami, AmiTCP, RoadShow...).
   - AmiSSL v5 (the more recent, the better) it's on Aminet.
-  - EmojiGear v5.3, for modern fonts, emoji rendering
-    and text editor.
+  - EmojiGear v6.1, for modern fonts, emoji rendering and text editor gadget.
 
  Optional but used if present:
 

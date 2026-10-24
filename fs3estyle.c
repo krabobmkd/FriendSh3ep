@@ -963,7 +963,7 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
         }
     } else
     {
-     printf("btdeck img not loaded\n");
+    // printf("btdeck img not loaded\n");
     }
 
     /* Title bar background: tbbg.png, tiled by FS3EStyle_TitleBarBackFillFunc
@@ -1085,8 +1085,6 @@ BOOL FS3EStyle_LoadThemeImages(FS3EStyle *st, struct Screen *scr)
     snprintf(path, sizeof(path), "%s/%s", st->themePath,
              StyleFile_GetString(&sf, "media.soundplay", "soundplay.png"));
     RgbImage_LoadViaDatatype(&st->soundPlayImage, path);
-
-
 
 
 
@@ -1249,6 +1247,7 @@ void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
 {
     int i;
     if (!st) return;
+
     free_tb_images(st);
     BmImage_Unload(&st->tbButtons);
     free_btdeck_images(st);
@@ -1290,12 +1289,14 @@ void FS3EStyle_UnloadThemeImages(FS3EStyle *st)
     st->tbButtonHeight = 0;
     st->tbDeckButtonWidth  = 0;
     st->tbDeckButtonHeight = 0;
+
 }
 
 void FS3EStyle_FreeThemeImages(FS3EStyle *st)
 {
     int i;
     if (!st) return;
+
     FS3EStyle_UnloadThemeImages(st);
     /* tbDefaultImages[]/btDeckDefaultImages[] (the built-in title bar
      * glyphs from FS3EStyle_CreateDefaultButtonImages) are NOT touched by
@@ -1315,4 +1316,5 @@ void FS3EStyle_FreeThemeImages(FS3EStyle *st)
         BmImage_Free(&st->btbgbmBitmap[i]);
     BmImage_Free(&st->waitImage);
     if (st->themePath) { FreeVec(st->themePath); st->themePath = NULL; }
+
 }

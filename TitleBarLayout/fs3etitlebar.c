@@ -543,9 +543,11 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
     struct gpRender childMsg;
     UWORD i;
 
+    if(!rp) return FALSE;
+
     SetDrMd(rp, JAM1);
 
-    if (rp && rp->Layer && rp->Layer->BackFill == NULL &&
+    if ( rp->Layer /*&& rp->Layer->BackFill == NULL*/ &&
         (inst->style->tbBg.bitmap || inst->style->titlebarLeft.bitmap ||
          inst->style->titlebarRight.bitmap)) {
         /* Also installed for a theme that has titlebar.left/right but no
@@ -561,13 +563,10 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
             InstallLayerHook(rp->Layer, backFill);
     }
 
-    if (rp && w > 0 && h > 0)
+    if ( w > 0 && h > 0)
     {
         EraseRect(rp, left, top, left + w - 1, top + h - 1);
     }
-
-
-
 
     /* Title bar border images (titlebar.left/titlebar.right in style.txt)
      * are drawn from FS3EStyle_TitleBarBackFillFunc (fs3estyle.c) instead
@@ -593,11 +592,12 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
     }
 
 
+
     /* Row-2 user icon: drawn directly, not a child gadget (see the file
      * header comment) -- same cache, same box-fit-and-centre rule, same
      * RgbImage_DrawScaled() call TootTimeline uses for toot avatars, read
      * fresh every render so there's no stale-image lifecycle to manage. */
-    if (rp && inst->accountAcct && inst->avatarSize > 0) {
+    if (inst->accountAcct && inst->avatarSize > 0) {
 
         RgbImage *avImg = inst->avatarImages
                          ? AvatarImages_Get(inst->avatarImages, inst->accountAcct)
@@ -633,6 +633,8 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
         }
     }
 
+
+
     /* Title bar title/logo image (titlebar.title in style.txt), masked on
      * color 0 -- NOT drawn here anymore. It's conceptually part of the
      * title bar's own background (like tbBg/titlebarLeft/titlebarRight),
@@ -642,7 +644,7 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
      * tbTitleBitmap/tbTitleMask/tbTitleWidth/tbTitleHeight/tbTitleOffX/
      * tbTitleOffY mirrors it reads. This condition still decides whether
      * the plain-text fallback below is needed (no title image loaded). */
-    if (rp && inst->style && BmImage_IsLoaded(&inst->style->titlebarTitle)) {
+    if ( inst->style && BmImage_IsLoaded(&inst->style->titlebarTitle)) {
         /* Image already painted by the backfill hook -- nothing to do. */
     } else
     {
@@ -682,11 +684,18 @@ static ULONG TitleBarLayout_OnRender(Class *cl, Object *o, struct gpRender *msg)
     childMsg.gpr_RPort  = rp;
     childMsg.gpr_Redraw = msg->gpr_Redraw;
     for (i = 0; i < inst->childCount; i++)   {
-        struct Gadget *cg = G(inst->children[i]);
+       // struct Gadget *cg = G(inst->children[i]);
+       if(inst->children[i])
+       {
         DoMethodA(inst->children[i], (Msg)&childMsg);
+       }
     }
+
     /* uninstall, or it will propagate  */
-    InstallLayerHook(rp->Layer, NULL);
+    if(rp->Layer)
+    {
+        InstallLayerHook(rp->Layer, NULL);
+    }
     return 0;
 }
 

@@ -9,7 +9,8 @@
  * CreateDeck/DisposeDeck, st->btDeckDefaultImages[]) -- two independent
  * sheets, same as st->tbImages[]/st->btDeckImages[] they fall back for.
  *
- * The close/iconify/altpos/depth row uses the OS's own window-border
+ * With the FS3E_TB_SYSIMAGES CMake option (OFF by default) the
+ * close/iconify/altpos/depth row uses the OS's own window-border
  * images: Intuition's sysiclass with SYSIA_Which = CLOSEIMAGE /
  * ICONIFYIMAGE / ZOOMIMAGE / DEPTHIMAGE, so "no theme" looks exactly like
  * the user's other windows (and follows their sysihack/theme patches).
@@ -18,7 +19,8 @@
  * on older Intuition -- or if any sysiclass NewObject() fails -- that
  * slot falls back to a penmap.image built from a fixed 6x6 2-color pixel
  * table baked into fs3etbdefaultbtn.c (same construction pattern as
- * EmojiGear/closebutton.c). The deck row always uses those penmap glyphs.
+ * EmojiGear/closebutton.c). Without the option, that row always uses the
+ * penmap glyphs.
  *
  * Why these exist: button.gadget does not tolerate a live gadget going
  * from a real GA_Image back to GA_Image=NULL once one has been attached --

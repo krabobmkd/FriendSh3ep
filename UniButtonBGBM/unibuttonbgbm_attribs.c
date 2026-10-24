@@ -627,7 +627,7 @@ ULONG UniButtonBGBM_OnSet(Class *cl, Object *o, struct opSet *msg)
          * size -- gadW/gadH are only used here as an "is this gadget laid
          * out yet" readiness check, same as GM_RENDER's. */
         if (gadW > 0 && gadH > 0 && inst->screen)
-            ubgbm_rebuild_cache(cl, o, gadW, gadH, inst->drawInfo, inst->screen);
+            ubgbm_rebuild_cache(cl, o, gadW, gadH, inst->screen);
         else
             ubgbm_update_font_metrics(inst);
     }

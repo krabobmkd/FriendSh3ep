@@ -173,14 +173,17 @@ void FS3ETBDefaultBtn_Create(FS3EStyle *st, struct Screen *scr)
     if (!st || !scr) return;
     out = st->tbDefaultImages;
 
+#ifdef FS3E_TB_SYSIMAGES
     if (!st->tbDefaultDri) {
         st->tbDefaultDri    = GetScreenDrawInfo(scr);
         st->tbDefaultScreen = scr;
     }
+#endif
 
     for (i = 0; i < FS3ESTYLE_TBBUTTON_COUNT; i++) {
         if (out[i]) continue; /* already built -- persistent, keep it */
 
+#ifdef FS3E_TB_SYSIMAGES
         /* OS window-border image. Same size class Intuition picks for
          * window borders on this screen; height follows the screen font. */
         if (st->tbDefaultDri &&
@@ -194,6 +197,7 @@ void FS3ETBDefaultBtn_Create(FS3EStyle *st, struct Screen *scr)
                                         ? SYSISIZE_MEDRES : SYSISIZE_LOWRES),
                 TAG_END);
         }
+#endif
 
         if (!out[i] && PenMapBase) {
             out[i] = (struct Image *)NewObject(PENMAP_GetClass(), NULL,
@@ -208,13 +212,17 @@ void FS3ETBDefaultBtn_Create(FS3EStyle *st, struct Screen *scr)
         }
     }
 
+    /* Left at 0 without FS3E_TB_SYSIMAGES: the 6x6 penmap glyphs then sit
+     * in TitleBarLayout's dpiHeight square cell, as before. */
     st->tbDefaultButtonWidth  = 0;
     st->tbDefaultButtonHeight = 0;
+#ifdef FS3E_TB_SYSIMAGES
     for (i = 0; i < FS3ESTYLE_TBBUTTON_COUNT; i++) {
         if (!out[i]) continue;
         if (out[i]->Width  > st->tbDefaultButtonWidth)  st->tbDefaultButtonWidth  = out[i]->Width;
         if (out[i]->Height > st->tbDefaultButtonHeight) st->tbDefaultButtonHeight = out[i]->Height;
     }
+#endif
 }
 
 void FS3ETBDefaultBtn_Dispose(FS3EStyle *st)

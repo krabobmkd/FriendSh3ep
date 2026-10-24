@@ -86,7 +86,6 @@ typedef struct UniButtonBGBMData {
     WORD    textHeight;
 
     struct Screen   *screen;
-    struct DrawInfo *drawInfo;
 
     BOOL    pushButton;
     BOOL    prevSelected;
@@ -107,8 +106,7 @@ typedef struct UniButtonBGBMData {
 void ubgbm_update_font_metrics(UniButtonBGBMData *inst);
 void ubgbm_free_cache(UniButtonBGBMData *inst);
 void ubgbm_rebuild_cache(Class *cl, Object *o,
-                         WORD gadW, WORD gadH,
-                         struct DrawInfo *dri,
+                         WORD gadW, WORD gadH,                         
                          struct Screen   *scr);
 void ubgbm_blit_state(UniButtonBGBMData *inst, struct Gadget *g,
                       struct RastPort *rp, int state);

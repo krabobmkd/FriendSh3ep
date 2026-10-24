@@ -770,6 +770,7 @@ static struct Hook idcmpHook ={
 // }
 /* avoid flooding reloading font and remaking all layout when changing font fast */
 static int delayApplyFontSettings = FALSE;
+
 /* Re-apply font settings from app->settings to all draw contexts.
  * Called by fs3ethemeview.c / fs3eaction.c after font or rendering options change.
   THIS is ithe public one
@@ -1261,55 +1262,26 @@ static ULONG FS3EApp_HoverPointerType(struct App *app, WORD mx, WORD my)
         FS3E_PointInGadget(app->titlebar_playModeBtn,   mx, my) ||
         FS3E_PointInGadget(app->titlebar_accountBtn,    mx, my) ||
         FS3E_PointInGadget(app->titlebar_newtootBtn,    mx, my))
-        return POINTERTYPE_HAND;
+        return POINTERTYPE_LINK;
 
     if (FS3E_PointInGadget(app->navBarLayout, mx, my))
-        return POINTERTYPE_HAND;
+        return POINTERTYPE_LINK;
 
     return POINTERTYPE_NORMAL;
 }
 
 /* - - - - - - - - - - - - - - - - - - - MAIN - - - - - - - - - - - - - - - */
 
-/* Ported from EmojiGear/emojigear.c's own copy of this mechanism -- see its
- * doc comment there for the general idea (checked here too, comments not
- * repeated verbatim):
- *   - Always: reject a too-small stack outright before doing anything else,
- *     rather than risking a silent stack-smash crash deep in TootTimeline/
- *     network reply handling later.
- *   - STACK_WATCH (off by default): sentinel-fills the unused stack at
- *     startup, then at normal exit scans for the sentinel's high-water
- *     mark to report how much was actually used, so FS3E_MIN_STACK can be
- *     tightened from a real measurement instead of a guess.
- * Not yet measured on real hardware for FriendSh3ep specifically -- build
- * once with STACK_WATCH defined, note the printed "real use" figure, and
- * tighten FS3E_MIN_STACK to a safe margin above it. Starting conservative
- * (higher than EmojiGear's 28k) given FriendSh3ep's considerably deeper
- * call chains (TootTimeline rendering, network reply dispatch, BOOPSI
- * layout recursion) -- this only covers the main GUI task's own stack;
- * the network/thumb/audio processes each set their own via
- * NP_StackSize (see FS3ENET_STACK_SIZE and friends). */
-/*#define STACK_WATCH 1 ->does 19xxx b */
+
 #define FS3E_MIN_STACK (31 * 1024)
 
 int main(int argc, char **argv)
 {
     UWORD dpiH = DEFAULT_DPI_HEIGHT;
-    /* Startup progress bar -- a plain, non-BOOPSI window (see
-     * fs3eprogressview.h and the file-scope progressView/
-     * fs3eInitProgressSteps[] declarations above), open for the whole of
-     * this function's init work. NOT closed here anymore -- GenericOpenWindow
-     * (fs3eboopsimainwindow.c) closes it right before its own WM_OPEN,
-     * after driving the last two FS3EInitStage entries itself (theme image
-     * loading and color/style setup are real startup time spent between
-     * the window object below existing and the window actually opening --
-     * see FS3EApp_InitProgress's doc comment in friendsh3ep.h). Only
-     * exitclose() closes it directly from here now, if some early-init
-     * cleanexit() cuts init short before a window object even exists to
-     * open. */
 
-    if (SysBase->LibNode.lib_Version < 40) {
-        printf("FriendSh3ep needs OS3.9 (v40) or OS3.2, you may upgrade.\n");
+    if (SysBase->LibNode.lib_Version < 47) {
+        //printf("FriendSh3ep needs OS3.9 (v40) or OS3.2, you may upgrade.\n");
+        printf("FriendSh3ep needs Amiga OS >= OS3.2 (v47) , you may upgrade.\n");
         return 1;
     }
     myTask = FindTask(NULL);
@@ -1957,24 +1929,15 @@ int main(int argc, char **argv)
      * way. */
     fs3e_setViewMode(app->accountAccessToken ? VIEWMODE_Home : VIEWMODE_Local);
 
+    /* debug mode, sync messages to outputs */
     flushbdbprint();
-  //URPDC_FlushGlyphCache(NULL);
+    //URPDC_FlushGlyphCache(NULL);
+
     FS3EMain_Show(&app->mainwindow, app->window_obj,TRUE);
     if (!CurrentMainWindow) cleanexit("Can't open window");
 
-    /* Restore the last activated theme (app->settings.themeName, NULL/""
-     * = no theme) now that a real screen is bound -- GenericOpenWindow
-     * already loaded the startup-default theme path moments earlier
-     * inside FS3EMain_Show(), this overrides it with the user's actual
-     * persisted choice. See FS3EApp_LoadTheme's doc comment. Calls the
-     * _Delayed worker directly (like FS3EApp_ApplyFontSettings_Delayed()
-     * above) rather than through the debounced public trigger, since
-     * there's no event loop running yet to deliver the deferred signal. */
-    //moved FS3EApp_LoadTheme_Delayed();
-
     app->delayColorUpdate = 1;
 
-    FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
 // printf("loop\n");
     /* - - - Input Event Loop - - - */
     {
@@ -2036,14 +1999,13 @@ int main(int argc, char **argv)
                     if (!CurrentMainWindow)
                     {   // uniconify
                         FS3EMain_Show(&app->mainwindow, app->window_obj,TRUE);
+
                         if (CurrentMainWindow)
                         {
-                            FS3EMenu_Create(&app->menu, CurrentMainScreen, CurrentMainWindow);
                             if (app->avatarImages)
                                 FS3EApp_UpdateUserIcon();
                         }
-                    }
-                    if (CurrentMainWindow)
+                    } else
                     {
                         WindowToFront(CurrentMainWindow);
                         ActivateWindow(CurrentMainWindow);
@@ -3742,8 +3704,7 @@ int main(int argc, char **argv)
             }
 
             // - - - - gather style change and window rethink
-            {
-
+            {               
                 if(delayApplyFontSettings)
                 {
                     FS3EApp_ApplyFontSettings_Delayed();
@@ -3791,6 +3752,8 @@ int main(int argc, char **argv)
 
 void exitclose(void)
 {
+
+// printf("exitclose\n");
     /* Belt-and-braces against every early cleanexit()/exit() call in main()
      * that fires before GenericOpenWindow (fs3eboopsimainwindow.c) reaches
      * its own FS3EApp_InitProgressDone() call, right before WM_OPEN --
@@ -3809,7 +3772,6 @@ void exitclose(void)
     }
     if (app)
     {
-
         FS3ELoginView_Dispose(&app->loginView);
         FS3ETootView_Dispose(&app->tootView);
         FS3EThemeView_Dispose(&app->themeView);
@@ -3817,6 +3779,7 @@ void exitclose(void)
         FS3ENetworkView_Dispose(&app->networkView);
         FS3EEmojiBoxWindow_Dispose(&app->emojiBoxWindow);
         FS3EMediaView_Dispose(&app->mediaView);
+
         if (app->window_obj)
         {
             FS3ESettings_Save(&app->settings);
@@ -3826,6 +3789,7 @@ void exitclose(void)
              * → all UniButtonP9 children. */
             DisposeObject(app->window_obj);
         }
+
         FS3ETimer_Exit();
         /* Free private classes AFTER all objects using them are disposed. */
         TootTimeline_Exit();
@@ -3845,8 +3809,10 @@ void exitclose(void)
         FS3EStyle_ReleaseDrawContexts(&app->style);
         FS3EStyle_FreeThemeImages(&app->style);
 
+
         if (app->netRequestPort)
         {
+
             /* Always a fresh, dedicated port for the shutdown handshake --
              * never app->netReplyPort. That port can still have ordinary
              * async replies (e.g. FETCH_IMAGE) queued ahead of the
@@ -3867,6 +3833,7 @@ void exitclose(void)
 
                 DeleteMsgPort(stopReplyPort);
             }
+
         }
 
         /* Drain and free any remaining async replies -- safe now: the
@@ -3963,6 +3930,7 @@ void exitclose(void)
     }
     //URPDC_FlushGlyphCache(NULL);
 
+
     if (BevelBase)  { CloseLibrary(BevelBase);  BevelBase  = NULL; }
     if (BitMapBase) { CloseLibrary(BitMapBase); BitMapBase = NULL; }
 
@@ -3979,6 +3947,8 @@ void exitclose(void)
             }
         }
     }
+
+
 }
 
 /* Drains and DISCARDS every pending WM_HANDLEINPUT message on every BOOPSI

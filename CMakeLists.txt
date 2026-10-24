@@ -6,7 +6,7 @@ set(CMAKE_C_STANDARD 11)
 # Assembler output for debug; picked up by the network subdirectory via scope.
 list(APPEND AMIGA_COMPILER_OPTIONS -save-temps -Wall)
 # -mhard-float -ffast-math -msoft-float
-list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O2)
+list(APPEND AMIGA_COMPILER_OPTIONS -mcpu=68020 -O0)
 #  -O3 -fno-expensive-optimizations -freorder-blocks-algorithm=simple
 # -fno-expensive-optimizations -freorder-blocks-algorithm=simple
 # infer a few bugs:
@@ -25,6 +25,12 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/../amigacommonlibs/extrasdk/ Ope
 # go out through the main process's console (pr_COS), so launch from a Shell
 # to see them. Configure with -DFS3E_DEBUG_LOG=ON.
 option(FS3E_DEBUG_LOG "Enable bdbprintf debug output (GUI + network)" OFF)
+
+# "No theme" title bar close/iconify/altpos/depth buttons: ON = the OS's own
+# window-border images (sysiclass, see fs3etbdefaultbtn.c), OFF = the small
+# built-in penmap glyphs in a dpiHeight square cell. Configure with
+# -DFS3E_TB_SYSIMAGES=ON to re-enable.
+option(FS3E_TB_SYSIMAGES "Use OS sysiclass images for no-theme title bar buttons" ON)
 
 # ---- Network process static library --------------------------------------
 # Standalone, no GUI includes; runs in its own CreateNewProc() task.
@@ -154,10 +160,20 @@ if(FS3E_DEBUG_LOG)
     target_compile_definitions(FriendSh3ep PRIVATE USE_DEBUG_BDBPRINT=1)
 endif()
 
+if(FS3E_TB_SYSIMAGES)
+    target_compile_definitions(FriendSh3ep PRIVATE FS3E_TB_SYSIMAGES=1)
+endif()
+
 target_link_libraries(FriendSh3ep PRIVATE fs3enet)
 
 target_compile_options(FriendSh3ep PRIVATE
     ${AMIGA_COMPILER_OPTIONS}
+)
+
+add_custom_command(TARGET FriendSh3ep POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_SOURCE_DIR}/test
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:FriendSh3ep> ${CMAKE_SOURCE_DIR}/test/
+    COMMENT "Copying FriendSh3ep to test/"
 )
 
 install(TARGETS FriendSh3ep ARCHIVE DESTINATION bin)

@@ -57,7 +57,7 @@ void ubgbm_update_font_metrics(UniButtonBGBMData *inst)
  * =========================================================================
  */
 static void ubgbm_build_one_state(UniButtonBGBMData *inst, WORD gadW, WORD gadH,
-                                  int state, struct DrawInfo *dri,
+                                  int state,
                                   struct Screen *scr)
 {
     OffscreenBitMap *obm = &inst->cacheBm[state];
@@ -196,7 +196,6 @@ static void ubgbm_build_one_state(UniButtonBGBMData *inst, WORD gadW, WORD gadH,
  */
 void ubgbm_rebuild_cache(Class *cl, Object *o,
                          WORD gadW, WORD gadH,
-                         struct DrawInfo *dri,
                          struct Screen   *scr)
 {
     UniButtonBGBMData *inst = UBGBM_DATA(cl, o);
@@ -205,7 +204,7 @@ void ubgbm_rebuild_cache(Class *cl, Object *o,
     ubgbm_update_font_metrics(inst);
 
     for (i = 0; i < UBGBM_NUM_STATES; i++)
-        ubgbm_build_one_state(inst, gadW, gadH, i, dri, scr);
+        ubgbm_build_one_state(inst, gadW, gadH, i, scr);
 
     inst->cacheValid = TRUE;
 }
@@ -255,7 +254,6 @@ ULONG UniButtonBGBM_OnRender(Class *cl, Object *o, struct gpRender *msg)
     }
 
     if (scr) inst->screen   = scr;
-    if (dri) inst->drawInfo = dri;
 
     if (scr && inst->dc)
         URPDC_SetDrawScreen(inst->dc, scr);
@@ -277,7 +275,7 @@ ULONG UniButtonBGBM_OnRender(Class *cl, Object *o, struct gpRender *msg)
     needRebuild = (!inst->cacheValid );
 
     if (needRebuild && scr) {
-        ubgbm_rebuild_cache(cl, o, gadW, gadH, dri, scr);
+        ubgbm_rebuild_cache(cl, o, gadW, gadH, scr);
     }
 
     /* GFLG_DISABLED no longer changes the rendered state -- see

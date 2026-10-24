@@ -7,6 +7,8 @@
 ;   - FriendSh3ep.guide          -> <dest>/
 ;   - FriendSh3ep.readme         -> <dest>/
 ;   - LICENSE                    -> <dest>/
+;   - optionally webp.datatype   -> SYS:Classes/DataTypes/ + SYS:Devs/DataTypes/
+;     (only offered when no WebP datatype is installed yet)
 ;
 ; FriendSh3ep itself needs EmojiGear v6.1 (utf8rastport.library,
 ; unitexteditor.gadget, unibutton.gadget) and AmiSSL v5 already installed --
@@ -15,8 +17,8 @@
 ;
 
 (set #app-name    "FriendSh3ep")
-(set #app-version "v1.1")
-(set #app-default "Work:")
+(set #app-version "v1.1.338")
+(set #app-default "sys:utilities")
 
 ; ---------------------------------------------------------------------------
 ; Welcome
@@ -121,6 +123,54 @@
 (complete 100)
 
 ; ---------------------------------------------------------------------------
+; Optional webp.datatype: many Mastodon images and avatars are WebP, and
+; FriendSh3ep loads pictures through datatypes. Same copy as the WebPDT
+; package's own Install_WebPDT script.
+; ---------------------------------------------------------------------------
+(set #webp-msg "")
+(if (AND (exists "WebPDT/Classes/DataTypes/webp.datatype")
+         (exists "WebPDT/Devs/DataTypes/WebP")
+         (NOT (AND (exists "SYS:Devs/DataTypes/WebP")
+                   (exists "SYS:Classes/DataTypes/webp.datatype"))))
+    (if (askbool
+            (prompt "\nYou don't seem to have a WebP image datatype.\n\n"
+                    "Many pictures and avatars on Mastodon are WebP\n"
+                    "images, " #app-name " can only show them with one.\n\n"
+                    "Do you want to install one?\n\n"
+                    "(free, BSD licensed webp.datatype for 68020+,\n"
+                    "built on Google's libwebp)")
+            (help "Copies webp.datatype to SYS:Classes/DataTypes/\n"
+                  "and the WebP descriptor to SYS:Devs/DataTypes/.")
+            (choices "Install" "Skip")
+            (default 1)
+        )
+        (
+            (working "Copying webp.datatype ...")
+            (copyfiles
+                (source "WebPDT/Devs/DataTypes/WebP")
+                (dest "SYS:Devs/DataTypes")
+                (infos)
+                (nogauge)
+            )
+            (copyfiles
+                (source "WebPDT/Classes/DataTypes/webp.datatype")
+                (dest "SYS:Classes/DataTypes")
+                (nogauge)
+            )
+            (if (AND (exists "SYS:Devs/DataTypes/WebP")
+                     (exists "SYS:Classes/DataTypes/webp.datatype"))
+                (
+                    ; register the descriptor now, so no reboot is needed
+                    (run "C:AddDataTypes SYS:Devs/DataTypes/WebP REFRESH")
+                    (set #webp-msg "\n\nwebp.datatype installed and registered.\n(If WebP pictures still don't show, reboot.)")
+                )
+                (set #webp-msg "\n\nCopy failed: webp.datatype is NOT installed.")
+            )
+        )
+    )
+)
+
+; ---------------------------------------------------------------------------
 ; Done!
 ; ---------------------------------------------------------------------------
 (exit
@@ -129,6 +179,7 @@
         "Installed in:  " #dest "\n\n"
         "Remember, FriendSh3ep needs EmojiGear v6.1 and AmiSSL v5\n"
         "already installed on your system to run."
+        #webp-msg
     )
     (quiet)
 )

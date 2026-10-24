@@ -902,6 +902,13 @@ static void FS3EAudio_ProcEntry(void)
     if (MPEGABase) { CloseLibrary(MPEGABase); MPEGABase = NULL; }
     DeleteMsgPort(requestPort);
 
+    /* Forbid() first: ReplyMsg() wakes the main process, which can then
+     * finish quitting and UnLoadSeg() the executable while this task still
+     * has its epilogue/exit glue to run IN that executable -- instantly so
+     * for a lower-priority child, which the reply preempts. Forbid()den,
+     * this task can't lose the CPU until it has exited (RemTask() ends the
+     * Forbid), the same idiom as the Workbench startup message reply. */
+    Forbid();
     if (shutdownMsg)
         ReplyMsg((struct Message *)shutdownMsg);
 }

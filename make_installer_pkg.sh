@@ -22,6 +22,9 @@ PKG="${1:-$SCRIPT_DIR/FriendSh3ep_pkg}"
 BUILD="$SCRIPT_DIR/build"
 INSTALLER_SRC="$SCRIPT_DIR/Installer"
 THEMES_SRC="$SCRIPT_DIR/themes"
+# webp.datatype package, as assembled by ../WebPDt/make_package.sh
+# (cmake --build buildAmiga --target dist). Override with WEBPDT_PKG=...
+WEBPDT_PKG="${WEBPDT_PKG:-$SCRIPT_DIR/../WebPDt/buildAmiga/dist/WebPDT}"
 
 # ---------------------------------------------------------------------------
 # Sanity checks
@@ -97,6 +100,23 @@ cp "$INSTALLER_SRC/FriendSh3ep.guide.info"   "$PKG/FriendSh3ep.guide.info"
 cp "$SCRIPT_DIR/FriendSh3ep.readme"           "$PKG/FriendSh3ep.readme"
 cp "$INSTALLER_SRC/FriendSh3ep.readme.info"  "$PKG/FriendSh3ep.readme.info"
 cp "$SCRIPT_DIR/LICENSE"                      "$PKG/LICENSE"
+
+# ---------------------------------------------------------------------------
+# Optional webp.datatype (offered by the Install script when the user has
+# none). Copied as the whole WebPDT package so its licenses, readme and
+# standalone Install_WebPDT travel with it.
+# ---------------------------------------------------------------------------
+if [ -f "$WEBPDT_PKG/Classes/DataTypes/webp.datatype" ] && \
+   [ -f "$WEBPDT_PKG/Devs/DataTypes/WebP" ]; then
+    echo "Copying webp.datatype package..."
+    mkdir -p "$PKG/WebPDT"
+    cp -R "$WEBPDT_PKG/." "$PKG/WebPDT/"
+    find "$PKG/WebPDT" -name "*.uaem" -exec rm -f {} +
+else
+    echo "WARNING: webp.datatype package not found in $WEBPDT_PKG" >&2
+    echo "         (build it with 'cmake --build buildAmiga --target dist' in WebPDt)." >&2
+    echo "         The package will not offer to install it." >&2
+fi
 
 # ---------------------------------------------------------------------------
 # Summary

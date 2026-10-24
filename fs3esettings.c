@@ -90,6 +90,8 @@ void FS3ESettings_Load(FS3ESettings *s)
     val = ToolTypePrefs_Get(TT_FALLBACK1FONT);
     if (val && val[0] != '\0')
         s->fallback1FontPath = StrDup(val);
+    else
+        s->fallback1FontPath = StrDup("TootGlyphs.ttf");
 
     s->fallback2FontPath = NULL;
     val = ToolTypePrefs_Get(TT_FALLBACK2FONT);
@@ -262,8 +264,8 @@ void FS3ESettings_Load(FS3ESettings *s)
         val = ToolTypePrefs_Get(TT_WINDOW);
         if (val && val[0] != '\0') {
             int l = 0, t = 0, w = 0, h = 0;
-            sscanf(val, "%d:%d:%d:%d", &l, &t, &w, &h);
-            if (w > 0 && h > 0) {
+            int done = sscanf(val, "%d:%d:%d:%d", &l, &t, &w, &h);
+            if (done == 4 && w > 0 && h > 0) {
                 app->mainwindow.left   = (LONG)l;
                 app->mainwindow.top    = (LONG)t;
                 app->mainwindow.width  = (LONG)w;
@@ -277,8 +279,8 @@ void FS3ESettings_Load(FS3ESettings *s)
         val = ToolTypePrefs_Get(TT_WINDOWALT);
         if (val && val[0] != '\0') {
             int l = 0, t = 0, w = 0, h = 0;
-            sscanf(val, "%d:%d:%d:%d", &l, &t, &w, &h);
-            if (w > 0 && h > 0) {
+            int done = sscanf(val, "%d:%d:%d:%d", &l, &t, &w, &h);
+            if (done == 4 && w > 0 && h > 0) {
                 app->altWinLeft   = (LONG)l;
                 app->altWinTop    = (LONG)t;
                 app->altWinWidth  = (LONG)w;
@@ -295,10 +297,11 @@ void FS3ESettings_Load(FS3ESettings *s)
      * them exactly like a remembered mid-session position would. */
     if (app) {
         val = ToolTypePrefs_Get(TT_TOOTWINDOW);
+
         if (val && val[0] != '\0') {
             int l = 0, t = 0, w = 0, h = 0;
-            sscanf(val, "%d:%d:%d:%d", &l, &t, &w, &h);
-            if (w > 0 && h > 0) {
+            int done = sscanf(val, "%d:%d:%d:%d", &l, &t, &w, &h);
+            if (done == 4 && w > 0 && h > 0) {
                 app->tootView.left   = (LONG)l;
                 app->tootView.top    = (LONG)t;
                 app->tootView.width  = (LONG)w;
@@ -309,8 +312,8 @@ void FS3ESettings_Load(FS3ESettings *s)
         val = ToolTypePrefs_Get(TT_EMOJIBOXWINDOW);
         if (val && val[0] != '\0') {
             int l = 0, t = 0, w = 0, h = 0;
-            sscanf(val, "%d:%d:%d:%d", &l, &t, &w, &h);
-            if (w > 0 && h > 0) {
+            int done = sscanf(val, "%d:%d:%d:%d", &l, &t, &w, &h);
+            if (done == 4 && w > 0 && h > 0) {
                 app->emojiBoxWindow.left   = (LONG)l;
                 app->emojiBoxWindow.top    = (LONG)t;
                 app->emojiBoxWindow.width  = (LONG)w;
